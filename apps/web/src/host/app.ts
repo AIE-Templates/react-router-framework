@@ -133,9 +133,21 @@ let hostApp: Hono | undefined;
  * development, Vite re-evaluates the module when server code changes, which resets the cache.
  */
 export function getHostApp(): Hono {
-  // No entry passes options here, so the shell comes from the process that started this one: the
-  // desktop dev script sets WEB_SHELL=desktop and the platform; plain `pnpm dev` leaves it web.
-  return (hostApp ??= createHostApp({ shell: shellFromEnv(process.env) }));
+  return (hostApp ??= createHostApp({ shell: developmentShell() }));
+}
+
+/**
+ * The shell for `getHostApp()`. No entry passes options there, so in development the shell comes
+ * from the process that started this one: the desktop dev script sets WEB_SHELL=desktop and the
+ * platform; plain `pnpm dev` leaves it web. Anywhere else (prerendering the SPA shell during
+ * `react-router build`, which also loads .env) it is always web, so a WEB_SHELL left in .env for
+ * development never ends up in a build.
+ */
+export function developmentShell(
+  env: Record<string, string | undefined> = process.env,
+  development: boolean = import.meta.env.DEV,
+): Shell {
+  return development ? shellFromEnv(env) : WEB_SHELL;
 }
 
 /** What a request's loaders and actions share with the API calls they make. */

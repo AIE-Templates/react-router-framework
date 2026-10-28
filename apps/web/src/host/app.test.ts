@@ -11,7 +11,7 @@ import { loggerContext } from "~/lib/logger";
 import { getPreference, preferencesContext } from "~/lib/preferences";
 import { desktopContext, shellContext } from "~/lib/shell";
 
-import { createHostApp, createLoadContext, getHostApp } from "./app";
+import { createHostApp, createLoadContext, developmentShell, getHostApp } from "./app";
 
 const desktop: Shell = { kind: "desktop", platform: "darwin", osVersion: "26.1" };
 
@@ -185,6 +185,19 @@ describe("shell", () => {
       fullscreen: false,
       prefs: {},
     });
+  });
+});
+
+describe("developmentShell", () => {
+  const env = { WEB_SHELL: "desktop", WEB_SHELL_PLATFORM: "darwin", WEB_SHELL_OS_VERSION: "26.1" };
+
+  it("reads WEB_SHELL* in development, for the desktop dev script", () => {
+    expect(developmentShell(env, true)).toEqual({ kind: "desktop", platform: "darwin", osVersion: "26.1" });
+    expect(developmentShell({}, true)).toEqual({ kind: "web" });
+  });
+
+  it("ignores WEB_SHELL* outside development, so a build never bakes in the desktop shell", () => {
+    expect(developmentShell(env, false)).toEqual({ kind: "web" });
   });
 });
 

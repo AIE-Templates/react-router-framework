@@ -32,7 +32,7 @@ For separate static/client hosting, build with VITE_API_ORIGIN and list the clie
 
 ## Host identity
 
-The entry supplies createWebApp({ shell }); requests cannot select identity. Trusted desktop request data is distinct from stable shell facts. Web strips X-Desktop-* before Router; desktop accepts injected state. Development getHostApp reads WEB_SHELL* for the desktop dev entry. Components use useAppEnvironment; document attributes mirror it. SSR seeds hydration, then valid preload bootstrap supplies runtime identity; later root revalidation cannot overwrite it.
+The entry supplies createWebApp({ shell }); requests cannot select identity. Trusted desktop request data is distinct from stable shell facts. Web strips X-Desktop-* before Router; desktop accepts injected state. WEB_SHELL* is development-only; builds retain the web seed. Components use useAppEnvironment; document attributes mirror it. SSR seeds hydration, then valid preload bootstrap supplies runtime identity; later root revalidation cannot overwrite it.
 
 ## Layout
 
