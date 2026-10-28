@@ -1,6 +1,16 @@
-import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+import { useState } from "react";
+import {
+  isRouteErrorResponse,
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+  useRouteLoaderData,
+} from "react-router";
 
 import type { Route } from "./+types/root";
+import { cspNonceContext } from "./lib/csp";
 
 import "./app.css";
 
@@ -8,22 +18,54 @@ import "./app.css";
 // unreachable host would hold up the document. Self-host fonts if needed.
 export const links: Route.LinksFunction = () => [];
 
+/**
+ * The document's Content-Security-Policy nonce for the inline scripts React Router emits (client and
+ * server must render the same `nonce` prop, so it travels with the loader data). Allowed in both
+ * rendering modes; in a SPA build it runs once at build time.
+ */
+export function loader({ context }: Route.LoaderArgs) {
+  return {
+    nonce: context.get(cspNonceContext),
+  };
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
+  // Undefined when the root loader failed and the ErrorBoundary renders in this Layout.
+  const data = useRouteLoaderData<typeof loader>("root");
+  const nonce = useCspNonce(data?.nonce);
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
-        <Links />
+        <Links nonce={nonce} />
       </head>
       <body>
         {children}
-        <ScrollRestoration />
-        <Scripts />
+        <ScrollRestoration nonce={nonce} />
+        <Scripts nonce={nonce} />
       </body>
     </html>
   );
+}
+
+/**
+ * The document's CSP nonce, fixed for the life of the page: the one the root loader delivered, or,
+ * on the client when there is no root loader data (the root ErrorBoundary rendering in this Layout),
+ * the one on the document's scripts (the `nonce` property still reads it after browsers blank the
+ * attribute). Later root revalidations carry a fresh nonce that must not replace it: the policy
+ * header the document loaded with names the first one, and React would only rewrite attributes.
+ */
+function useCspNonce(fromLoader: string | undefined): string | undefined {
+  const [nonce] = useState(
+    () =>
+      fromLoader ??
+      (typeof document === "undefined"
+        ? undefined
+        : document.querySelector<HTMLScriptElement>("script[nonce]")?.nonce || undefined),
+  );
+  return nonce;
 }
 
 export default function App() {

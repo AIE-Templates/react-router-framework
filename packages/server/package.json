@@ -1,0 +1,39 @@
+{
+  "name": "@repo/server",
+  "private": true,
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "server.ts"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "@repo/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./types": {
+      "@repo/source": "./src/types.ts",
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "NODE_ENV=development node --watch server.ts",
+    "start": "node server.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "dotenv": "^17.4.2",
+    "dotenv-expand": "^13.0.0",
+    "hono": "^4.13.13",
+    "pino": "^10.4.0"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.2.0"
+  }
+}

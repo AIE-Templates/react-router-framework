@@ -8,6 +8,7 @@
     "rootDirs": [".", "./.react-router/types"],
     "paths": {
       "~/*": ["./src/app/*"]
-    }
+    },
+    "customConditions": ["@repo/source"]
   }
 }

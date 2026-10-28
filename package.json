@@ -5,6 +5,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --filter web dev",
+    "dev:server": "pnpm --filter @repo/server dev",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "pnpm typegen && oxlint",
