@@ -8,11 +8,12 @@
   "scripts": {
     "build": "react-router build",
     "dev": "react-router dev",
-    "start": "sirv build/client --single --port ${PORT:-3000}",
+    "start": "sirv build/client --single --port 3000",
     "typecheck": "react-router typegen && tsc"
   },
   "dependencies": {
     "@react-router/node": "^8.5.0",
+    "@react-router/serve": "^8.5.0",
     "isbot": "^5.1.36",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
