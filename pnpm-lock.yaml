@@ -199,6 +199,9 @@ importers:
       '@react-router/node':
         specifier: ^8.5.0
         version: 8.5.0(react-router@8.5.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(typescript@7.0.2)
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       isbot:
         specifier: ^5.1.36
         version: 5.2.2
@@ -248,6 +251,8 @@ importers:
       vite:
         specifier: ^8.3.5
         version: 8.3.5(@types/node@24.19.2)(jiti@2.7.0)
+
+  packages/shared: {}
 
 packages:
 

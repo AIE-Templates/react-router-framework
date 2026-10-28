@@ -21,3 +21,11 @@ Use Conventional Commits, checked by @commitlint/config-conventional. Lefthook r
 This branch builds a static SPA with ssr: false.
 
 SPA builds reject non-root server loaders, server actions/middleware/headers and non-root HydrateFallback. The root loader runs at build time. Components, meta, links, ErrorBoundary and client data APIs can support both modes. Select rendering requirements deliberately rather than assuming every application can switch unchanged.
+
+## Application infrastructure
+
+Compose global providers in AppRoot. Components read useAppEnvironment from ~/providers/environment; never infer host identity from user agents, query parameters or data-shell. Do not call the bridge during rendering. Root loader data seeds hydration; confirmed preload identity survives revalidation.
+
+Pages compose BasicShell or NavigationShell with ModuleLayout. Modules do not handle OS branches, native control geometry or window IPC. Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness.
+
+@repo/shared must remain browser-importable with no node: imports or runtime dependencies. Resolve source through @repo/source in workspace Vite, Vitest and TypeScript configuration; new consumers need the same condition.

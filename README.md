@@ -7,6 +7,7 @@ Use Node.js 24 or newer and the pnpm version declared in package.json. Install w
 ## Packages
 
 - [apps/web](apps/web/README.md): React Router application.
+- [packages/shared](packages/shared/README.md): Browser-safe shared contracts.
 
 ## Commands
 
@@ -26,3 +27,7 @@ Run from the workspace root.
 | `pnpm typegen`   | `pnpm --filter web exec react-router typegen` |
 
 Vitest runs in watch mode by default; use pnpm exec vitest run for a finite run. Build Docker images from the workspace root so workspace dependencies are available. Package READMEs describe deployment and environment configuration. Keep secrets in local/environment configuration, never in the repository.
+
+## Design
+
+[Design specs](docs/specs/README.md) describe settled contracts; [ADRs](docs/adrs/) explain accepted decisions. AppRoot, AppShell and ModuleLayout separate environment, application framing and module state. Components use useAppEnvironment; document attributes only mirror its state.
