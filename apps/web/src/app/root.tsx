@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   isRouteErrorResponse,
   Links,
@@ -10,7 +10,10 @@ import {
 } from "react-router";
 
 import type { Route } from "./+types/root";
+import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { cspNonceContext } from "./lib/csp";
+import { AppRoot } from "./providers/app-root";
+import { useAppEnvironment } from "./providers/environment";
 
 import "./app.css";
 
@@ -34,15 +37,47 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData<typeof loader>("root");
   const nonce = useCspNonce(data?.nonce);
   return (
-    <html lang="en">
+    <AppRoot>
+      <Document nonce={nonce}>{children}</Document>
+    </AppRoot>
+  );
+}
+
+function Document({ children, nonce }: { children: React.ReactNode; nonce?: string }) {
+  const environment = useAppEnvironment();
+  const { shell, desktop, windowState } = environment;
+  useEffect(() => {
+    // Evidence that the client bundle ran and hydration finished, for tests and smoke checks.
+    document.documentElement.dataset.hydrated = "true";
+  }, []);
+  return (
+    <html
+      lang="en"
+      data-shell={shell.kind}
+      data-platform={shell.kind === "desktop" ? shell.platform : undefined}
+      data-titlebar={
+        shell.kind === "desktop" ? (environment.mode === "system-decorated" ? "native" : "custom") : undefined
+      }
+      data-chrome-mode={shell.kind === "desktop" ? environment.mode : undefined}
+      data-chrome-enhancement={environment.enhancement}
+      data-chrome-diagnostic={environment.diagnostic}
+      data-chrome-diagnostic-fields={environment.diagnosticFields?.join(",")}
+      data-fullscreen={windowState ? String(windowState.fullscreen) : desktop ? String(desktop.fullscreen) : undefined}
+    >
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style id="window-chrome-safety">{CHROME_SAFETY_CSS}</style>
         <Meta />
         <Links nonce={nonce} />
       </head>
       <body>
-        {children}
+        <div className="root-frame">
+          <div className="root-chrome-fallback" aria-hidden="true">
+            <div className="window-safe-drag" data-window-drag="" />
+          </div>
+          <div className="root-content">{children}</div>
+        </div>
         <ScrollRestoration nonce={nonce} />
         <Scripts nonce={nonce} />
       </body>

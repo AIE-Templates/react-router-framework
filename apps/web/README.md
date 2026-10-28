@@ -29,3 +29,11 @@ Run pnpm build then node apps/web/server.ts, or the configured start script. Dep
 createWebApp returns a Hono app with standard Request/Response fetch semantics for embedding. clientDir can locate external static resources. External React, Router, Hono, node adapter and pino versions must match the web package. Heavy SSR shares the host event loop; use a worker/utility process when isolation is needed. Build Docker from the workspace root using apps/web/Dockerfile; the deployed Node process runs as a nonprivileged user.
 
 For separate static/client hosting, build with VITE_API_ORIGIN and list the client origin in the server's ALLOWED_ORIGINS for credentialed requests. Server redirects are relative; an embedded host's internal request URL is not a public origin.
+
+## Host identity
+
+The entry supplies createWebApp({ shell }); requests cannot select identity. Trusted desktop request data is distinct from stable shell facts. Web strips X-Desktop-* before Router; desktop accepts injected state. Development getHostApp reads WEB_SHELL* for the desktop dev entry. Components use useAppEnvironment; document attributes mirror it. SSR seeds hydration, then valid preload bootstrap supplies runtime identity; later root revalidation cannot overwrite it.
+
+## Layout
+
+AppRoot owns environment/providers; BasicShell or NavigationShell owns application framing; ModuleLayout owns its workspace/panels. The home route demonstrates ?shell=basic and ?header=standalone. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.

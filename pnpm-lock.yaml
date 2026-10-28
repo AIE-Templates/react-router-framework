@@ -205,6 +205,9 @@ importers:
       '@repo/server':
         specifier: workspace:*
         version: link:../../packages/server
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -285,6 +288,8 @@ importers:
       pino-pretty:
         specifier: ^13.2.0
         version: 13.2.0
+
+  packages/shared: {}
 
 packages:
 
