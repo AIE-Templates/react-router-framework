@@ -1,0 +1,41 @@
+{
+  "name": "starter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter web dev",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "lint": "pnpm typegen && oxlint",
+    "lint:fix": "pnpm typegen && oxlint --fix",
+    "preinstall": "node -e \"process.env.npm_config_user_agent?.startsWith('pnpm/') || (console.error('This project uses pnpm. Run: pnpm install'), process.exit(1))\"",
+    "start": "pnpm --filter web start",
+    "test": "vitest",
+    "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
+    "typegen": "pnpm --filter web exec react-router typegen"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "@types/node": "^24.19.2",
+    "lefthook": "^2.2.2",
+    "oxfmt": "^0.74.0",
+    "oxlint": "^1.89.0",
+    "oxlint-tsgolint": "^7.0.2004",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^12.14.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=24.0.0",
+      "onFail": "error"
+    }
+  }
+}

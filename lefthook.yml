@@ -1,0 +1,20 @@
+# https://lefthook.dev/configuration/
+pre-commit:
+  piped: true
+  jobs:
+    # Type-aware lint rules need the generated route types (./+types/*), e.g. for new routes.
+    - name: typegen
+      glob: "apps/web/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
+      run: pnpm --filter web exec react-router typegen
+    - name: lint
+      glob: "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
+      run: pnpm exec oxlint --fix {staged_files}
+      stage_fixed: true
+    - name: format
+      run: pnpm exec oxfmt --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: pnpm exec commitlint --edit {1}

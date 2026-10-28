@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file=$(node -e 'let s=\"\";process.stdin.on(\"data\",(d)=>{s+=d}).on(\"end\",()=>process.stdout.write(JSON.parse(s).tool_input?.file_path??\"\"))'); case \"$file\" in \"$CLAUDE_PROJECT_DIR\"/*) ;; *) exit 0 ;; esac; cd \"$CLAUDE_PROJECT_DIR\" || exit 0; case \"$file\" in \"$CLAUDE_PROJECT_DIR\"/apps/web/*.ts|\"$CLAUDE_PROJECT_DIR\"/apps/web/*.tsx|\"$CLAUDE_PROJECT_DIR\"/apps/web/*.js|\"$CLAUDE_PROJECT_DIR\"/apps/web/*.jsx) pnpm --filter web exec react-router typegen >/dev/null 2>&1 ;; esac; lint=$(pnpm exec oxlint --fix --no-error-on-unmatched-pattern \"$file\" 2>&1); status=$?; pnpm exec oxfmt --no-error-on-unmatched-pattern \"$file\" >/dev/null 2>&1; if [ $status -ne 0 ]; then printf \"%s\\n\" \"$lint\" >&2; exit 2; fi; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
