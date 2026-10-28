@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { serveStatic } from "@hono/node-server/serve-static";
+import type { Shell } from "@repo/shared";
 import type { Hono, MiddlewareHandler } from "hono";
 import { compress } from "hono/compress";
 
@@ -12,16 +13,23 @@ import { defaultPolicy, inlineScriptHashes, serializePolicy } from "./csp";
 export interface WebAppOptions {
   /**
    * The client build: static files and, without server rendering, the SPA shell. Defaults to
-   * `build/client` next to the server build this code runs from; other hosts pass where they keep it.
+   * `build/client` next to the server build this code runs from; Electron passes where it unpacked it.
    */
   clientDir?: string;
   /** Whether the build renders on the server. Defaults to what the build says; tests set it. */
   ssr?: boolean;
+  /**
+   * Where the app runs: `{ kind: "web" }` (the default) or the desktop shell, whose entry passes its
+   * platform once at startup. Only the desktop shell trusts `x-desktop-*` request headers; see
+   * `createHostApp()`. `server.ts` and other web hosts leave it out.
+   */
+  shell?: Shell;
   /** The Content-Security-Policy, for rendered documents and the SPA shell alike; see `createHostApp()`. */
   csp?: HostAppOptions["csp"];
   /**
    * Registers routes after the API and before static files, inside the same chain (request IDs,
-   * logging, error handling). For a host's own routes.
+   * logging, error handling). For a host's own routes; the desktop smoke mounts its smoke-only
+   * endpoints here.
    */
   extend?: (app: Hono) => void;
 }
@@ -34,14 +42,18 @@ export interface WebAppOptions {
  *
  * `server.ts` serves it on its own. Another Node.js server mounts it with `app.route("/", createWebApp())`
  * if it is Hono, or `getRequestListener(createWebApp().fetch)` from @hono/node-server otherwise.
+ * The Electron shell (apps/desktop) runs it in a utility process behind an `app://` scheme, with the
+ * URL and header mapping that scheme needs; see its README before wiring a custom scheme by hand.
  */
 export function createWebApp({
   clientDir = defaultClientDir(),
   ssr,
+  shell,
   csp = defaultPolicy(),
   extend,
 }: WebAppOptions = {}): Hono {
   return createHostApp({
+    shell,
     csp,
     extend: (app) => {
       extend?.(app);

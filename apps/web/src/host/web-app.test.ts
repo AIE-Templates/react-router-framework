@@ -5,6 +5,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { Hono } from "hono";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { defaultPolicy } from "./csp";
@@ -221,6 +222,59 @@ describe("with server rendering", () => {
 
     expect(response.status).toBe(500);
     expect(await response.text()).not.toBe(SHELL);
+  });
+});
+
+// What reaches React Router, seen from a server that mounts the web app (as the README shows):
+// after next(), c.req.raw and c.var are what the React Router handler got (it fails in tests, with
+// the server build stubbed).
+async function seenByReactRouter(web: Hono) {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  let seen: { shell: unknown; desktop: unknown; titlebar: string | null } | undefined;
+  const gateway = new Hono();
+  gateway.use(async (c, next) => {
+    await next();
+    seen = { shell: c.var.shell, desktop: c.var.desktop, titlebar: c.req.raw.headers.get("x-desktop-titlebar") };
+  });
+  gateway.route("/", web);
+  await gateway.request("/some/route", {
+    headers: { "x-desktop-titlebar": "custom", "x-desktop-fullscreen": "1" },
+  });
+  return seen;
+}
+
+describe("shell", () => {
+  it("is web by default, and strips desktop headers", async () => {
+    expect(await seenByReactRouter(createWebApp({ clientDir, ssr: true }))).toEqual({
+      shell: { kind: "web" },
+      desktop: undefined,
+      titlebar: null,
+    });
+    expect(await seenByReactRouter(createWebApp({ clientDir, ssr: true, shell: { kind: "web" } }))).toMatchObject({
+      shell: { kind: "web" },
+      titlebar: null,
+    });
+  });
+
+  it("in the desktop shell, reads desktop headers", async () => {
+    const shell = { kind: "desktop", platform: "win32", osVersion: "10.0.26100" } as const;
+
+    expect(await seenByReactRouter(createWebApp({ clientDir, ssr: true, shell }))).toEqual({
+      shell,
+      desktop: { titlebar: "custom", chromeMode: "system-decorated", fullscreen: true, prefs: {} },
+      titlebar: "custom",
+    });
+  });
+
+  it("serves static files and the API in both shells", async () => {
+    for (const shell of [{ kind: "web" }, { kind: "desktop", platform: "linux", osVersion: "6.8" }] as const) {
+      const web = createWebApp({ clientDir, ssr: false, shell });
+      expect(await (await web.request("/favicon.ico")).text()).toBe("icon");
+      expect(await (await web.request("/api/health")).json()).toEqual({ status: "ok" });
+      expect(await (await web.request("/some/route", { headers: { "x-desktop-titlebar": "custom" } })).text()).toBe(
+        SHELL,
+      );
+    }
   });
 });
 

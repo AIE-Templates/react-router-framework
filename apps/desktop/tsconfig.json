@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "sourceMap": true,
+    "customConditions": ["@repo/source"]
+  },
+  "include": ["src/**/*", "scripts/**/*", "e2e/**/*", "*.ts"],
+  "exclude": ["out", ".vite", "test-results"]
+}

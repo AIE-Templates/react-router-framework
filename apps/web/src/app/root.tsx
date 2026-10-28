@@ -12,22 +12,26 @@ import {
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { cspNonceContext } from "./lib/csp";
+import { desktopContext, shellContext } from "./lib/shell";
 import { AppRoot } from "./providers/app-root";
 import { useAppEnvironment } from "./providers/environment";
 
 import "./app.css";
 
-// No external stylesheets or fonts: pages may load offline (a desktop shell, an intranet), and an
-// unreachable host would hold up the document. Self-host fonts if needed.
+// No external stylesheets or fonts: the desktop shell loads pages offline, and an unreachable host
+// would hold up the document (Google Fonts cost 4 s in the Electron spike). Self-host fonts if needed.
 export const links: Route.LinksFunction = () => [];
 
 /**
- * The document's Content-Security-Policy nonce for the inline scripts React Router emits (client and
+ * Initial host facts for AppRoot and the
+ * document's Content-Security-Policy nonce for the inline scripts React Router emits (client and
  * server must render the same `nonce` prop, so it travels with the loader data). Allowed in both
- * rendering modes; in a SPA build it runs once at build time.
+ * rendering modes; in a SPA build it runs once at build time, so it always reports the web shell.
  */
 export function loader({ context }: Route.LoaderArgs) {
   return {
+    shell: context.get(shellContext),
+    desktop: context.get(desktopContext),
     nonce: context.get(cspNonceContext),
   };
 }
@@ -37,7 +41,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData<typeof loader>("root");
   const nonce = useCspNonce(data?.nonce);
   return (
-    <AppRoot>
+    <AppRoot shell={data?.shell} desktop={data?.desktop}>
       <Document nonce={nonce}>{children}</Document>
     </AppRoot>
   );
@@ -47,7 +51,7 @@ function Document({ children, nonce }: { children: React.ReactNode; nonce?: stri
   const environment = useAppEnvironment();
   const { shell, desktop, windowState } = environment;
   useEffect(() => {
-    // Evidence that the client bundle ran and hydration finished, for tests and smoke checks.
+    // Evidence that the client bundle ran and hydration finished, for tests and the desktop smoke.
     document.documentElement.dataset.hydrated = "true";
   }, []);
   return (

@@ -46,4 +46,16 @@ Middleware extends the same host/server chain before Router fallback; do not wra
 
 In-process server data APIs provide SSR data and cookie forwarding but prevent SPA builds. Client data APIs support either build mode with a first-render skeleton and a browser request. Moving SSR server-data routes to SPA requires rewriting them.
 
+## Desktop
+
+apps/desktop uses Vite bundles and electron-builder. Main/preload are CommonJS; utility is ESM and runs createWebApp via port-fetch. Main must not import @repo/server or top-level await app.whenReady. Capture uncaught exceptions through logging, not blocking Electron default dialogs. Validate each IPC with isTrustedSender. Keep dependencies empty except required external native modules; bundle other dependencies.
+
+Main maps app://app to the internal HTTP origin, injects trustworthy non-GET Origin and desktop state, and maps redirects back. Host identity comes only from entry configuration, never requests. Strip untrusted desktop headers; only a desktop entry trusts main-supplied values. Server redirects stay relative; request.url is not a public URL. Static files belong solely to the web host. Utility compile cache is in userData.
+
+Port-fetch and channel must remain Electron-independent. Test with worker_threads MessageChannel and local ws. Port-fetch sends standalone Uint8Array chunks via structured cloning; do not use ArrayBuffer transfer lists with Electron MessagePortMain or assume zero-copy. Propagate cancellation through request.signal. Channel producers await whenDrained; send neither blocks nor drops. Relay preserves ordering/backpressure/close semantics; use shared CLOSE_CODES.
+
+Desktop page document.cookie is unavailable. Main manages server cookies in the dedicated session and sends them only to the app upstream. Client-readable state uses loader data, localStorage or explicit helpers. Small display preferences use getPreference/useSetPreference/writePreference, never shell-specific business branches or direct cookie writes. Desktop persists prefs.json and injects x-desktop-prefs; web uses pref-* cookies. Both enforce shared key/size limits. Preferences are user-controlled and must never authorize access or store credentials.
+
+Run build:desktop, DESKTOP_SMOKE=1 DESKTOP_BOOT_PROFILE=1 with desktop start, and check packaged artifacts (desktop package for test-profile; package:release changes Fuses). Desktop E2E uses Playwright with isolated userData and closes all launched processes. Build/package before both E2E targets; unpackaged needs only build. Test endpoints require DESKTOP_E2E=1 and never mount in release-profile. Release cannot be driven with the inspector-based test driver. Compare repeated boot-profile medians for startup changes. Specs live in docs/specs; decisions in docs/adrs.
+
 Inline CHROME_SAFETY_CSS relies on the default CSP style-src unsafe-inline allowance; add a hash before tightening it.

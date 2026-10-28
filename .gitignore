@@ -7,3 +7,10 @@ dist/
 # React Router
 .react-router/
 build/
+
+# Electron
+.vite/
+out/
+
+# Benchmark results
+bench/transport/results/

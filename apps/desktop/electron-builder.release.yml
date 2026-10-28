@@ -1,0 +1,9 @@
+# The release profile: the base configuration plus Electron fuses flipped after packing (and, once
+# certificates exist, signing and notarization). `pnpm --filter desktop package:release` builds it
+# unpacked for local checks; the in-app smoke (DESKTOP_SMOKE=1) still works on it. Playwright's
+# Electron driver does not: it needs the Node inspect arguments the fuses turn off, so automated
+# UI tests run against the base (test) profile.
+extends: ./electron-builder.yml
+extraMetadata:
+  desktopProfile: release
+afterPack: ./scripts/fuses.ts

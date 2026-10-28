@@ -1,0 +1,36 @@
+# electron-builder packages what the Vite builds emitted plus the web client build. Build-time
+# packages live in devDependencies and are already bundled, so no node_modules ship; `dependencies`
+# is reserved for native modules that must stay external (none yet).
+# Placeholders to replace per project: appId, productName, and in package.json `homepage` and
+# `author` (deb needs both; the author's email is the package maintainer).
+appId: dev.repo.desktop
+productName: Desktop
+asar: true
+asarUnpack:
+  - "**/*.node"
+npmRebuild: false
+# Read by the main process: the test profile may run the real-app benchmark, the release profile not.
+extraMetadata:
+  desktopProfile: test
+files:
+  - ".vite/build/**"
+  - "!.vite/build/*.map"
+  - package.json
+extraResources:
+  - from: ../web/build/client
+    to: client
+directories:
+  output: out
+mac:
+  target:
+    - dmg
+    - zip
+  # Unsigned for now: signing identity and notarization come with certificates (VAL-04).
+  identity: null
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - deb
+    - rpm

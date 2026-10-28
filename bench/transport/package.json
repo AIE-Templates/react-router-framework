@@ -1,0 +1,18 @@
+{
+  "name": "@repo/bench-transport",
+  "private": true,
+  "description": "Repeatable performance benchmarks for @repo/port-fetch and @repo/channel over real links",
+  "type": "module",
+  "scripts": {
+    "bench": "node --conditions=@repo/source src/cli.ts",
+    "compare": "node src/compare.ts",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@repo/channel": "workspace:*",
+    "@repo/port-fetch": "workspace:*",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.18.3"
+  }
+}

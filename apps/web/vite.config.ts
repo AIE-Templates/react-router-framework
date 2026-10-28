@@ -5,6 +5,19 @@ import { defaultClientConditions, defaultServerConditions, defineConfig } from "
 import { honoServer } from "./src/host/vite-plugin.ts";
 
 export default defineConfig({
+  // The desktop shell's dev script (apps/desktop/scripts/dev.ts) serves this dev server through
+  // app://, so the HMR client must be told where the WebSocket is; from an app:// page it would
+  // otherwise connect to the page's own host.
+  server: process.env.DESKTOP_DEV
+    ? {
+        hmr: {
+          host: "localhost",
+          protocol: "ws",
+          // The page's location has no port under app://, so the client must be told the server's.
+          clientPort: Number(process.env.DESKTOP_DEV_PORT) || undefined,
+        },
+      }
+    : undefined,
   environments: {
     ssr: {
       resolve: {

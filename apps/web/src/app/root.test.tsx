@@ -1,3 +1,4 @@
+import type { DesktopRequest, Shell } from "@repo/shared";
 import { render, waitFor } from "@testing-library/react";
 import { createRoutesStub, RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,14 @@ import { createLoadContext } from "../host/app";
 import { createTestContext } from "../host/testing";
 import type { Route } from "./+types/root";
 import { Layout, loader } from "./root";
+
+const desktop: Shell = { kind: "desktop", platform: "darwin", osVersion: "26.1" };
+const facts: DesktopRequest = {
+  titlebar: "custom",
+  chromeMode: "system-decorated",
+  fullscreen: true,
+  prefs: { theme: "dark" },
+};
 
 function loaderArgs(context: RouterContextProvider): Route.LoaderArgs {
   const url = new URL("http://localhost/");
@@ -19,8 +28,18 @@ afterEach(() => {
 });
 
 describe("root loader", () => {
-  it("reports no nonce without a Content-Security-Policy", () => {
-    expect(loader(loaderArgs(createTestContext()))).toEqual({ nonce: undefined });
+  it("reports the web shell, without desktop facts", () => {
+    expect(loader(loaderArgs(createTestContext()))).toEqual({
+      shell: { kind: "web" },
+      desktop: undefined,
+      nonce: undefined,
+    });
+  });
+
+  it("reports the desktop shell and its per-request facts", () => {
+    const context = createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts });
+
+    expect(loader(loaderArgs(context))).toEqual({ shell: desktop, desktop: facts, nonce: undefined });
   });
 });
 
@@ -99,5 +118,14 @@ describe("Layout", () => {
 
     await waitFor(() => expect(document.querySelector("script[nonce]")).not.toBeNull());
     expect(document.querySelector("script[nonce]")?.getAttribute("nonce")).toBe("abc123");
+  });
+
+  it("marks the document with the desktop shell's platform and per-request facts", async () => {
+    const html = renderLayout(createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts }));
+
+    await waitFor(() => expect(html.dataset.shell).toBe("desktop"));
+    expect(html.dataset.platform).toBe("darwin");
+    expect(html.dataset.titlebar).toBe("native");
+    expect(html.dataset.fullscreen).toBe("true");
   });
 });
