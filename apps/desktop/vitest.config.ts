@@ -10,5 +10,6 @@ export default defineConfig({
     name: "desktop",
     environment: "node",
     include: ["src/**/*.test.ts"],
+    globalSetup: ["./vitest.global-setup.ts"],
   },
 });
