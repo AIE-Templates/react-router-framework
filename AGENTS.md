@@ -18,6 +18,6 @@ Use Conventional Commits, checked by @commitlint/config-conventional. Lefthook r
 
 ## Rendering
 
-SSR is the default; SSR=false at dev/build selects SPA.
+This branch builds a static SPA with ssr: false.
 
 SPA builds reject non-root server loaders, server actions/middleware/headers and non-root HydrateFallback. The root loader runs at build time. Components, meta, links, ErrorBoundary and client data APIs can support both modes. Select rendering requirements deliberately rather than assuming every application can switch unchanged.

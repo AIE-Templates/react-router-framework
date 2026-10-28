@@ -18,14 +18,9 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm --filter web run build
-# A self-contained copy of the app (its `files`) with only its production dependencies.
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-  pnpm --filter web deploy --prod /out
 
-# Plain Node.js at runtime: pnpm is only needed to install and build.
-FROM node:24-alpine AS runner
-ENV NODE_ENV=production
-WORKDIR /app
-COPY --from=build-env /out ./
-USER node
-CMD ["node_modules/.bin/react-router-serve", "./build/server/index.js"]
+# Only the static client build at runtime, served by nginx with the SPA fallback.
+FROM nginxinc/nginx-unprivileged:stable-alpine AS runner
+COPY apps/web/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=build-env /repo/apps/web/build/client /usr/share/nginx/html
+EXPOSE 8080

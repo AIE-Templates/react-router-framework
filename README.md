@@ -1,6 +1,6 @@
 # React Router workspace
 
-A pnpm workspace with React Router framework mode. The web application defaults to server rendering and can build as an SPA.
+A pnpm workspace with React Router framework mode. The web application is a static SPA.
 
 Use Node.js 24 or newer and the pnpm version declared in package.json. Install with pnpm install; other package managers are rejected.
 

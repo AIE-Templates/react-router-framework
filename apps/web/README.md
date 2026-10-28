@@ -4,8 +4,6 @@ React Router framework mode with shared workspace tooling, Tailwind CSS, Vitest 
 
 Run `pnpm dev` at the workspace root for HMR at http://localhost:5173. Build with `pnpm --filter web build`. See the root README for the available commands.
 
-## Rendering
+## Static deployment
 
-SSR is the default. Set SSR=false for an SPA build; application route exports must be compatible. Server loaders/actions/middleware/headers (except the build-time root loader) and non-root HydrateFallback prevent SPA builds. Client data APIs can work in both modes, with a first-render skeleton followed by browser data loading.
-
-Use the configured start command to serve the build through react-router-serve. Run Docker builds from the workspace root.
+This branch builds a static SPA (ssr: false). Deploy build/client to static hosting; development still uses the Router dev server. Configure deep-link fallback to the generated index.html shell. Serve assets as files and let the client router resolve routes. Use the supplied Docker configuration for static hosting. Server loaders/actions are not available; the root loader runs only at build time.
