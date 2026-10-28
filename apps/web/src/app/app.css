@@ -6,6 +6,90 @@
     "Noto Color Emoji";
 }
 
+.shell-nav {
+  border-inline-end: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+.shell-nav-content a {
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.shell-navigation-trigger {
+  position: absolute;
+  inset-inline-start: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 7;
+  background: Canvas;
+  padding: 0.5rem;
+  border: 1px solid;
+}
+.module-sidebar {
+  border-inline-end: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+.module-auxiliary {
+  border-inline-start: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+.module-header,
+.shell-titlebar-content {
+  border-block-end: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+/* Windows reserves a 48px body for native controls, then a separate separator row.
+   Keep this visual border out of the native overlay height and the safety fallback. */
+html[data-platform="win32"][data-chrome-mode="native-overlay"] {
+  --window-chrome-separator: 1px;
+}
+html[data-platform="win32"][data-chrome-mode="native-overlay"]
+  .app-shell[data-chrome-ready][data-header-mode="fused"]
+  > .shell-body
+  > .module-layout[data-chrome-complete]
+  > .module-columns
+  > .module-panel
+  > .module-header,
+html[data-platform="win32"][data-chrome-mode="native-overlay"]
+  .app-shell[data-chrome-ready][data-header-mode="standalone"]
+  > .shell-titlebar
+  > .shell-titlebar-content {
+  min-height: calc(max(var(--window-header-height), var(--window-safe-top)) + var(--window-chrome-separator));
+  border-block-end-width: var(--window-chrome-separator);
+}
+html[data-platform="win32"][data-chrome-mode="native-overlay"]
+  .app-shell[data-chrome-ready][data-header-mode="fused"]
+  > .shell-body
+  > .shell-nav
+  > .shell-nav-chrome {
+  height: calc(max(var(--window-header-height), var(--window-safe-top)) + var(--window-chrome-separator));
+  border-block-end: var(--window-chrome-separator) solid color-mix(in srgb, currentColor 15%, transparent);
+}
+.module-header button,
+.layout-demo select,
+.layout-demo input {
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+}
+.layout-demo {
+  max-width: 60rem;
+  margin-inline: auto;
+}
+.layout-demo h1 {
+  font-size: 1.5rem;
+  margin-block-end: 0.75rem;
+}
+.layout-demo p {
+  margin-block-end: 1rem;
+}
+.layout-demo-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-block-end: 1rem;
+}
+.layout-demo label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 html,
 body {
   @apply bg-white dark:bg-gray-950;
