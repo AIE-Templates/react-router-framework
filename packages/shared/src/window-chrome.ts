@@ -31,7 +31,8 @@ export interface DesktopBridge {
   updateOverlayAppearance(this: void, appearance: OverlayAppearance): Promise<OverlayAppearanceResult>;
   /**
    * Stores a preference in the main process (and `prefs.json`); later requests carry it in
-   * `x-desktop-prefs`. App code uses `useSetPreference()` from `~/lib/preferences` instead.
+   * `x-desktop-prefs`. App code goes through the host's preference helpers (`~/lib/preferences`
+   * in templates with the desktop shell) instead of calling this directly.
    */
   setPref(this: void, key: string, value: PreferenceValue): Promise<PreferenceUpdateResult>;
   /** Removes a preference; removing one that is not set is applied too. */

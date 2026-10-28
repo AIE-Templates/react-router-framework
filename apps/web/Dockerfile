@@ -12,9 +12,11 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN corepack enable pnpm && pnpm --version
 
 FROM base AS build-env
-# Manifests first, so the dependency layer is reused while only source changes.
+# Manifests first, so the dependency layer is reused while only source changes. Copy the manifest
+# of every workspace package the app depends on.
 COPY apps/web/package.json apps/web/
 COPY packages/server/package.json packages/server/
+COPY packages/shared/package.json packages/shared/
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile
 COPY . .
