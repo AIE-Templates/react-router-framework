@@ -4,6 +4,5 @@ packages:
   - bench/*
 
 allowBuilds:
-  electron: true
   electron-winstaller: false
   lefthook: true
