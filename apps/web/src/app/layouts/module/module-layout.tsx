@@ -6,6 +6,8 @@ import { usePanelEscape, usePanelState } from "../use-panel-state";
 
 export interface ModuleLayoutProps {
   moduleId: string;
+  /** Opt in once per page; nested or sibling modules keep the default div. */
+  contentAs?: "div" | "main";
   title: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
@@ -24,6 +26,7 @@ export interface ModuleLayoutProps {
 /** A module-scoped sidebar, workspace and optional auxiliary workspace. CSS owns width adaptation. */
 export function ModuleLayout({
   moduleId,
+  contentAs: Content = "div",
   title,
   actions,
   children,
@@ -67,7 +70,9 @@ export function ModuleLayout({
                 ×
               </button>
             </header>
-            <div className="module-scroll">{sidebar}</div>
+            <div className="module-scroll" data-scroll-restoration-id={`${moduleId}:sidebar`}>
+              {sidebar}
+            </div>
           </aside>
         )}
         <section className="module-panel module-workspace" aria-label="Workspace">
@@ -99,7 +104,9 @@ export function ModuleLayout({
               </button>
             )}
           </header>
-          <main className="module-scroll">{children}</main>
+          <Content className="module-scroll" data-scroll-restoration-id={`${moduleId}:workspace`}>
+            {children}
+          </Content>
         </section>
         {auxiliary && (
           <aside
@@ -119,7 +126,9 @@ export function ModuleLayout({
                 ×
               </button>
             </header>
-            <div className="module-scroll">{auxiliary}</div>
+            <div className="module-scroll" data-scroll-restoration-id={`${moduleId}:auxiliary`}>
+              {auxiliary}
+            </div>
           </aside>
         )}
       </div>
