@@ -22,7 +22,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 function Document({ children }: { children: React.ReactNode }) {
   const environment = useAppEnvironment();
-  const { shell, desktop, windowState } = environment;
+  const { shell, fullscreen, windowState } = environment;
   useEffect(() => {
     // Evidence that the client bundle ran and hydration finished, for tests and smoke checks.
     document.documentElement.dataset.hydrated = "true";
@@ -39,7 +39,9 @@ function Document({ children }: { children: React.ReactNode }) {
       data-chrome-enhancement={environment.enhancement}
       data-chrome-diagnostic={environment.diagnostic}
       data-chrome-diagnostic-fields={environment.diagnosticFields?.join(",")}
-      data-fullscreen={windowState ? String(windowState.fullscreen) : desktop ? String(desktop.fullscreen) : undefined}
+      data-fullscreen={
+        windowState ? String(windowState.fullscreen) : fullscreen !== undefined ? String(fullscreen) : undefined
+      }
     >
       <head>
         <meta charSet="utf-8" />

@@ -18,7 +18,7 @@ Web SSR, web SPA, desktop SSR and desktop SPA share this lifecycle. SPA unknown 
 
 ## Component contracts (LAY-03)
 
-- `AppRoot` remains mounted in the root Layout and manages the runtime. Inputs are optional shell and desktop request seeds plus children.
+- `AppRoot` remains mounted in the root Layout and manages the runtime. Inputs are optional shell, mode and fullscreen seeds plus children.
 - `useAppEnvironment()`, `useWindowChrome()`, `getDragRegionProps()` and `getInteractiveProps()` are the React environment bindings.
 - `BasicShell` accepts children and optional `title`, `actions`, `headerMode` and `overlayAppearance`.
 - `NavigationShell` adds `navigation`, `navigationLabel`, controlled `navigationOpen`, `defaultNavigationOpen` and `onNavigationOpenChange`.
