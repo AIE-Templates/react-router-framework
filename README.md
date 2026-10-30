@@ -47,3 +47,7 @@ Vitest runs in watch mode by default; use pnpm exec vitest run for a finite run.
 ## Derived application identity
 
 Before distribution, replace the placeholder app ID, product/package name, app protocol, icons and installer metadata in desktop package/build configuration. Configure signing, notarization, update channels and platform installation separately. Test-profile packaging and hardened release-profile are distinct. See apps/desktop/README.md.
+
+## Scroll and landmarks
+
+ContentScrollRestoration tracks root/module containers by history key, resets new navigation, restores back/forward and resolves fragments. It retains at most 100 entries within the current document. ModuleLayout defaults to div; choose one top-level contentAs="main" or provide one main element. moduleId must be unique per page. Use Router Link for application navigation.

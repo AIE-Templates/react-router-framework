@@ -26,7 +26,7 @@ Web SSR, web SPA, desktop SSR and desktop SPA share this lifecycle. SPA unknown 
 
 Each module panel supports controlled open state, an uncontrolled default and a change callback. Uncontrolled panels default to closed. Callbacks do not implicitly persist preferences. Application navigation and module sidebar state are independent. Opening a panel attempts to focus an interactive descendant; closing restores the trigger. Escape closes only the panel containing the event target. These panels are not modal dialogs with complete focus traps.
 
-Pages own accessible region labels and module composition.
+Module content defaults to div. A page sets contentAs="main" on one top-level module or supplies one main landmark itself. Nested/parallel modules keep div. moduleId must be unique within the page.
 
 ## Shell and title bar composition (LAY-04)
 
@@ -50,7 +50,7 @@ The top interaction band stays in the viewport while body content scrolls. Safet
 
 ## Sizing, scrolling and responsiveness (LAY-06)
 
-AppShell allocates the application area; modules respond to their allocated container space. Each scrolling region has one explicit owner.
+ContentScrollRestoration tracks .root-content and module panels by history entry key. New navigation resets positions, POP restores them and fragment navigation locates its target. The current document retains at most 100 entries; positions do not survive reload/restart. Router ScrollRestoration still owns the window.
 
 Ordinary headers use `--shell-header-height: 3rem` (48 CSS px at the default font size). Window headers use `--window-header-height`, inheriting that value. A larger WCO safe area increases layout height; Windows headers are not shrunk to the reported WCO height.
 

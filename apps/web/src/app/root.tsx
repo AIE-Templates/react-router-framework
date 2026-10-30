@@ -11,6 +11,7 @@ import {
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
+import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
 import { cspNonceContext } from "./lib/csp";
 import { desktopContext, shellContext } from "./lib/shell";
 import { AppRoot } from "./providers/app-root";
@@ -82,7 +83,7 @@ function Document({ children, nonce }: { children: React.ReactNode; nonce?: stri
           <div className="root-chrome-fallback" aria-hidden="true">
             <div className="window-safe-drag" data-window-drag="" />
           </div>
-          <div className="root-content">{children}</div>
+          <ContentScrollRestoration>{children}</ContentScrollRestoration>
         </div>
         <ScrollRestoration nonce={nonce} />
         <Scripts nonce={nonce} />

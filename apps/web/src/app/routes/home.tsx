@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 
 import { BasicShell, NavigationShell } from "../layouts/app-shell/app-shell";
 import { ModuleLayout } from "../layouts/module/module-layout";
@@ -25,9 +25,12 @@ export default function Home() {
       return next;
     });
   }
+  const homeParams = new URLSearchParams(params);
+  homeParams.set("shell", "navigation");
   const module = (
     <ModuleLayout
       moduleId="welcome"
+      contentAs="main"
       title="Layout foundation"
       sidebarTitle="Module navigation"
       sidebar={<p>This sidebar belongs to the current module.</p>}
@@ -78,7 +81,7 @@ export default function Home() {
       headerMode={headerMode}
       navigation={
         <>
-          <a href="/?shell=navigation">Home</a>
+          <Link to={{ search: `?${homeParams.toString()}` }}>Home</Link>
           <a href="https://reactrouter.com/docs">Docs</a>
         </>
       }
