@@ -25,6 +25,24 @@ const layout = (headerMode: "fused" | "standalone") => (
 );
 
 describe("layout composition", () => {
+  it("lets the page own one main landmark while nested and sibling modules remain containers", () => {
+    render(
+      <AppRoot>
+        <ModuleLayout moduleId="page" title="Page" contentAs="main">
+          <ModuleLayout moduleId="nested" title="Nested">
+            Nested content
+          </ModuleLayout>
+        </ModuleLayout>
+        <ModuleLayout moduleId="sibling" title="Sibling">
+          Sibling content
+        </ModuleLayout>
+      </AppRoot>,
+    );
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getByRole("main")).toHaveTextContent("Nested content");
+    expect(screen.getByRole("main")).not.toHaveTextContent("Sibling content");
+  });
+
   it("does not reserve a missing panel column even when its requested state is open", () => {
     const { container } = render(
       <AppRoot>
