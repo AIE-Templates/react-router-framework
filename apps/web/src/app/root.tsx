@@ -3,6 +3,7 @@ import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration }
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
+import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
 import { AppRoot } from "./providers/app-root";
 import { useAppEnvironment } from "./providers/environment";
 
@@ -55,7 +56,7 @@ function Document({ children }: { children: React.ReactNode }) {
           <div className="root-chrome-fallback" aria-hidden="true">
             <div className="window-safe-drag" data-window-drag="" />
           </div>
-          <div className="root-content">{children}</div>
+          <ContentScrollRestoration>{children}</ContentScrollRestoration>
         </div>
         <ScrollRestoration />
         <Scripts />
