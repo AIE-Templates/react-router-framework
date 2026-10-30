@@ -87,3 +87,52 @@ test("the window is shown, confined to app://app and has the trusted bridge", as
   await page.waitForTimeout(200);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
 });
+
+test("Home preserves the document, draft and existing query settings", async ({ desktop: { page } }) => {
+  await page.getByRole("combobox", { name: "Title bar" }).selectOption("standalone");
+  await page.getByRole("textbox", { name: "Module draft" }).fill("keep this draft");
+  await page.evaluate(() => Reflect.set(window, "layoutDocument", true));
+  await page.getByRole("link", { name: "Home", exact: true }).click();
+  await expect(page).toHaveURL("app://app/?header=standalone&shell=navigation");
+  await expect(page.getByRole("textbox", { name: "Module draft" })).toHaveValue("keep this draft");
+  expect(await page.evaluate(() => Reflect.get(window, "layoutDocument"))).toBe(true);
+  await expect(page.getByRole("main")).toHaveCount(1);
+});
+
+test("container scrolling resets on navigation and restores on back and forward", async ({ desktop: { page } }) => {
+  // Make both actual CSS scroll containers overflow without adding test-only application routes.
+  await page.evaluate(async () => {
+    const root = document.querySelector<HTMLElement>(".root-content")!;
+    const workspace = document.querySelector<HTMLElement>('[data-scroll-restoration-id="welcome:workspace"]')!;
+    for (const element of [root, workspace]) {
+      const spacer = document.createElement("div");
+      spacer.style.height = "2000px";
+      element.append(spacer);
+    }
+    root.scrollTop = 120;
+    workspace.scrollTop = 240;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const root = page.locator(".root-content");
+  const workspace = page.locator('[data-scroll-restoration-id="welcome:workspace"]');
+  await expect(root).toHaveJSProperty("scrollTop", 120);
+  await expect(workspace).toHaveJSProperty("scrollTop", 240);
+  // Avoid Playwright scrolling Home into view before the click and changing the position under test.
+  await page.getByRole("link", { name: "Home", exact: true }).evaluate((element) => {
+    if (element instanceof HTMLElement) element.click();
+  });
+  await expect(page).toHaveURL("app://app/?shell=navigation");
+  await expect(root).toHaveJSProperty("scrollTop", 0);
+  await expect(workspace).toHaveJSProperty("scrollTop", 0);
+  await page.evaluate(async () => {
+    document.querySelector<HTMLElement>(".root-content")!.scrollTop = 80;
+    document.querySelector<HTMLElement>('[data-scroll-restoration-id="welcome:workspace"]')!.scrollTop = 60;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.goBack();
+  await expect(root).toHaveJSProperty("scrollTop", 120);
+  await expect(workspace).toHaveJSProperty("scrollTop", 240);
+  await page.goForward();
+  await expect(root).toHaveJSProperty("scrollTop", 80);
+  await expect(workspace).toHaveJSProperty("scrollTop", 60);
+});
