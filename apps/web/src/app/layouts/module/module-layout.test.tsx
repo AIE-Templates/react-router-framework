@@ -39,6 +39,7 @@ describe("layout composition", () => {
       </AppRoot>,
     );
     expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getByRole("main").closest('section[aria-label], [role="region"]')).toBeNull();
     expect(screen.getByRole("main")).toHaveTextContent("Nested content");
     expect(screen.getByRole("main")).not.toHaveTextContent("Sibling content");
   });

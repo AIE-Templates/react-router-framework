@@ -75,7 +75,7 @@ export function ModuleLayout({
             </div>
           </aside>
         )}
-        <section className="module-panel module-workspace" aria-label="Workspace">
+        <section className="module-panel module-workspace" aria-label={Content === "main" ? undefined : "Workspace"}>
           <header className="module-header" data-chrome-edge="workspace" data-window-drag={fused ? "" : undefined}>
             {sidebar && (
               <button
