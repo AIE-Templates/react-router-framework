@@ -1,4 +1,4 @@
-import type { DesktopBridge, DesktopWindowState, OverlayAppearanceResult } from "@repo/shared";
+import type { WindowChromeBridge, DesktopWindowState, OverlayAppearanceResult } from "@repo/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import { createWindowChromeRuntime } from "./runtime";
@@ -6,7 +6,7 @@ import { createWindowChromeRuntime } from "./runtime";
 function bridge() {
   let listener: ((state: DesktopWindowState) => void) | undefined;
   const release = vi.fn<() => void>();
-  const value: DesktopBridge = {
+  const value: WindowChromeBridge = {
     platform: "darwin",
     version: "1",
     bootstrap: {
@@ -14,16 +14,14 @@ function bridge() {
       shell: { kind: "desktop", platform: "darwin", osVersion: "26" },
       mode: "native-overlay",
     },
-    subscribeWindowState: vi.fn<DesktopBridge["subscribeWindowState"]>((next) => {
+    subscribeWindowState: vi.fn<WindowChromeBridge["subscribeWindowState"]>((next) => {
       listener = next;
       return release;
     }),
-    updateOverlayAppearance: vi.fn<DesktopBridge["updateOverlayAppearance"]>(async () => ({
+    updateOverlayAppearance: vi.fn<WindowChromeBridge["updateOverlayAppearance"]>(async () => ({
       status: "applied",
       appearance: { color: "#ffffff" },
     })),
-    setPref: vi.fn<DesktopBridge["setPref"]>(async () => ({ status: "applied" })),
-    removePref: vi.fn<DesktopBridge["removePref"]>(async () => ({ status: "applied" })),
   };
   return {
     value,
@@ -33,6 +31,17 @@ function bridge() {
 }
 
 describe("document window chrome runtime", () => {
+  it("preserves initial mode and fullscreen facts without requiring a host request protocol", () => {
+    const runtime = createWindowChromeRuntime({
+      shell: { kind: "desktop", platform: "darwin", osVersion: "26" },
+      mode: "native-overlay",
+      fullscreen: true,
+    });
+    expect(runtime.getServerSnapshot()).toMatchObject({ mode: "native-overlay", fullscreen: true });
+    runtime.connect(bridge().value);
+    expect(runtime.getSnapshot().diagnostic).toBeUndefined();
+  });
+
   it("lets preload replace mismatched SSR facts and reports only differing field names", () => {
     const runtime = createWindowChromeRuntime({ shell: { kind: "desktop", platform: "win32", osVersion: "10" } });
     runtime.connect(bridge().value);

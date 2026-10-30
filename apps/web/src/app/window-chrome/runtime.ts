@@ -2,8 +2,7 @@ import {
   isDesktopWindowState,
   parseDesktopBootstrap,
   type ChromeMode,
-  type DesktopBridge,
-  type DesktopRequest,
+  type WindowChromeBridge,
   type DesktopWindowState,
   type OverlayAppearance,
   type OverlayAppearanceResult,
@@ -12,7 +11,7 @@ import {
 
 export interface AppEnvironment {
   shell: Shell;
-  desktop?: DesktopRequest;
+  fullscreen?: boolean;
   mode: ChromeMode;
   enhancement: "pending" | "available" | "unavailable";
   windowState?: DesktopWindowState;
@@ -22,15 +21,15 @@ export interface AppEnvironment {
 }
 
 /** Framework-free document runtime. No DOM reads or bridge calls during construction or SSR. */
-export function createWindowChromeRuntime(initial: { shell?: Shell; desktop?: DesktopRequest } = {}) {
+export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: ChromeMode; fullscreen?: boolean } = {}) {
   const serverSnapshot: AppEnvironment = {
     shell: initial.shell ?? { kind: "web" },
-    desktop: initial.desktop,
-    mode: initial.desktop?.chromeMode ?? "system-decorated",
+    fullscreen: initial.fullscreen,
+    mode: initial.mode ?? "system-decorated",
     enhancement: "pending",
   };
   let snapshot = serverSnapshot;
-  let bridge: DesktopBridge | undefined;
+  let bridge: WindowChromeBridge | undefined;
   let generation = 0;
   let release: (() => void) | undefined;
   const listeners = new Set<() => void>();
@@ -53,7 +52,7 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; desktop?: De
         listeners.delete(listener);
       };
     },
-    connect(candidate: DesktopBridge | undefined) {
+    connect(candidate: WindowChromeBridge | undefined) {
       disconnect();
       const current = generation;
       if (!candidate) {

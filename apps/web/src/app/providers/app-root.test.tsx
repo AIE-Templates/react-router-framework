@@ -1,4 +1,4 @@
-import type { DesktopBridge } from "@repo/shared";
+import type { WindowChromeBridge } from "@repo/shared";
 import { act, render, screen } from "@testing-library/react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -15,7 +15,7 @@ function Probe() {
     </span>
   );
 }
-function desktopBridge(): DesktopBridge {
+function desktopBridge(): WindowChromeBridge {
   return {
     platform: "darwin",
     version: "1",
@@ -24,13 +24,11 @@ function desktopBridge(): DesktopBridge {
       shell: { kind: "desktop", platform: "darwin", osVersion: "26" },
       mode: "system-decorated",
     },
-    subscribeWindowState: vi.fn<DesktopBridge["subscribeWindowState"]>(() => vi.fn<() => void>()),
-    updateOverlayAppearance: vi.fn<DesktopBridge["updateOverlayAppearance"]>(async () => ({
+    subscribeWindowState: vi.fn<WindowChromeBridge["subscribeWindowState"]>(() => vi.fn<() => void>()),
+    updateOverlayAppearance: vi.fn<WindowChromeBridge["updateOverlayAppearance"]>(async () => ({
       status: "unsupported",
       reason: "system-decorated",
     })),
-    setPref: vi.fn<DesktopBridge["setPref"]>(async () => ({ status: "applied" })),
-    removePref: vi.fn<DesktopBridge["removePref"]>(async () => ({ status: "applied" })),
   };
 }
 afterEach(() => {
@@ -53,7 +51,7 @@ describe("AppRoot", () => {
   it("hydrates web SPA markup first, confirms desktop after mount, and cleans up", async () => {
     const host = desktopBridge();
     const release = vi.fn<() => void>();
-    host.subscribeWindowState = vi.fn<DesktopBridge["subscribeWindowState"]>(() => release);
+    host.subscribeWindowState = vi.fn<WindowChromeBridge["subscribeWindowState"]>(() => release);
     const element = (
       <AppRoot shell={{ kind: "web" }}>
         <Probe />
