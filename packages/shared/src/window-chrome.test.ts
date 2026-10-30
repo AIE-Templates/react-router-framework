@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  DESKTOP_BOOTSTRAP_ARGUMENT,
-  desktopBootstrapFromArguments,
-  parseDesktopBootstrap,
-  parseOverlayAppearance,
-} from "./window-chrome.ts";
+import { parseDesktopBootstrap, parseOverlayAppearance } from "./window-chrome.ts";
 
 const bootstrap = {
   protocolVersion: 1,
@@ -15,7 +10,7 @@ const bootstrap = {
 
 describe("desktop bootstrap", () => {
   it("reads a frozen, bounded static protocol without window facts", () => {
-    const parsed = desktopBootstrapFromArguments([`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify(bootstrap)}`]);
+    const parsed = parseDesktopBootstrap(bootstrap);
     expect(parsed).toEqual(bootstrap);
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed?.shell)).toBe(true);
@@ -30,8 +25,6 @@ describe("desktop bootstrap", () => {
       { ...bootstrap, shell: { ...bootstrap.shell, platform: "other" } },
     ])
       expect(parseDesktopBootstrap(value)).toBeNull();
-    expect(desktopBootstrapFromArguments([`${DESKTOP_BOOTSTRAP_ARGUMENT}{`])).toBeNull();
-    expect(desktopBootstrapFromArguments([`${DESKTOP_BOOTSTRAP_ARGUMENT}${" ".repeat(2049)}`])).toBeNull();
   });
 });
 

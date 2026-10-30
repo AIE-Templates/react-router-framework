@@ -4,4 +4,6 @@ Browser-safe shared types, constants and validation. No Node imports or runtime 
 
 Shell describes host facts. Window chrome contracts describe bootstrap, revisioned native state, bounded appearance updates and a framework-independent bridge. Host identity is supplied by the entry, never user-agent/request inference. Native fullscreen and web fullscreen are distinct.
 
-This host includes desktop request headers, bootstrap/IPC contracts and shared preference validation. Main is the final trust boundary. Preferences are bounded user-controlled display data, not authorization or credentials.
+Generic WindowChromeBridge contains only chrome capabilities. Request headers, IPC constants, startup arguments and preference persistence are platform-owned. AppRoot consumes shell/mode/fullscreen seeds rather than a host request object.
+
+This platform includes desktop-protocol/desktop-request contracts, header constants and preference rules. DesktopBridge extends generic chrome with host preference methods. Main/preload both validate inputs; main remains authoritative. Keep server-only implementation and Electron runtime objects out of this package. Preferences allow bounded strings, finite numbers and booleans; keys and both ASCII-header/cookie byte budgets are validated consistently. They are display settings, not credentials or authorization.

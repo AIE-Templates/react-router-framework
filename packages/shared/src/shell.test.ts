@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shellFromEnv } from "./shell.ts";
+import { shellFromEnv } from "./desktop-protocol.ts";
 
 describe("shellFromEnv", () => {
   it("is web unless WEB_SHELL is desktop", () => {

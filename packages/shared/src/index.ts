@@ -1,3 +1,17 @@
+export { DESKTOP_PLATFORMS, type DesktopPlatform, type Shell, WEB_SHELL } from "./shell.ts";
+
+export {
+  type ChromeMode,
+  type DesktopBootstrap,
+  type WindowChromeBridge,
+  type DesktopWindowState,
+  type OverlayAppearance,
+  type OverlayAppearanceResult,
+  isDesktopWindowState,
+  parseDesktopBootstrap,
+  parseOverlayAppearance,
+} from "./window-chrome.ts";
+
 export {
   DESKTOP_HEADER_PREFIX,
   DESKTOP_HEADERS,
@@ -6,22 +20,7 @@ export {
   isDesktopHeader,
   parseDesktopHeaders,
 } from "./desktop-headers.ts";
-export { DESKTOP_PLATFORMS, type DesktopPlatform, type Shell, shellFromEnv, WEB_SHELL } from "./shell.ts";
 
-export {
-  type ChromeMode,
-  type DesktopBootstrap,
-  type DesktopBridge,
-  type DesktopWindowState,
-  type OverlayAppearance,
-  type OverlayAppearanceResult,
-  DESKTOP_BOOTSTRAP_ARGUMENT,
-  DESKTOP_CHROME_IPC,
-  desktopBootstrapFromArguments,
-  isDesktopWindowState,
-  parseDesktopBootstrap,
-  parseOverlayAppearance,
-} from "./window-chrome.ts";
 export {
   type PreferenceRejection,
   type PreferenceUpdateResult,
@@ -38,3 +37,11 @@ export {
   preferencesSize,
   sanitizePreferences,
 } from "./preferences.ts";
+
+export {
+  type DesktopBridge,
+  DESKTOP_BOOTSTRAP_ARGUMENT,
+  DESKTOP_CHROME_IPC,
+  desktopBootstrapFromArguments,
+  shellFromEnv,
+} from "./desktop-protocol.ts";

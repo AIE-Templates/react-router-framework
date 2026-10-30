@@ -1,3 +1,4 @@
+// Electron layer: host request and preference protocol.
 import { describe, expect, it } from "vitest";
 
 import { DESKTOP_HEADERS, isDesktopHeader, parseDesktopHeaders } from "./desktop-headers.ts";

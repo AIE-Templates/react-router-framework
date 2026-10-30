@@ -70,8 +70,6 @@ describe("Layout", () => {
       },
       subscribeWindowState: () => release,
       updateOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
-      setPref: async () => ({ status: "applied" }),
-      removePref: async () => ({ status: "applied" }),
     };
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(window, "scrollTo").mockImplementation(() => {});

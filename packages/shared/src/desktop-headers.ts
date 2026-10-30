@@ -1,3 +1,4 @@
+// Electron layer: host request and preference protocol.
 import type { ChromeMode } from "./window-chrome.ts";
 
 /**

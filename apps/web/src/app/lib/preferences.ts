@@ -1,6 +1,7 @@
 import {
   applyPreference,
   type DesktopBridge,
+  type WindowChromeBridge,
   PREFERENCE_COOKIE_PREFIX,
   preferenceCookieValue,
   preferencesFromCookies,
@@ -53,6 +54,16 @@ export class PreferenceError extends Error {
   }
 }
 
+function hasPreferences(bridge: WindowChromeBridge | undefined): bridge is DesktopBridge {
+  return (
+    !!bridge &&
+    "setPref" in bridge &&
+    typeof bridge.setPref === "function" &&
+    "removePref" in bridge &&
+    typeof bridge.removePref === "function"
+  );
+}
+
 /** One year: preferences outlive sessions. */
 const COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 
@@ -69,11 +80,10 @@ export async function writePreference(
   {
     bridge = globalThis.window?.desktop,
     doc = globalThis.document,
-  }: { bridge?: DesktopBridge; doc?: { cookie: string; location?: { protocol: string } | null } } = {},
+  }: { bridge?: WindowChromeBridge; doc?: { cookie: string; location?: { protocol: string } | null } } = {},
 ): Promise<void> {
   if (shell === "desktop") {
-    if (typeof bridge?.setPref !== "function" || typeof bridge.removePref !== "function")
-      throw new PreferenceError("bridge-unavailable");
+    if (!hasPreferences(bridge)) throw new PreferenceError("bridge-unavailable");
     const result = value === null ? await bridge.removePref(key) : await bridge.setPref(key, value);
     if (result.status !== "applied") throw new PreferenceError(result.reason);
     return;
