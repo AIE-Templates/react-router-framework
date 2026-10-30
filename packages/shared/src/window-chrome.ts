@@ -1,4 +1,3 @@
-import type { PreferenceUpdateResult, PreferenceValue } from "./preferences.ts";
 import { type Shell } from "./shell.ts";
 
 /** custom-controls is reserved; the first implementation never resolves to it. */
@@ -23,29 +22,13 @@ export interface OverlayAppearance {
 export type OverlayAppearanceResult =
   | { status: "applied"; appearance: OverlayAppearance }
   | { status: "unsupported" | "rejected"; reason: string };
-export interface DesktopBridge {
+export interface WindowChromeBridge {
   readonly platform: string;
   readonly version: string;
   readonly bootstrap: DesktopBootstrap | null;
   subscribeWindowState(this: void, listener: (state: DesktopWindowState) => void): () => void;
   updateOverlayAppearance(this: void, appearance: OverlayAppearance): Promise<OverlayAppearanceResult>;
-  /**
-   * Stores a preference in the main process (and `prefs.json`); later requests carry it in
-   * `x-desktop-prefs`. App code goes through the host's preference helpers (`~/lib/preferences`
-   * in templates with the desktop shell) instead of calling this directly.
-   */
-  setPref(this: void, key: string, value: PreferenceValue): Promise<PreferenceUpdateResult>;
-  /** Removes a preference; removing one that is not set is applied too. */
-  removePref(this: void, key: string): Promise<PreferenceUpdateResult>;
 }
-
-export const DESKTOP_BOOTSTRAP_ARGUMENT = "--desktop-bootstrap=";
-export const DESKTOP_CHROME_IPC = {
-  subscribe: "desktop:chrome:subscribe",
-  unsubscribe: "desktop:chrome:unsubscribe",
-  state: "desktop:chrome:state",
-  appearance: "desktop:chrome:appearance",
-} as const;
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -81,18 +64,6 @@ export function parseDesktopBootstrap(value: unknown): DesktopBootstrap | null {
       ...(sessionType !== undefined ? { sessionType } : {}),
     }),
   });
-}
-
-export function desktopBootstrapFromArguments(args: readonly string[]): DesktopBootstrap | null {
-  const value = args
-    .find((arg) => arg.startsWith(DESKTOP_BOOTSTRAP_ARGUMENT))
-    ?.slice(DESKTOP_BOOTSTRAP_ARGUMENT.length);
-  if (!value || value.length > 2048) return null;
-  try {
-    return parseDesktopBootstrap(JSON.parse(value));
-  } catch {
-    return null;
-  }
 }
 
 /** Restrict native appearance to hex colors and a conservative bounded integer height. */

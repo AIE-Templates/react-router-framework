@@ -22,26 +22,3 @@ export type Shell =
     };
 
 export const WEB_SHELL: Shell = Object.freeze({ kind: "web" });
-
-/**
- * The shell described by environment variables, for entries that are started by another process
- * rather than called with options: the desktop dev script starts `react-router dev` with
- * `WEB_SHELL=desktop`, `WEB_SHELL_PLATFORM` (`darwin`, `win32` or `linux`), `WEB_SHELL_OS_VERSION`
- * and optionally `WEB_SHELL_DESKTOP_ENV` and `WEB_SHELL_SESSION_TYPE`. Anything else, an unknown
- * platform included, is the web shell.
- */
-export function shellFromEnv(env: Record<string, string | undefined>): Shell {
-  const platform = env.WEB_SHELL_PLATFORM;
-  if (env.WEB_SHELL !== "desktop" || !isDesktopPlatform(platform)) return WEB_SHELL;
-  return {
-    kind: "desktop",
-    platform,
-    osVersion: env.WEB_SHELL_OS_VERSION ?? "",
-    ...(env.WEB_SHELL_DESKTOP_ENV ? { desktopEnv: env.WEB_SHELL_DESKTOP_ENV } : {}),
-    ...(env.WEB_SHELL_SESSION_TYPE ? { sessionType: env.WEB_SHELL_SESSION_TYPE } : {}),
-  };
-}
-
-function isDesktopPlatform(value: string | undefined): value is DesktopPlatform {
-  return (DESKTOP_PLATFORMS as readonly (string | undefined)[]).includes(value);
-}
