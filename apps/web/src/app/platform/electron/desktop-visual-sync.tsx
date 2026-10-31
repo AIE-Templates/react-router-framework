@@ -32,7 +32,8 @@ export function DesktopVisualSync({ children }: { children: ReactNode }) {
       failed = false;
       const current = ++sequence;
       setStatus({ status: "pending" });
-      void Promise.resolve(sync(preference))
+      void Promise.resolve()
+        .then(() => (active && sequence === current ? sync(preference) : undefined))
         .then((input: unknown) => {
           const result = isVisualThemeResult(input)
             ? input

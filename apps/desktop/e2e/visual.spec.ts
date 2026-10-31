@@ -62,3 +62,25 @@ test("visual controls persist through reload and synchronize the independent nat
   }
   expect(errors).toEqual([]);
 });
+
+test("reopening a macOS window uses the current mirror before renderer synchronization", async ({
+  desktop: { app, page },
+}) => {
+  test.skip(process.platform !== "darwin", "Other platforms quit after their last window closes");
+  await choose(page, "Color scheme", "dark", "Dark");
+  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
+  await expect
+    .poll(async () => JSON.parse(await readFile(join(userData, "visual-theme.json"), "utf8")))
+    .toEqual({ version: 1, colorScheme: "dark" });
+  const initialColor = await app.evaluate(
+    ({ app: electronApp, BrowserWindow }) =>
+      new Promise<string>((resolve) => {
+        electronApp.once("browser-window-created", (_event, window) =>
+          resolve(window.getBackgroundColor().toLowerCase()),
+        );
+        BrowserWindow.getAllWindows()[0].close();
+        electronApp.emit("activate");
+      }),
+  );
+  expect(initialColor).toBe("#17191d");
+});
