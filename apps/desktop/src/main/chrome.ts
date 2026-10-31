@@ -78,17 +78,15 @@ export function installWindowChrome(
   const clear = () => {
     subscription = undefined;
   };
-  const navigate = (_event: unknown, _url: string, inPlace: boolean, isMainFrame: boolean) => {
-    if (isMainFrame && !inPlace) {
-      clear();
-      override = {};
-      owner = undefined;
-      declarationRevision = 0;
-      themeRevision = 0;
-      if (themeDocument) expiredDocuments.add(themeDocument);
-      themeDocument = undefined;
-      applyTheme();
-    }
+  const navigate = () => {
+    clear();
+    override = {};
+    owner = undefined;
+    declarationRevision = 0;
+    themeRevision = 0;
+    if (themeDocument) expiredDocuments.add(themeDocument);
+    themeDocument = undefined;
+    applyTheme();
   };
   const subscribe = (event: IpcMainInvokeEvent, token: unknown) => {
     if (!trusted(event) || typeof token !== "string" || !/^[\w-]{1,80}$/.test(token)) return null;
@@ -204,7 +202,7 @@ export function installWindowChrome(
   ipcMain.handle(DESKTOP_CHROME_IPC.appearance, updateAppearance);
   ipcMain.on(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
   for (const event of STATE_EVENTS) win.on(event, refresh);
-  contents.on("did-start-navigation", navigate);
+  contents.on("did-navigate", navigate);
   contents.on("render-process-gone", clear);
   let disposed = false;
   const dispose = () => {
@@ -219,7 +217,7 @@ export function installWindowChrome(
     ipcMain.removeHandler(DESKTOP_CHROME_IPC.visualTheme);
     ipcMain.off(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
     for (const event of STATE_EVENTS) win.off(event, refresh);
-    contents.off("did-start-navigation", navigate);
+    contents.off("did-navigate", navigate);
     contents.off("render-process-gone", clear);
     win.off("closed", dispose);
   };

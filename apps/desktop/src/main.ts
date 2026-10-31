@@ -230,7 +230,20 @@ async function main(): Promise<void> {
   };
   // Every window, the first or one made on `activate`, goes through the keeper and gets the same
   // `closed` bookkeeping; a second close followed by a Dock click reopens like the first did.
-  windows = createWindowKeeper(() => createMainWindow(windowOptions));
+  windows = createWindowKeeper(() =>
+    createMainWindow({
+      ...windowOptions,
+      chrome: {
+        ...windowOptions.chrome,
+        policy: resolveChromePolicy({
+          platform: shell.platform,
+          requestedMode: chromePolicy.requestedMode,
+          themePreference: visualThemeStore.current(),
+          darkColors: nativeTheme.shouldUseDarkColors,
+        }),
+      },
+    }),
+  );
   const openMainWindow = () => {
     const opened = windows!.open();
     if (opened.created) {

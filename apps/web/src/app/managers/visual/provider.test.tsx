@@ -35,7 +35,15 @@ it("keeps one committed manager through registry rerenders and cleans up StrictM
   const { rerender, unmount } = render(tree);
   const manager = seen.at(-1);
   const count = active.size;
-  rerender(tree);
+  const renders = seen.length;
+  rerender(
+    <StrictMode>
+      <AppRoot>
+        <Consumer />
+      </AppRoot>
+    </StrictMode>,
+  );
+  expect(seen.length).toBeGreaterThan(renders);
   expect(seen.at(-1)).toBe(manager);
   expect(active.size).toBe(count);
   expect(count).toBeGreaterThan(0);

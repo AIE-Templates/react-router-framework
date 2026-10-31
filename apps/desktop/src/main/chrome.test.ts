@@ -94,7 +94,7 @@ describe("window chrome bridge", () => {
     win.focused = true;
     win.emit("focus");
     expect(source.send).toHaveBeenCalledTimes(1);
-    win.webContents.emit("did-start-navigation", {}, "app://app/", false, true);
+    win.webContents.emit("did-navigate", {}, "app://app/");
     win.maximized = true;
     win.emit("maximize");
     expect(source.send).toHaveBeenCalledTimes(1);
@@ -134,7 +134,7 @@ describe("window chrome bridge", () => {
     win.emit("closed");
     expect(handlers.size).toBe(0);
     expect(win.listenerCount("focus")).toBe(0);
-    expect(win.webContents.listenerCount("did-start-navigation")).toBe(0);
+    expect(win.webContents.listenerCount("did-navigate")).toBe(0);
   });
 
   it("reports macOS runtime appearance updates unavailable without moving native controls", () => {
@@ -199,7 +199,7 @@ describe("window chrome bridge", () => {
     expect(send("auto", 2)).toMatchObject({ persistence: "failed", background: "applied" });
     expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
     expect(send("dark", 1)).toMatchObject({ status: "rejected" });
-    win.webContents.emit("did-start-navigation", {}, "app://app/", false, true);
+    win.webContents.emit("did-navigate", {}, "app://app/");
     expect(send("dark", 3)).toMatchObject({ status: "rejected" });
     expect(
       invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "new", revision: 1, preference: "light" }),
@@ -224,7 +224,7 @@ describe("window chrome bridge", () => {
     expect(declare("shell", 6, null)).toMatchObject({ appearance: { color: "#abcdef" } });
     expect(declare("other", 5, null)).toMatchObject({ status: "rejected" });
     expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
-    win.webContents.emit("did-start-navigation", {}, "app://app/", false, true);
+    win.webContents.emit("did-navigate", {}, "app://app/");
     expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#17191d", symbolColor: "#f3f4f6", height: 48 });
     dispose();
   });
@@ -237,7 +237,25 @@ describe("window chrome bridge", () => {
       },
     });
     expect(() => win.emit("closed")).not.toThrow();
-    expect(contents.listenerCount("did-start-navigation")).toBe(0);
+    expect(contents.listenerCount("did-navigate")).toBe(0);
     expect(handlers.size).toBe(0);
   });
+});
+
+it("keeps the current document live when navigation starts but is cancelled", () => {
+  const { win, event, source, dispose } = setup();
+  invoke(DESKTOP_CHROME_IPC.subscribe, event, "live");
+  invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "live", revision: 1, preference: "dark" });
+  win.webContents.emit("did-start-navigation", {}, "https://example.com", false, true);
+  expect(
+    invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "live", revision: 2, preference: "light" }),
+  ).toMatchObject({ status: "processed" });
+  win.focused = true;
+  win.emit("focus");
+  expect(source.send).toHaveBeenCalledOnce();
+  win.webContents.emit("did-navigate", {}, "app://app/");
+  expect(
+    invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "live", revision: 3, preference: "dark" }),
+  ).toMatchObject({ status: "rejected" });
+  dispose();
 });
