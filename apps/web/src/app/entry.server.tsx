@@ -9,6 +9,7 @@ import { isRouteErrorResponse, ServerRouter } from "react-router";
 
 import { cspNonceContext } from "~/lib/csp";
 import { loggerContext } from "~/lib/logger";
+import { DocumentNonceContext } from "~/providers/document-nonce";
 
 // React Router's default Node entry (@react-router/dev/dist/config/defaults/entry.server.node.tsx),
 // changed to log errors with the request's logger, so they carry its requestId, including render
@@ -74,7 +75,9 @@ export default function handleRequest(
     let timeoutId: ReturnType<typeof setTimeout> | undefined = setTimeout(() => abort(), streamTimeout + 1000);
 
     const { pipe, abort } = renderToPipeableStream(
-      <ServerRouter context={routerContext} url={request.url} nonce={nonce} />,
+      <DocumentNonceContext.Provider value={nonce}>
+        <ServerRouter context={routerContext} url={request.url} nonce={nonce} />
+      </DocumentNonceContext.Provider>,
       {
         nonce,
         [readyOption]() {

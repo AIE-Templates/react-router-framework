@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import {
   isRouteErrorResponse,
   Links,
@@ -18,6 +18,7 @@ import { VisualInitScript } from "./managers/visual/init-script";
 import { readVisualRequestSeed } from "./managers/visual/persistence/cookie.server";
 import { AppRoot } from "./providers/app-root";
 import { AppUiProvider } from "./providers/app-ui-provider";
+import { DocumentNonceContext } from "./providers/document-nonce";
 import { useAppEnvironment } from "./providers/environment";
 
 import "./app.css";
@@ -110,9 +111,11 @@ function Document({ children, nonce }: { children: React.ReactNode; nonce?: stri
  * header the document loaded with names the first one, and React would only rewrite attributes.
  */
 function useCspNonce(fromLoader: string | undefined): string | undefined {
+  const requestNonce = useContext(DocumentNonceContext);
   const [nonce] = useState(
     () =>
       fromLoader ??
+      requestNonce ??
       (typeof document === "undefined"
         ? undefined
         : document.querySelector<HTMLScriptElement>("script[nonce]")?.nonce || undefined),
