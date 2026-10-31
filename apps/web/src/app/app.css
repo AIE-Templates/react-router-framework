@@ -705,12 +705,34 @@
 }
 
 @layer components {
-  :root[data-reduced-motion="reduce"] [class*="mantine-"] {
+  :root[data-reduced-motion="reduce"]
+    :is(
+      .mantine-Button-root,
+      .mantine-Input-input,
+      .mantine-Select-dropdown,
+      .mantine-Combobox-dropdown,
+      .mantine-Popover-dropdown,
+      .mantine-Menu-dropdown,
+      .mantine-Modal-content,
+      .mantine-Modal-overlay,
+      .mantine-Tooltip-tooltip
+    ) {
     transition-duration: 0s !important;
     animation-duration: 0s !important;
   }
   @media (prefers-reduced-motion: reduce) {
-    :root:not([data-reduced-motion]) [class*="mantine-"] {
+    :root:not([data-reduced-motion])
+      :is(
+        .mantine-Button-root,
+        .mantine-Input-input,
+        .mantine-Select-dropdown,
+        .mantine-Combobox-dropdown,
+        .mantine-Popover-dropdown,
+        .mantine-Menu-dropdown,
+        .mantine-Modal-content,
+        .mantine-Modal-overlay,
+        .mantine-Tooltip-tooltip
+      ) {
       transition-duration: 0s !important;
       animation-duration: 0s !important;
     }
