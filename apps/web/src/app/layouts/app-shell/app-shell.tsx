@@ -53,15 +53,19 @@ function Shell({
   usePanelEscape(navigation.open, navigation.setOpen, navigationId);
   const ready = !chrome.diagnostic || chrome.diagnostic === "host-mismatch";
   const { color, symbolColor, height } = overlayAppearance ?? {};
-  const updateAppearance = chrome.updateOverlayAppearance;
+  const updateAppearance = chrome.declareOverlayAppearance;
   useEffect(() => {
     if (
       chrome.enhancement === "available" &&
       (color !== undefined || symbolColor !== undefined || height !== undefined)
     ) {
-      void updateAppearance({ color, symbolColor, height });
+      void updateAppearance(navigationId, { color, symbolColor, height });
+      return () => {
+        void updateAppearance(navigationId, null);
+      };
     }
-  }, [chrome.enhancement, color, symbolColor, height, updateAppearance]);
+    return undefined;
+  }, [chrome.enhancement, color, symbolColor, height, updateAppearance, navigationId]);
   return (
     <ShellChromeContext.Provider value={headerMode === "fused" && ready}>
       <div
