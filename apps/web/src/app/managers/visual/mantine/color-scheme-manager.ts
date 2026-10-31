@@ -20,6 +20,8 @@ export function createMantineColorSchemeManager(visual: VisualManager): MantineC
           notify(next);
         }
       });
+      // A layout effect or suspended tree can change preferences before this subscription starts.
+      notify(previous);
     },
     unsubscribe: () => {
       release?.();
