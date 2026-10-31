@@ -6,6 +6,8 @@ export {
   type WindowChromeBridge,
   type DesktopWindowState,
   type OverlayAppearance,
+  type OverlayAppearanceDeclaration,
+  parseOverlayDeclaration,
   type OverlayAppearanceResult,
   isDesktopWindowState,
   parseDesktopBootstrap,
