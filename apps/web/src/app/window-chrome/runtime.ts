@@ -23,6 +23,20 @@ export interface AppEnvironment {
 // Recreated runtimes share the document bridge and must not restart its native sequence.
 const appearanceRevisions = new WeakMap<WindowChromeBridge, number>();
 
+async function sendDeclaration(
+  target: WindowChromeBridge,
+  owner: string,
+  appearance: OverlayAppearance | null,
+): Promise<OverlayAppearanceResult> {
+  try {
+    const revision = (appearanceRevisions.get(target) ?? 0) + 1;
+    appearanceRevisions.set(target, revision);
+    return await target.declareOverlayAppearance!({ owner, revision, appearance });
+  } catch {
+    return { status: "rejected", reason: "desktop-bridge-failed" };
+  }
+}
+
 /** Framework-free document runtime. No DOM reads or bridge calls during construction or SSR. */
 export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: ChromeMode; fullscreen?: boolean } = {}) {
   const serverSnapshot: AppEnvironment = {
@@ -36,15 +50,31 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
   let generation = 0;
   let release: (() => void) | undefined;
   const listeners = new Set<() => void>();
+  const appearanceOwners = new Set<string>();
   function publish(next: AppEnvironment) {
     snapshot = next;
     for (const listener of listeners) listener();
   }
   function disconnect() {
     generation++;
+    const previous = bridge;
     bridge = undefined;
-    release?.();
+    // Parent effect cleanup can run before AppShell cleanup. Release ownership while the bridge exists.
+    if (previous) {
+      for (const owner of appearanceOwners) void sendDeclaration(previous, owner, null);
+    }
+    appearanceOwners.clear();
+    const unsubscribe = release;
     release = undefined;
+    let diagnostic = snapshot.diagnostic;
+    try {
+      unsubscribe?.();
+    } catch {
+      diagnostic = "bridge-failed";
+    }
+    if (snapshot.enhancement === "available") {
+      publish({ ...snapshot, windowState: undefined, enhancement: "unavailable", diagnostic });
+    }
   }
   return {
     getSnapshot: () => snapshot,
@@ -58,9 +88,12 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
     connect(candidate: WindowChromeBridge | undefined) {
       disconnect();
       const current = generation;
+      const stop = () => {
+        if (current === generation) disconnect();
+      };
       if (!candidate) {
         publish({ ...snapshot, windowState: undefined, enhancement: "unavailable", diagnostic: undefined });
-        return disconnect;
+        return stop;
       }
       try {
         const bootstrap = parseDesktopBootstrap(candidate.bootstrap);
@@ -70,7 +103,7 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
           typeof candidate.updateOverlayAppearance !== "function"
         ) {
           publish({ ...snapshot, windowState: undefined, enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
-          return disconnect;
+          return stop;
         }
         bridge = candidate;
         const initialShell = serverSnapshot.shell;
@@ -99,7 +132,7 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
         disconnect();
         publish({ ...snapshot, enhancement: "unavailable", diagnostic: "bridge-failed" });
       }
-      return disconnect;
+      return stop;
     },
     async declareOverlayAppearance(
       this: void,
@@ -109,14 +142,10 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
       if (!bridge?.declareOverlayAppearance || snapshot.enhancement !== "available")
         return { status: "unsupported", reason: "appearance-declaration-unavailable" };
       const current = generation;
-      try {
-        const revision = (appearanceRevisions.get(bridge) ?? 0) + 1;
-        appearanceRevisions.set(bridge, revision);
-        const result = await bridge.declareOverlayAppearance({ owner, revision, appearance });
-        return current === generation ? result : { status: "rejected", reason: "desktop-document-changed" };
-      } catch {
-        return { status: "rejected", reason: "desktop-bridge-failed" };
-      }
+      if (appearance === null) appearanceOwners.delete(owner);
+      else appearanceOwners.add(owner);
+      const result = await sendDeclaration(bridge, owner, appearance);
+      return current === generation ? result : { status: "rejected", reason: "desktop-document-changed" };
     },
     async updateOverlayAppearance(this: void, appearance: OverlayAppearance): Promise<OverlayAppearanceResult> {
       if (!bridge || snapshot.enhancement !== "available")
