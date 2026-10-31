@@ -20,6 +20,9 @@ export interface AppEnvironment {
   diagnosticFields?: readonly string[];
 }
 
+// Recreated runtimes share the document bridge and must not restart its native sequence.
+const appearanceRevisions = new WeakMap<WindowChromeBridge, number>();
+
 /** Framework-free document runtime. No DOM reads or bridge calls during construction or SSR. */
 export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: ChromeMode; fullscreen?: boolean } = {}) {
   const serverSnapshot: AppEnvironment = {
@@ -31,7 +34,6 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
   let snapshot = serverSnapshot;
   let bridge: WindowChromeBridge | undefined;
   let generation = 0;
-  let appearanceRevision = 0;
   let release: (() => void) | undefined;
   const listeners = new Set<() => void>();
   function publish(next: AppEnvironment) {
@@ -108,7 +110,9 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
         return { status: "unsupported", reason: "appearance-declaration-unavailable" };
       const current = generation;
       try {
-        const result = await bridge.declareOverlayAppearance({ owner, revision: ++appearanceRevision, appearance });
+        const revision = (appearanceRevisions.get(bridge) ?? 0) + 1;
+        appearanceRevisions.set(bridge, revision);
+        const result = await bridge.declareOverlayAppearance({ owner, revision, appearance });
         return current === generation ? result : { status: "rejected", reason: "desktop-document-changed" };
       } catch {
         return { status: "rejected", reason: "desktop-bridge-failed" };
