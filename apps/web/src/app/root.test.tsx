@@ -20,7 +20,10 @@ afterEach(() => {
 
 describe("root loader", () => {
   it("reports no nonce without a Content-Security-Policy", () => {
-    expect(loader(loaderArgs(createTestContext()))).toEqual({ nonce: undefined });
+    expect(loader(loaderArgs(createTestContext()))).toEqual({
+      nonce: undefined,
+      managersInitialState: { visual: undefined },
+    });
   });
 });
 

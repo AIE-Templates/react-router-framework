@@ -15,6 +15,7 @@ import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
 import { cspNonceContext } from "./lib/csp";
 import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
+import { readVisualRequestSeed } from "./managers/visual/persistence/cookie.server";
 import { AppRoot } from "./providers/app-root";
 import { AppUiProvider } from "./providers/app-ui-provider";
 import { useAppEnvironment } from "./providers/environment";
@@ -30,10 +31,12 @@ export const links: Route.LinksFunction = () => [];
  * server must render the same `nonce` prop, so it travels with the loader data). Allowed in both
  * rendering modes; in a SPA build it runs once at build time.
  */
-export function loader({ context }: Route.LoaderArgs) {
-  return {
+export function loader({ request, context }: Route.LoaderArgs) {
+  const result = {
     nonce: context.get(cspNonceContext),
+    managersInitialState: { visual: readVisualRequestSeed(request) },
   };
+  return result;
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -41,7 +44,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData<typeof loader>("root");
   const nonce = useCspNonce(data?.nonce);
   return (
-    <AppRoot>
+    <AppRoot managersInitialState={data?.managersInitialState}>
       <Document nonce={nonce}>{children}</Document>
     </AppRoot>
   );
