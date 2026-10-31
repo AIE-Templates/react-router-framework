@@ -18,7 +18,11 @@ export function useAppEnvironment() {
 export function useWindowChrome() {
   const runtime = useRuntime();
   const environment = useAppEnvironment();
-  return { ...environment, updateOverlayAppearance: runtime.updateOverlayAppearance };
+  return {
+    ...environment,
+    updateOverlayAppearance: runtime.updateOverlayAppearance,
+    declareOverlayAppearance: runtime.declareOverlayAppearance,
+  };
 }
 
 /** Apply to the actual popup surface, including surfaces portalled outside the shell. */
