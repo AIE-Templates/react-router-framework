@@ -48,7 +48,7 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
               ${settle}
             }
             document.documentElement.dir = ${JSON.stringify(direction)};
-            const input = document.querySelector('.layout-demo input');
+            const input = document.querySelector('.demo-draft-label input');
             if (!input) throw new Error('module draft missing');
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Retained through all widths');
             input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -68,7 +68,7 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
               const module = document.querySelector('.module-layout');
               const sidebar = document.querySelector('.module-sidebar');
               const auxiliary = document.querySelector('.module-auxiliary');
-              const input = document.querySelector('.layout-demo input');
+              const input = document.querySelector('.demo-draft-label input');
               const moduleWidth = module.getBoundingClientRect().width;
               const mode = moduleWidth <= 640 ? 'compact' : moduleWidth <= 960 ? 'medium' : 'expanded';
               const overflow = [document.documentElement, document.querySelector('.root-content'), ...document.querySelectorAll('.module-scroll')].filter((element) => element && element.getBoundingClientRect().width > 0).map((element) => ({ region: element.className || element.tagName, excess: element.scrollWidth - element.clientWidth })).filter((value) => value.excess > 1);
