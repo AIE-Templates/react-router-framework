@@ -33,13 +33,19 @@ describe("root loader", () => {
       shell: { kind: "web" },
       desktop: undefined,
       nonce: undefined,
+      managersInitialState: { visual: undefined },
     });
   });
 
   it("reports the desktop shell and its per-request facts", () => {
     const context = createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts });
 
-    expect(loader(loaderArgs(context))).toEqual({ shell: desktop, desktop: facts, nonce: undefined });
+    expect(loader(loaderArgs(context))).toEqual({
+      shell: desktop,
+      desktop: facts,
+      nonce: undefined,
+      managersInitialState: { visual: undefined },
+    });
   });
 });
 

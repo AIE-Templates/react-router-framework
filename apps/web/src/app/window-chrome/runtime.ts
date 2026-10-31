@@ -31,6 +31,7 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
   let snapshot = serverSnapshot;
   let bridge: WindowChromeBridge | undefined;
   let generation = 0;
+  let appearanceRevision = 0;
   let release: (() => void) | undefined;
   const listeners = new Set<() => void>();
   function publish(next: AppEnvironment) {
@@ -97,6 +98,21 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
         publish({ ...snapshot, enhancement: "unavailable", diagnostic: "bridge-failed" });
       }
       return disconnect;
+    },
+    async declareOverlayAppearance(
+      this: void,
+      owner: string,
+      appearance: OverlayAppearance | null,
+    ): Promise<OverlayAppearanceResult> {
+      if (!bridge?.declareOverlayAppearance || snapshot.enhancement !== "available")
+        return { status: "unsupported", reason: "appearance-declaration-unavailable" };
+      const current = generation;
+      try {
+        const result = await bridge.declareOverlayAppearance({ owner, revision: ++appearanceRevision, appearance });
+        return current === generation ? result : { status: "rejected", reason: "desktop-document-changed" };
+      } catch {
+        return { status: "rejected", reason: "desktop-bridge-failed" };
+      }
     },
     async updateOverlayAppearance(this: void, appearance: OverlayAppearance): Promise<OverlayAppearanceResult> {
       if (!bridge || snapshot.enhancement !== "available")

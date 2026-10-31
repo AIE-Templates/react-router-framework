@@ -31,6 +31,7 @@ export function createVisualManager({
   let status: VisualStatus = { initialized: false, persistence: initial.persistence };
   const listeners = new Set<() => void>();
   const statusListeners = new Set<() => void>();
+  const commandListeners = new Set<(command: "update" | "reset") => void>();
   let connections = 0;
   let cleanup: (() => void) | undefined;
   let unsaved = false;
@@ -77,6 +78,7 @@ export function createVisualManager({
     // Persist even when the value is unchanged: a repeated command retries a failed save.
     persist(next, reset);
     publish(next);
+    for (const notify of commandListeners) notify(reset ? "reset" : "update");
   }
   function refreshStorage() {
     if (!host) return;
@@ -100,6 +102,12 @@ export function createVisualManager({
   });
   return {
     actions,
+    subscribeCommands(this: void, listener: (command: "update" | "reset") => void) {
+      commandListeners.add(listener);
+      return () => {
+        commandListeners.delete(listener);
+      };
+    },
     getSnapshot: () => state,
     getServerSnapshot: () => server,
     getStatus: () => status,

@@ -11,6 +11,7 @@ import type { Hono, MiddlewareHandler } from "hono";
 import type { Logger } from "pino";
 import { createRequestHandler, RouterContextProvider } from "react-router";
 
+import { visualCookie } from "~/config/visual-cookie";
 import { apiContext } from "~/lib/api";
 import { cspNonceContext } from "~/lib/csp";
 import { loggerContext } from "~/lib/logger";
@@ -65,6 +66,12 @@ export function createHostApp({ shell = WEB_SHELL, extend, csp = defaultPolicy()
   const app = createServerApp();
   // Loaders and actions call this app's API in-process, under the request's ID and logger.
   const fetch = createInProcessFetch(app);
+  if (visualCookie.enabled)
+    app.use(async (c, next) => {
+      await next();
+      if (c.res.headers.get("content-type")?.includes("text/html") || c.req.path.endsWith(".data"))
+        c.header("Cache-Control", "private, no-store");
+    });
   extend?.(app);
   app.use(shellMiddleware(shell));
   if (csp) app.use(cspMiddleware(csp));

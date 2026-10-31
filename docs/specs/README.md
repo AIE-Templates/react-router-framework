@@ -7,3 +7,5 @@ Settled design contracts; rationale belongs in [ADRs](../adrs/README.md).
 - [Electron host](electron-shell.spec.md)
 
 - [Global visual state](visual.spec.md)
+
+- [Optional visual cookie mirror](visual-cookie.spec.md)
