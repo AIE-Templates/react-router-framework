@@ -3,6 +3,7 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { expect, it } from "vitest";
 
 import { AppRoot } from "../providers/app-root";
+import { AppUiProvider } from "../providers/app-ui-provider";
 import Home from "./home";
 
 it("uses client navigation while preserving the basename, query settings and draft", async () => {
@@ -12,7 +13,9 @@ it("uses client navigation while preserving the basename, query settings and dra
         path: "/",
         Component: () => (
           <AppRoot>
-            <Home />
+            <AppUiProvider>
+              <Home />
+            </AppUiProvider>
           </AppRoot>
         ),
       },
