@@ -136,6 +136,11 @@ export function createVisualManager({
         } else setStatus({ ...status, initialized: true });
         if (applyToDocument) visualCodec.apply(config, state, host.document.documentElement);
         const onStorage = (event: StorageEvent) => {
+          try {
+            if (event.storageArea && event.storageArea !== host.localStorage) return;
+          } catch {
+            return;
+          }
           if (event.key === config.storageKey || event.key === null) refreshStorage();
         };
         host.addEventListener("storage", onStorage);
