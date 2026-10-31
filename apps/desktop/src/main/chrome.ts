@@ -140,11 +140,23 @@ export function installWindowChrome(
   };
   const declareAppearance = (event: IpcMainInvokeEvent, input: unknown): OverlayAppearanceResult => {
     if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
-    const next = parseOverlayDeclaration(input);
+    if (
+      typeof input !== "object" ||
+      input === null ||
+      !("document" in input) ||
+      typeof input.document !== "string" ||
+      !/^[\w-]{1,80}$/.test(input.document) ||
+      !("declaration" in input)
+    )
+      return { status: "rejected", reason: "invalid-appearance" };
+    if (expiredDocuments.has(input.document) || (themeDocument !== undefined && themeDocument !== input.document))
+      return { status: "rejected", reason: "stale-document" };
+    const next = parseOverlayDeclaration(input.declaration);
     if (!next) return { status: "rejected", reason: "invalid-appearance" };
     if (next.revision <= declarationRevision) return { status: "rejected", reason: "stale-declaration" };
     if (next.appearance !== null && owner !== undefined && owner !== next.owner)
       return { status: "rejected", reason: "appearance-owner-conflict" };
+    themeDocument = input.document;
     declarationRevision = next.revision;
     if (next.appearance !== null) {
       owner = next.owner;

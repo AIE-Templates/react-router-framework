@@ -136,7 +136,7 @@ const bridge: DesktopBridge = {
   declareOverlayAppearance(input) {
     const declaration = parseOverlayDeclaration(input);
     if (!declaration) return Promise.resolve({ status: "rejected", reason: "invalid-appearance" });
-    return invokeAppearance(DESKTOP_CHROME_IPC.declaration, declaration);
+    return invokeAppearance(DESKTOP_CHROME_IPC.declaration, { document: visualDocument, declaration });
   },
   async syncVisualTheme(preference) {
     if (!isVisualThemePreference(preference)) return { status: "rejected", reason: "invalid-request" };

@@ -40,7 +40,9 @@ export function loader({ request, context }: Route.LoaderArgs) {
     shell: context.get(shellContext),
     desktop: context.get(desktopContext),
     nonce: context.get(cspNonceContext),
-    managersInitialState: { visual: readVisualRequestSeed(request) },
+    managersInitialState: {
+      visual: context.get(shellContext).kind === "web" ? readVisualRequestSeed(request) : undefined,
+    },
   };
   return result;
 }

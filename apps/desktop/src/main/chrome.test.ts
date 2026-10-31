@@ -210,7 +210,7 @@ describe("window chrome bridge", () => {
   it("replaces and releases complete declarations without stale owners or requests clearing new values", () => {
     const { win, event, dispose } = setup();
     const declare = (owner: string, revision: number, appearance: unknown) =>
-      invoke(DESKTOP_CHROME_IPC.declaration, event, { owner, revision, appearance });
+      invoke(DESKTOP_CHROME_IPC.declaration, event, { document: "doc", declaration: { owner, revision, appearance } });
     expect(declare("shell", 1, { color: "#224466", height: 40 })).toMatchObject({ status: "applied" });
     invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "doc", revision: 1, preference: "dark" });
     expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#224466", symbolColor: "#f3f4f6", height: 40 });
