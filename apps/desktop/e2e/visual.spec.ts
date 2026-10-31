@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { Page } from "@playwright/test";
 
 import { expect, test, waitForApp } from "./desktop.ts";
@@ -27,14 +30,9 @@ test("visual controls persist through reload and synchronize the independent nat
       app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase()),
     )
     .toBe("#17191d");
+  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
   await expect
-    .poll(() =>
-      app.evaluate(async ({ app: electronApp }) => {
-        const { readFile } = await import("node:fs/promises");
-        const path = await import("node:path");
-        return JSON.parse(await readFile(path.join(electronApp.getPath("userData"), "visual-theme.json"), "utf8"));
-      }),
-    )
+    .poll(async () => JSON.parse(await readFile(join(userData, "visual-theme.json"), "utf8")))
     .toEqual({ version: 1, colorScheme: "dark" });
   await page.reload();
   await waitForApp(page);
