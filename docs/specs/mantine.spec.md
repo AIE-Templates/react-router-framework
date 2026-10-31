@@ -1,6 +1,7 @@
 # Mantine integration
 
-The UI branch pins @mantine/core and @mantine/hooks to 9.7.4. Core remains usable without either.
+The UI branch pins @mantine/core, @mantine/hooks, @mantine/modals, @mantine/notifications and
+@mantine/form to 9.7.4. Core remains usable without any of them.
 AppUiProvider mounts VisualMantineProvider inside body. The provider consumes the existing
 VisualManager and uses a stable custom color scheme adapter; equal-value subscription feedback
 never writes storage again. Each subscription reconciles the current preference immediately,
@@ -16,7 +17,20 @@ still go through VisualManager.
 Static theme and component defaults are centralized in visual/mantine/theme.ts. Motion defaults
 use the manager's resolved preference, with zero-duration transitions in reduced mode and CSS
 fallback before hydration. Portal interaction surfaces are no-drag; the transparent portal root
-is not. The sample exercises Select, Button, Tooltip, Popover, Menu and Modal.
+is not. The sample exercises Select, Button, Tooltip, Popover, Menu, Modal, a confirm modal and a
+notification; notifications are no-drag and follow the reduced-motion CSS.
+
+## Modals, notifications and forms
+
+AppUiProvider composes ModalsProvider and the single Notifications host directly inside
+VisualMantineProvider, so `modals.*` and `notifications.*` work from any route or event handler.
+Do not render another Notifications component. Modals opened through the manager reuse the Modal
+theme defaults. Static Notifications/Notification defaults live in theme.ts; the provider adds the
+motion-dependent transition duration and a direction-aware position (bottom-right, bottom-left in
+RTL). Notifications render only after mount, so these values cannot affect hydration. Context modals
+can be registered later through ModalsProvider `modals` with `MantineModalsOverride` augmentation.
+Notification styles are imported as `styles.layer.css` after core styles; modals and form ship no
+CSS. @mantine/form needs no provider. The sample menu exercises a confirm modal and notification.
 
 ## CSS and script failure
 

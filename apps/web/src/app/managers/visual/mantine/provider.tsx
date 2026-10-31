@@ -35,9 +35,16 @@ export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ n
         Menu: { defaultProps: { transitionProps } },
         Tooltip: { defaultProps: { transitionProps } },
         Modal: { defaultProps: { transitionProps } },
+        // Notifications render only after mount, so following the resolved direction cannot break hydration.
+        Notifications: {
+          defaultProps: {
+            transitionDuration: resolved.reducedMotion ? 0 : 250,
+            position: resolved.direction === "rtl" ? "bottom-left" : "bottom-right",
+          },
+        },
       },
     });
-  }, [resolved.reducedMotion]);
+  }, [resolved.reducedMotion, resolved.direction]);
   return (
     <DirectionProvider initialDirection={resolved.direction} detectDirection={false}>
       <MantineProvider
