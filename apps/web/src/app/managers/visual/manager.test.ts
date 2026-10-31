@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { STORAGE_KEYS } from "../../config/storage";
-import { visualBootstrapConfig, visualCodec, visualScript } from "./bootstrap";
+import { visualBootstrapConfig, visualCodec, visualScript, visualServerAttributes } from "./bootstrap";
 import { createVisualManager } from "./manager";
 
 const key = STORAGE_KEYS.visualPreferences;
@@ -140,4 +140,10 @@ describe("visual state ownership", () => {
       preferences: { direction: "rtl", colorScheme: "auto", reducedMotion: "auto" },
     });
   });
+});
+
+it("renders explicit integration seeds without resolving unknown automatic server preferences", () => {
+  const config = { ...visualBootstrapConfig, additionalColorSchemeAttributes: ["data-example-scheme", "onclick"] };
+  expect(visualServerAttributes("dark", config)).toEqual({ "data-example-scheme": "dark" });
+  expect(visualServerAttributes("auto", config)).toEqual({});
 });
