@@ -1,5 +1,5 @@
 import { Button, Group, Menu, Modal, Popover, Select, Text, Tooltip } from "@mantine/core";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { getInteractiveProps } from "../../providers/environment";
 import { visualCodec } from "./bootstrap";
@@ -10,6 +10,7 @@ export function VisualSettings() {
   const actions = useVisualActions();
   const status = useVisualStatus();
   const [opened, setOpened] = useState(false);
+  const previewButton = useRef<HTMLButtonElement>(null);
   const popup = getInteractiveProps();
   return (
     <fieldset className="visual-settings" {...popup}>
@@ -64,7 +65,9 @@ export function VisualSettings() {
         </Popover>
         <Menu>
           <Menu.Target>
-            <Button variant="subtle">Preview options</Button>
+            <Button ref={previewButton} variant="subtle">
+              Preview options
+            </Button>
           </Menu.Target>
           <Menu.Dropdown {...popup}>
             <Menu.Item onClick={() => setOpened(true)}>Open dialog</Menu.Item>
@@ -75,6 +78,8 @@ export function VisualSettings() {
         opened={opened}
         onClose={() => setOpened(false)}
         title="Appearance preview"
+        returnFocus={false}
+        onExitTransitionEnd={() => previewButton.current?.focus()}
         styles={{ content: { WebkitAppRegion: "no-drag" } }}
       >
         <Text>Direction and motion follow your global settings.</Text>
