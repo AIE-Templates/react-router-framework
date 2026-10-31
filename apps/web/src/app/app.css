@@ -1,4 +1,5 @@
-@layer theme, base, components, utilities;
+@layer theme, base, mantine, components, utilities;
+@import "@mantine/core/styles.layer.css";
 @import "tailwindcss";
 @custom-variant dark (&:where([data-color-scheme=dark], [data-color-scheme=dark] *));
 
@@ -62,9 +63,9 @@
     font-size: 0.875rem;
     -webkit-font-smoothing: antialiased;
   }
-  button,
-  input,
-  select {
+  button:not([class*="mantine-"]),
+  input:not([class*="mantine-"]),
+  select:not([class*="mantine-"]) {
     font: inherit;
   }
   button,
@@ -365,8 +366,8 @@
     font-size: 0.75rem;
     font-weight: 500;
   }
-  .layout-demo select,
-  .layout-demo input {
+  .layout-demo select:not([class*="mantine-"]),
+  .layout-demo input:not([class*="mantine-"]) {
     min-width: 0;
     width: 100%;
     height: 2.5rem;
@@ -379,7 +380,7 @@
     font-weight: 400;
     box-shadow: var(--surface-shadow);
   }
-  .layout-demo input::placeholder {
+  .layout-demo input:not([class*="mantine-"])::placeholder {
     color: var(--muted-foreground);
   }
   .demo-card-footnote {
@@ -683,8 +684,8 @@
     display: grid;
     gap: 0.4rem;
   }
-  .visual-settings select,
-  .visual-settings button {
+  .visual-settings select:not([class*="mantine-"]),
+  .visual-settings button:not([class*="mantine-"]) {
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--input);
     border-radius: 0.4rem;
@@ -700,5 +701,24 @@
       :is(.shell-nav-content a, .module-header button, .shell-navigation-toggle, .demo-resource) {
       transition: none;
     }
+  }
+}
+
+@layer components {
+  :root[data-reduced-motion="reduce"] [class*="mantine-"] {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :root:not([data-reduced-motion]) [class*="mantine-"] {
+      transition-duration: 0s !important;
+      animation-duration: 0s !important;
+    }
+  }
+  .mantine-Modal-content,
+  .mantine-Popover-dropdown,
+  .mantine-Menu-dropdown,
+  .mantine-Tooltip-tooltip {
+    -webkit-app-region: no-drag;
   }
 }

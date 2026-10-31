@@ -133,7 +133,7 @@ describe("visual state ownership", () => {
     expect(document.documentElement.dataset.colorScheme).toBe("dark");
     expect(document.documentElement.dir).toBe("rtl");
     expect(create().getSnapshot().resolved.colorScheme).toBe("dark");
-    expect(visualBootstrapConfig.additionalColorSchemeAttributes).toEqual([]);
+    expect(visualBootstrapConfig.additionalColorSchemeAttributes).toEqual(["data-mantine-color-scheme"]);
   });
   it("defaults invalid fields independently", () => {
     expect(visualCodec.decode('{"version":1,"preferences":{"direction":"rtl","colorScheme":"bogus"}}')).toMatchObject({
