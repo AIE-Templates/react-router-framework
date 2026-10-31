@@ -214,3 +214,27 @@ it("keeps the request seed when an existing storage record is malformed", () => 
   expect(localStorage.getItem(key)).toBe("malformed");
   disconnect();
 });
+
+it.each(["failed-write", "unavailable-read"])("refreshes automatic resolution on reconnect after %s", (failure) => {
+  const manager = create();
+  const disconnect = manager.connect();
+  if (failure === "failed-write") {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    manager.actions.setDirection("rtl");
+  } else {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+  }
+  const preferences = manager.getSnapshot().preferences;
+  disconnect();
+  dark = true;
+  reduced = true;
+  const reconnect = manager.connect();
+  expect(manager.getSnapshot().preferences).toEqual(preferences);
+  expect(manager.getSnapshot().resolved).toMatchObject({ colorScheme: "dark", reducedMotion: true });
+  expect(manager.getStatus().persistence).toBe(failure === "failed-write" ? "failed" : "unavailable");
+  reconnect();
+});

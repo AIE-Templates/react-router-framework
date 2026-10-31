@@ -14,6 +14,11 @@ SSR seeds the environment from trusted host context. SPA root loaders run at bui
 
 Components read `useAppEnvironment()`. Document attributes mirror that state and are not another authority. A normal browser without a bridge remains web. Invalid bootstrap or bridge failure reports unavailable enhancement while retaining safe layout. Authorization remains in the host.
 
+Runtime cleanup is idempotent and scoped to its connection generation. An old cleanup cannot tear
+down a newer connection. Disconnect marks enhancement unavailable, clears dynamic window state,
+and releases submitted appearance ownership before detaching the bridge. AppShell can then reclaim
+appearance after effect reconnection, independently of React parent/child cleanup order.
+
 Web SSR, web SPA, desktop SSR and desktop SPA share this lifecycle. SPA unknown paths report 404 through a wildcard/client loader after root fallback hydration; SSR retains HTTP 404. Enhancement readiness must not delay showing the first document.
 
 ## Component contracts (LAY-03)
