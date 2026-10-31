@@ -78,3 +78,34 @@ it("does not mirror desktop preferences even when Web cookie support is enabled"
   expect(screen.getByRole("status")).toHaveTextContent("disabled");
   expect(readVisualCookie(document.cookie).kind).toBe("missing");
 });
+
+it("does not echo external removal into local storage after starting with a stored preference", () => {
+  localStorage.setItem(
+    STORAGE_KEYS.visualPreferences,
+    JSON.stringify({ version: 1, preferences: { colorScheme: "dark" } }),
+  );
+  render(
+    <AppRoot>
+      <Consumer />
+    </AppRoot>,
+  );
+  act(() => {
+    localStorage.removeItem(STORAGE_KEYS.visualPreferences);
+    window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEYS.visualPreferences }));
+  });
+  expect(localStorage.getItem(STORAGE_KEYS.visualPreferences)).toBeNull();
+  expect(readVisualCookie(document.cookie)).toMatchObject({ preferences: DEFAULT_VISUAL_PREFERENCES });
+});
+
+it("replaces malformed local storage with the request seed once initialization completes", () => {
+  const seed = { colorScheme: "dark", direction: "rtl", reducedMotion: "reduce" } as const;
+  localStorage.setItem(STORAGE_KEYS.visualPreferences, "malformed");
+  render(
+    <AppRoot managersInitialState={{ visual: seed }}>
+      <Consumer />
+    </AppRoot>,
+  );
+  expect(manager.getSnapshot().preferences).toEqual(seed);
+  expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.visualPreferences)!)).toMatchObject({ preferences: seed });
+  expect(readVisualCookie(document.cookie)).toMatchObject({ preferences: seed });
+});
