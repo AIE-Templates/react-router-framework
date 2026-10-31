@@ -89,3 +89,13 @@ export function visualScript(seed?: VisualPreferences) {
       .replace(/\u2029/g, "\\u2029");
   return `(()=>{const k=(${visualKernel.toString()})();const c=${json(visualBootstrapConfig)};const r=k.read(c,${json(seed ?? null)},window);window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
 }
+
+/** Explicit request seeds must also select integration variables when scripts cannot run. */
+export function visualServerAttributes(colorScheme: VisualPreferences["colorScheme"], config = visualBootstrapConfig) {
+  if (colorScheme === "auto") return {};
+  return Object.fromEntries(
+    config.additionalColorSchemeAttributes
+      .filter((name) => /^data-[a-z][a-z0-9-]*$/.test(name))
+      .map((name) => [name, colorScheme]),
+  );
+}
