@@ -4,6 +4,7 @@ import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration }
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
+import { visualServerAttributes } from "./managers/visual/bootstrap";
 import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
 import { AppRoot } from "./providers/app-root";
@@ -36,6 +37,7 @@ function Document({ children }: { children: React.ReactNode }) {
     <html
       lang="en"
       suppressHydrationWarning
+      {...visualServerAttributes(visual.colorScheme)}
       dir={visual.direction}
       data-color-scheme={visual.colorScheme === "auto" ? undefined : visual.colorScheme}
       data-reduced-motion={visual.reducedMotion === "auto" ? undefined : visual.reducedMotion}
