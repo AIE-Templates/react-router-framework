@@ -55,19 +55,28 @@ export function visualKernel() {
       },
     };
   }
-  function read(config: VisualBootstrapConfig, seed?: VisualPreferences, host?: Window): VisualBootstrapRecord {
+  function read(config: VisualBootstrapConfig, seed?: VisualPreferences, host?: Window) {
+    let storagePresent: boolean | undefined;
     let preferences = parse(seed);
     let persistence: VisualBootstrapRecord["persistence"] = host ? "ready" : "unavailable";
     if (host) {
       try {
-        const stored = decode(host.localStorage.getItem(config.storageKey));
+        const raw = host.localStorage.getItem(config.storageKey);
+        storagePresent = raw !== null;
+        const stored = decode(raw);
         if (stored.kind === "valid") preferences = stored.preferences;
         if (stored.kind === "unsupported-version") persistence = stored.kind;
       } catch {
         persistence = "unavailable";
       }
     }
-    return { version: 1, storageKey: config.storageKey, state: resolve(preferences, host), persistence };
+    return {
+      version: 1 as const,
+      storageKey: config.storageKey,
+      state: resolve(preferences, host),
+      persistence,
+      storagePresent,
+    };
   }
   function apply(config: VisualBootstrapConfig, state: VisualState, root: HTMLElement) {
     root.setAttribute("data-color-scheme", state.resolved.colorScheme);
