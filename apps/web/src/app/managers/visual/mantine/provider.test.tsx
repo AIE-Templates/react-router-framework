@@ -1,18 +1,20 @@
-import { Rating, useMantineColorScheme } from "@mantine/core";
+import { Rating, useDirection, useMantineColorScheme } from "@mantine/core";
 import { act, render, screen } from "@testing-library/react";
-import { useLayoutEffect } from "react";
+import { Activity, useEffect, useLayoutEffect } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { STORAGE_KEYS } from "../../../config/storage";
 import { VisualManagerContext } from "../context";
+import { useVisualState } from "../hooks";
 import { createVisualManager } from "../manager";
 import { VisualMantineProvider } from "./provider";
 
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 const tree = (manager: ReturnType<typeof createVisualManager>) => (
   <VisualManagerContext.Provider value={manager}>
@@ -66,4 +68,60 @@ it("reconciles a preference changed by a child layout effect before Mantine subs
   );
   expect(screen.getByRole("status")).toHaveTextContent("dark");
   expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
+});
+
+function VisualProbe() {
+  const { resolved } = useVisualState();
+  const { colorScheme } = useMantineColorScheme();
+  const { dir } = useDirection();
+  return <output>{JSON.stringify({ resolved, colorScheme, dir })}</output>;
+}
+function ConnectedVisualTree({ manager }: { manager: ReturnType<typeof createVisualManager> }) {
+  useEffect(() => manager.connect(), [manager]);
+  return (
+    <VisualManagerContext.Provider value={manager}>
+      <VisualMantineProvider>
+        <VisualProbe />
+      </VisualMantineProvider>
+    </VisualManagerContext.Provider>
+  );
+}
+it("restores current system preferences in Mantine after suspended effects and a failed save", () => {
+  let matches = false;
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    media: query,
+    get matches() {
+      return matches;
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const manager = createVisualManager({ host: window });
+  const view = render(
+    <Activity mode="visible">
+      <ConnectedVisualTree manager={manager} />
+    </Activity>,
+  );
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  act(() => manager.actions.setDirection("rtl"));
+  view.rerender(
+    <Activity mode="hidden">
+      <ConnectedVisualTree manager={manager} />
+    </Activity>,
+  );
+  matches = true;
+  view.rerender(
+    <Activity mode="visible">
+      <ConnectedVisualTree manager={manager} />
+    </Activity>,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent('"colorScheme":"dark"');
+  expect(screen.getByRole("status")).toHaveTextContent('"reducedMotion":true');
+  expect(screen.getByRole("status")).toHaveTextContent('"dir":"rtl"');
+  expect(manager.getStatus().persistence).toBe("failed");
+  expect(document.documentElement.dataset.colorScheme).toBe("dark");
+  expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
+  view.unmount();
 });
