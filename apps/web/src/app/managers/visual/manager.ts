@@ -140,9 +140,12 @@ export function createVisualManager({
           const preferences =
             storagePresent && next.storagePresent === false ? DEFAULT_VISUAL_PREFERENCES : next.state.preferences;
           if (next.storagePresent !== undefined) storagePresent = next.storagePresent;
-          if (next.persistence !== "unavailable") publish(preferences);
+          publish(preferences);
           setStatus({ initialized: true, persistence: next.persistence });
-        } else setStatus({ ...status, initialized: true });
+        } else {
+          publish(state.preferences);
+          setStatus({ ...status, initialized: true });
+        }
         if (applyToDocument) visualCodec.apply(config, state, host.document.documentElement);
         const onStorage = (event: StorageEvent) => {
           try {
