@@ -1,5 +1,9 @@
 import type { PropsWithChildren } from "react";
-/** UI-specific providers belong inside body, never outside the document. */
-export function AppUiProvider({ children }: PropsWithChildren<{ nonce?: string }>) {
-  return children;
+
+import { VisualMantineProvider } from "../managers/visual/mantine/provider";
+
+import "virtual:visual-fallback.css";
+/** This slot is inside body so Mantine style elements remain valid document children. */
+export function AppUiProvider({ children, nonce }: PropsWithChildren<{ nonce?: string }>) {
+  return <VisualMantineProvider nonce={nonce}>{children}</VisualMantineProvider>;
 }

@@ -1,3 +1,4 @@
+import { TextInput } from "@mantine/core";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
@@ -168,15 +169,15 @@ export default function Home() {
                 <p>Try a thought, a task, or your next big idea.</p>
               </div>
             </div>
-            <label className="demo-draft-label">
-              Module draft
-              <input
+            <div className="demo-draft-label">
+              <TextInput
+                label="Module draft"
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 placeholder="What would you like to build?"
                 aria-describedby="draft-hint"
               />
-            </label>
+            </div>
             <div className="demo-note-preview">
               <div className="demo-note-meta">
                 <span>SCRATCHPAD</span>

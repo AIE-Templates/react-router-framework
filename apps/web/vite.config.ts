@@ -3,6 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
 
 import { honoServer } from "./src/host/vite-plugin.ts";
+import { visualFallbackPlugin } from "./visual-fallback-plugin.ts";
 
 export default defineConfig({
   // The desktop shell's dev script (apps/desktop/scripts/dev.ts) serves this dev server through
@@ -39,7 +40,7 @@ export default defineConfig({
     },
   },
   // honoServer() must come before reactRouter() so its middleware handles requests first.
-  plugins: [tailwindcss(), honoServer(), reactRouter()],
+  plugins: [visualFallbackPlugin(), tailwindcss(), honoServer(), reactRouter()],
   resolve: {
     // Workspace packages (@repo/*) resolve to their TypeScript source, so they build and hot-reload
     // with the app; their `dist` is for consumers outside the workspace.
