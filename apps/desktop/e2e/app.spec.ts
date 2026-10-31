@@ -100,6 +100,8 @@ test("Home preserves the document, draft and existing query settings", async ({ 
 });
 
 test("container scrolling resets on navigation and restores on back and forward", async ({ desktop: { page } }) => {
+  // SPA document hydration can finish before the initial route module resolves.
+  await expect(page.locator('[data-scroll-restoration-id="welcome:workspace"]')).toBeVisible();
   // Make both actual CSS scroll containers overflow without adding test-only application routes.
   await page.evaluate(async () => {
     const root = document.querySelector<HTMLElement>(".root-content")!;
