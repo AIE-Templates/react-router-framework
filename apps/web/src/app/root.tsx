@@ -13,6 +13,7 @@ import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
 import { cspNonceContext } from "./lib/csp";
+import { visualServerAttributes } from "./managers/visual/bootstrap";
 import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
 import { readVisualRequestSeed } from "./managers/visual/persistence/cookie.server";
@@ -63,6 +64,7 @@ function Document({ children, nonce }: { children: React.ReactNode; nonce?: stri
     <html
       lang="en"
       suppressHydrationWarning
+      {...visualServerAttributes(visual.colorScheme)}
       dir={visual.direction}
       data-color-scheme={visual.colorScheme === "auto" ? undefined : visual.colorScheme}
       data-reduced-motion={visual.reducedMotion === "auto" ? undefined : visual.reducedMotion}
