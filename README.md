@@ -51,3 +51,9 @@ Before distribution, replace the placeholder app ID, product/package name, app p
 ## Scroll and landmarks
 
 ContentScrollRestoration tracks root/module containers by history key, resets new navigation, restores back/forward and resolves fragments. It retains at most 100 entries within the current document. ModuleLayout defaults to div; choose one top-level contentAs="main" or provide one main element. moduleId must be unique per page. Use Router Link for application navigation.
+
+## Visual preferences
+
+VisualManager owns color scheme (`auto`, `light`, `dark`), text direction (`ltr`, `rtl`) and reduced motion (`auto`, `reduce`, `full`). Read `useVisualState` and update through `useVisualActions`; `useVisualStatus` distinguishes initialization and persistence failures. Global providers are composed by AppRoot, while the domain provider and registries live under `managers/visual`.
+
+The head initializer applies saved preferences before paint. Core uses `data-color-scheme`, `dir` and `data-reduced-motion`; missing automatic values fall back to system CSS media queries. Storage identifiers are centralized in `config/storage.ts`: choose your application ID before distributing an independent application. The body-only AppUiProvider slot hosts UI integrations. See the [visual specification](docs/specs/visual.spec.md) for snapshot, reset and persistence behavior.
