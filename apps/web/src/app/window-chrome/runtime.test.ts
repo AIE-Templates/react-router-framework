@@ -127,3 +127,24 @@ describe("document window chrome runtime", () => {
     expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "bridge-failed" });
   });
 });
+
+it("preserves declaration order when a provider recreates its runtime on the same document bridge", async () => {
+  const host = bridge();
+  let acceptedRevision = 0;
+  host.value.declareOverlayAppearance = async ({ revision, appearance }) => {
+    if (revision <= acceptedRevision) return { status: "rejected", reason: "stale-declaration" };
+    acceptedRevision = revision;
+    return { status: "applied", appearance: appearance ?? { height: 48 } };
+  };
+  const first = createWindowChromeRuntime();
+  const disconnect = first.connect(host.value);
+  await first.declareOverlayAppearance("first", { height: 40 });
+  await first.declareOverlayAppearance("first", null);
+  disconnect();
+  const replacement = createWindowChromeRuntime();
+  const release = replacement.connect(host.value);
+  expect(await replacement.declareOverlayAppearance("replacement", { height: 50 })).toMatchObject({
+    status: "applied",
+  });
+  release();
+});
