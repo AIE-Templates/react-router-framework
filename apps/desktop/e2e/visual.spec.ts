@@ -23,7 +23,9 @@ test("visual controls persist through reload and synchronize the independent nat
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
   await expect
-    .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor()))
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase()),
+    )
     .toBe("#17191d");
   await expect
     .poll(() =>
@@ -41,7 +43,9 @@ test("visual controls persist through reload and synchronize the independent nat
   await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
   await choose(page, "Color scheme", "light", "Light");
   await expect
-    .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor()))
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase()),
+    )
     .toBe("#ffffff");
   await choose(page, "Color scheme", "auto", "System");
   const systemDark = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches);
