@@ -19,7 +19,9 @@ are reported separately; repeated commands retry persistence. External storage c
 without write echoes. Concurrent documents use last successful whole-record write semantics.
 Reconnects reread storage without writing. Once a stored record has been observed, its removal
 restores defaults instead of replaying a request seed. A never-persisted seed and unsaved session
-commands survive effect replay; unavailable storage does not erase the current session.
+commands survive effect replay; unavailable storage does not erase the current session. Every
+connection re-resolves system appearance and motion, including after failed or unavailable storage,
+without retrying an unsaved write.
 
 ## First paint and hydration
 
