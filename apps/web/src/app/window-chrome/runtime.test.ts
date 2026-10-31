@@ -148,3 +148,56 @@ it("preserves declaration order when a provider recreates its runtime on the sam
   });
   release();
 });
+
+it("makes old connection cleanup harmless after a newer connection has taken over", () => {
+  const runtime = createWindowChromeRuntime();
+  const first = bridge();
+  const stopFirst = runtime.connect(first.value);
+  const second = bridge();
+  const stopSecond = runtime.connect(second.value);
+  stopFirst();
+  stopFirst();
+  second.emit(1);
+  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "available", windowState: { revision: 1 } });
+  expect(second.release).not.toHaveBeenCalled();
+  stopSecond();
+  expect(second.release).toHaveBeenCalledOnce();
+  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", windowState: undefined });
+});
+
+it("contains a bridge cleanup failure and permits a fresh connection", () => {
+  const runtime = createWindowChromeRuntime();
+  const host = bridge();
+  host.release.mockImplementationOnce(() => {
+    throw new Error("bridge lost during cleanup");
+  });
+  const stop = runtime.connect(host.value);
+  expect(stop).not.toThrow();
+  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "bridge-failed" });
+  runtime.connect(bridge().value);
+  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "available", diagnostic: undefined });
+});
+
+it("releases a submitted owner even while its declaration response is still pending", async () => {
+  const runtime = createWindowChromeRuntime();
+  const host = bridge();
+  let finish!: (result: OverlayAppearanceResult) => void;
+  const applied: OverlayAppearanceResult = { status: "applied", appearance: { height: 40 } };
+  const declare = vi
+    .fn<NonNullable<WindowChromeBridge["declareOverlayAppearance"]>>()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(applied);
+  host.value.declareOverlayAppearance = declare;
+  const stop = runtime.connect(host.value);
+  const result = runtime.declareOverlayAppearance("shell", { height: 40 });
+  stop();
+  expect(declare).toHaveBeenCalledTimes(2);
+  expect(declare).toHaveBeenLastCalledWith({ owner: "shell", revision: 2, appearance: null });
+  finish(applied);
+  expect(await result).toEqual({ status: "rejected", reason: "desktop-document-changed" });
+});
