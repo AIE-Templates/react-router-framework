@@ -23,9 +23,12 @@ export function createVisualManager({
   const bootstrap = host?.frameworkVisualBootstrap;
   const validBootstrap =
     bootstrap?.version === 1 && bootstrap.storageKey === config.storageKey && bootstrap.state?.preferences;
-  const initial = validBootstrap
-    ? { ...bootstrap, state: visualCodec.resolve(visualCodec.parse(bootstrap.state.preferences), host) }
-    : visualCodec.read(config, initialPreferences, host);
+  const stored = visualCodec.read(config, initialPreferences, host);
+  // The bootstrap is a fallback for inaccessible storage, not a replayable preference authority.
+  const initial =
+    validBootstrap && stored.persistence === "unavailable"
+      ? { ...stored, state: visualCodec.resolve(visualCodec.parse(bootstrap.state.preferences), host) }
+      : stored;
   let state = freeze(initial.state);
   const serverStatus: VisualStatus = Object.freeze({ initialized: false, persistence: "unavailable" });
   let status: VisualStatus = { initialized: false, persistence: initial.persistence };
