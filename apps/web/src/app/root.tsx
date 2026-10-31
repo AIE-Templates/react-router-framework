@@ -4,7 +4,10 @@ import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration }
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
+import { useVisualManager } from "./managers/visual/hooks";
+import { VisualInitScript } from "./managers/visual/init-script";
 import { AppRoot } from "./providers/app-root";
+import { AppUiProvider } from "./providers/app-ui-provider";
 import { useAppEnvironment } from "./providers/environment";
 
 import "./app.css";
@@ -23,6 +26,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 function Document({ children }: { children: React.ReactNode }) {
   const environment = useAppEnvironment();
+  const visual = useVisualManager().getServerSnapshot().preferences;
   const { shell, fullscreen, windowState } = environment;
   useEffect(() => {
     // Evidence that the client bundle ran and hydration finished, for tests and smoke checks.
@@ -31,6 +35,10 @@ function Document({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
+      suppressHydrationWarning
+      dir={visual.direction}
+      data-color-scheme={visual.colorScheme === "auto" ? undefined : visual.colorScheme}
+      data-reduced-motion={visual.reducedMotion === "auto" ? undefined : visual.reducedMotion}
       data-shell={shell.kind}
       data-platform={shell.kind === "desktop" ? shell.platform : undefined}
       data-titlebar={
@@ -48,16 +56,19 @@ function Document({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style id="window-chrome-safety">{CHROME_SAFETY_CSS}</style>
+        <VisualInitScript />
         <Meta />
         <Links />
       </head>
       <body>
-        <div className="root-frame">
-          <div className="root-chrome-fallback" aria-hidden="true">
-            <div className="window-safe-drag" data-window-drag="" />
+        <AppUiProvider>
+          <div className="root-frame">
+            <div className="root-chrome-fallback" aria-hidden="true">
+              <div className="window-safe-drag" data-window-drag="" />
+            </div>
+            <ContentScrollRestoration>{children}</ContentScrollRestoration>
           </div>
-          <ContentScrollRestoration>{children}</ContentScrollRestoration>
-        </div>
+        </AppUiProvider>
         <ScrollRestoration />
         <Scripts />
       </body>

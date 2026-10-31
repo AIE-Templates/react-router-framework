@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router";
 
 import { BasicShell, NavigationShell } from "../layouts/app-shell/app-shell";
 import { ModuleLayout } from "../layouts/module/module-layout";
+import { VisualSettings } from "../managers/visual/settings";
 import { useAppEnvironment } from "../providers/environment";
 import { DemoIcon } from "../welcome/demo-icon";
 import { Welcome } from "../welcome/welcome";
@@ -95,6 +96,7 @@ export default function Home() {
           </span>
         </header>
 
+        <VisualSettings />
         <div className="demo-grid">
           <section id="layout-settings" className="demo-card" aria-labelledby="layout-settings-title">
             <div className="demo-card-heading">
