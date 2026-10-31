@@ -22,7 +22,7 @@ without write echoes. Concurrent documents use last successful whole-record writ
 
 A single `VisualInitScript` in head uses the same self-contained parser as the runtime. It reads local
 storage, resolves system preferences, applies attributes and hands off a document-local bootstrap
-record. It accepts a CSP nonce; its bytes are deterministic for static rendering. UI integrations can
+record. Fresh accessible storage takes precedence when a manager is recreated; the bootstrap is only a fallback if storage access fails. It accepts a CSP nonce; its bytes are deterministic for static rendering. UI integrations can
 supply extra color attributes through data-only `config/visual-integration.ts`.
 
 Core uses `data-color-scheme`, standard `dir`, and `data-reduced-motion`. Server-unknown auto attributes
