@@ -3,12 +3,15 @@
 The UI branch pins @mantine/core and @mantine/hooks to 9.7.4. Core remains usable without either.
 AppUiProvider mounts VisualMantineProvider inside body. The provider consumes the existing
 VisualManager and uses a stable custom color scheme adapter; equal-value subscription feedback
-never writes storage again. Clearing the Mantine preference resets only the color scheme.
+never writes storage again. Each subscription reconciles the current preference immediately,
+including changes made before subscription or while effects were disconnected. Clearing the Mantine preference resets only the color scheme.
 
 Core CSS reads data-color-scheme. The UI integration's data-only configuration adds
 data-mantine-color-scheme to the same prepaint script and runtime mapping. There is no second
-ColorSchemeScript. DirectionProvider uses the actual client direction and a cleanup-safe bridge;
-application commands still go through VisualManager.
+ColorSchemeScript. DirectionProvider renders with the hydration-safe visual snapshot so direction-dependent component
+markup matches the server. Its layout-effect bridge adopts the actual client direction before paint
+and subscribes to later changes without restoring a default html direction. Application commands
+still go through VisualManager.
 
 Static theme and component defaults are centralized in visual/mantine/theme.ts. Motion defaults
 use the manager's resolved preference, with zero-duration transitions in reduced mode and CSS
