@@ -10,6 +10,9 @@ or authorization data. The per-request server reader validates it and returns on
 Registries distribute that seed to the provider; revalidation does not recreate the manager.
 
 Local storage wins at client bootstrap; a valid cookie seed fills missing browser preferences.
+Initialization attempts to save the adopted seed once when local storage is missing or malformed;
+future-version records are preserved. Later storage events never trigger initialization writes.
+External deletion or clear restores defaults and updates the cookie without recreating a local record.
 The cookie is an adapter mirror, never a second application command API. Writes are verified and
 reported through useVisualCookieStatus, independently of localStorage persistence. A retry is
 available. Whole reset can replace a future-version cookie; ordinary writes cannot downgrade it.
