@@ -55,13 +55,15 @@ function setup(platform = "win32") {
   const win = new FakeWindow();
   const source = frame();
   const event = { senderFrame: source, allowed: true };
-  const dispose = installWindowChrome(win, resolveChromePolicy({ platform }), trusted, log);
-  return { win, event, source, dispose };
+  const store = { current: () => "auto" as const, save: vi.fn<() => boolean>(() => true) };
+  const dispose = installWindowChrome(win, resolveChromePolicy({ platform }), trusted, log, store);
+  return { win, event, source, dispose, store };
 }
 
 beforeEach(() => {
   handlers.clear();
   vi.clearAllMocks();
+  theme.shouldUseDarkColors = false;
 });
 
 describe("window chrome bridge", () => {
@@ -162,7 +164,7 @@ describe("window chrome bridge", () => {
     expect(old.win.listenerCount("focus")).toBe(0);
     fresh.dispose();
   });
-  it("hands color ownership to an accepted renderer request while height-only updates keep system colors", () => {
+  it("keeps overrides separate from theme backgrounds and fills missing overlay fields from the theme", () => {
     const { win, event, dispose } = setup();
     const updated = theme.on.mock.calls.find(([name]) => name === "updated")![1];
     invoke(DESKTOP_CHROME_IPC.appearance, event, { height: 40 });
@@ -170,12 +172,60 @@ describe("window chrome bridge", () => {
     updated();
     expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#17191d", symbolColor: "#f3f4f6", height: 40 });
     invoke(DESKTOP_CHROME_IPC.appearance, event, { color: "#224466" });
-    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#224466");
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
     const writes = win.setTitleBarOverlay.mock.calls.length;
     theme.shouldUseDarkColors = false;
     updated();
-    expect(win.setTitleBarOverlay).toHaveBeenCalledTimes(writes);
-    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#224466");
+    expect(win.setTitleBarOverlay).toHaveBeenCalledTimes(writes + 1);
+    expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#224466", symbolColor: "#202124", height: 40 });
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
+    dispose();
+  });
+  it("keeps native theme, background, overlay support and persistence results independent", () => {
+    const { win, event, store, dispose } = setup("darwin");
+    const send = (preference: string, revision: number) =>
+      invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "doc", revision, preference });
+    expect(send("dark", 1)).toEqual({
+      status: "processed",
+      background: "applied",
+      overlay: "unsupported",
+      persistence: "saved",
+    });
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
+    theme.shouldUseDarkColors = false;
+    theme.on.mock.calls.find(([name]) => name === "updated")![1]();
+    expect(win.setBackgroundColor).toHaveBeenCalledTimes(1);
+    store.save.mockReturnValueOnce(false);
+    expect(send("auto", 2)).toMatchObject({ persistence: "failed", background: "applied" });
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
+    expect(send("dark", 1)).toMatchObject({ status: "rejected" });
+    win.webContents.emit("did-start-navigation", {}, "app://app/", false, true);
+    expect(send("dark", 3)).toMatchObject({ status: "rejected" });
+    expect(
+      invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "new", revision: 1, preference: "light" }),
+    ).toMatchObject({ status: "processed" });
+    expect(win.setTitleBarOverlay).not.toHaveBeenCalled();
+    dispose();
+  });
+  it("replaces and releases complete declarations without stale owners or requests clearing new values", () => {
+    const { win, event, dispose } = setup();
+    const declare = (owner: string, revision: number, appearance: unknown) =>
+      invoke(DESKTOP_CHROME_IPC.declaration, event, { owner, revision, appearance });
+    expect(declare("shell", 1, { color: "#224466", height: 40 })).toMatchObject({ status: "applied" });
+    invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "doc", revision: 1, preference: "dark" });
+    expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#224466", symbolColor: "#f3f4f6", height: 40 });
+    expect(declare("shell", 2, { height: 42 })).toMatchObject({ appearance: { color: "#17191d", height: 42 } });
+    expect(declare("other", 3, { height: 50 })).toMatchObject({
+      status: "rejected",
+      reason: "appearance-owner-conflict",
+    });
+    declare("shell", 4, null);
+    declare("other", 5, { color: "#abcdef" });
+    expect(declare("shell", 6, null)).toMatchObject({ appearance: { color: "#abcdef" } });
+    expect(declare("other", 5, null)).toMatchObject({ status: "rejected" });
+    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
+    win.webContents.emit("did-start-navigation", {}, "app://app/", false, true);
+    expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#17191d", symbolColor: "#f3f4f6", height: 48 });
     dispose();
   });
   it("cleans up after Electron destroys the BrowserWindow webContents getter", () => {

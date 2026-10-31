@@ -11,3 +11,5 @@ Accepted decisions explain why the design takes its current form. Contracts are 
 - [Restore container scroll by history entry and make main landmarks explicit](0007-container-scroll-and-landmarks.md)
 
 - [Isolate visual preferences from UI and host adapters](0008-visual-manager.md)
+
+- [Desktop visual mirror](0009-desktop-visual-mirror.md)

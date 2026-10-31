@@ -4,11 +4,15 @@ import {
   type OverlayAppearance,
   type OverlayAppearanceResult,
   parseOverlayAppearance,
+  parseOverlayDeclaration,
+  isVisualThemePreference,
+  type VisualThemeResult,
 } from "@repo/shared";
 import { type IpcMainEvent, type IpcMainInvokeEvent, ipcMain, nativeTheme, type WebFrameMain } from "electron";
 
 import { chromeAppearance, type ChromePolicy } from "./chrome-policy.ts";
 import type { Logger } from "./log.ts";
+import type { VisualThemeStore } from "./visual-theme.ts";
 
 // The shell owns one current window. A late close from an old window cannot remove its successor's IPC handlers.
 let installedCleanup: (() => void) | undefined;
@@ -35,13 +39,20 @@ export function installWindowChrome(
   policy: ChromePolicy,
   trusted: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
   log: Logger,
+  themeStore?: VisualThemeStore,
 ): () => void {
   installedCleanup?.();
   // Electron's webContents getter throws once BrowserWindow is destroyed; retain the emitter for cleanup.
   const contents = win.webContents;
   let subscription: Subscription | undefined;
   let revision = 0;
-  let callerOwnsColors = false;
+  let preference = policy.themePreference;
+  let override: OverlayAppearance = {};
+  let owner: string | undefined;
+  let declarationRevision = 0;
+  let themeRevision = 0;
+  let themeDocument: string | undefined;
+  const expiredDocuments = new Set<string>();
   let appearance: OverlayAppearance = { ...policy.appearance };
   const read = (): DesktopWindowState => ({
     revision,
@@ -68,7 +79,16 @@ export function installWindowChrome(
     subscription = undefined;
   };
   const navigate = (_event: unknown, _url: string, inPlace: boolean, isMainFrame: boolean) => {
-    if (isMainFrame && !inPlace) clear();
+    if (isMainFrame && !inPlace) {
+      clear();
+      override = {};
+      owner = undefined;
+      declarationRevision = 0;
+      themeRevision = 0;
+      if (themeDocument) expiredDocuments.add(themeDocument);
+      themeDocument = undefined;
+      applyTheme();
+    }
   };
   const subscribe = (event: IpcMainInvokeEvent, token: unknown) => {
     if (!trusted(event) || typeof token !== "string" || !/^[\w-]{1,80}$/.test(token)) return null;
@@ -80,45 +100,94 @@ export function installWindowChrome(
     const active = subscription;
     if (trusted(event) && active && active.token === token && active.frame === event.senderFrame) clear();
   };
+  const overlayAvailable = policy.resolvedMode === "native-overlay" && policy.platform !== "darwin";
+  const applyOverlay = (): OverlayAppearanceResult => {
+    if (!overlayAvailable) return { status: "unsupported", reason: "native-overlay-appearance-unavailable" };
+    const dark = preference === "dark" || (preference === "auto" && nativeTheme.shouldUseDarkColors);
+    const merged = { ...chromeAppearance(dark), height: policy.appearance.height, ...override };
+    try {
+      if (
+        merged.color !== appearance.color ||
+        merged.symbolColor !== appearance.symbolColor ||
+        merged.height !== appearance.height
+      )
+        win.setTitleBarOverlay(merged);
+      appearance = merged;
+      return { status: "applied", appearance: { ...appearance } };
+    } catch {
+      log.warn({}, "window overlay appearance update failed");
+      return { status: "rejected", reason: "native-update-failed" };
+    }
+  };
+  const applyTheme = (): Pick<Extract<VisualThemeResult, { status: "processed" }>, "background" | "overlay"> => {
+    let background: "applied" | "failed" = "applied";
+    try {
+      const dark = preference === "dark" || (preference === "auto" && nativeTheme.shouldUseDarkColors);
+      win.setBackgroundColor(chromeAppearance(dark).color);
+    } catch {
+      background = "failed";
+    }
+    const result = applyOverlay();
+    return { background, overlay: result.status === "rejected" ? "failed" : result.status };
+  };
   const updateAppearance = (event: IpcMainInvokeEvent, input: unknown): OverlayAppearanceResult => {
     if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
     const next = parseOverlayAppearance(input);
     if (!next) return { status: "rejected", reason: "invalid-appearance" };
-    if (policy.resolvedMode !== "native-overlay" || policy.platform === "darwin")
-      return { status: "unsupported", reason: "native-overlay-appearance-unavailable" };
-    const merged = { ...appearance, ...next };
-    if (
-      merged.color !== appearance.color ||
-      merged.symbolColor !== appearance.symbolColor ||
-      merged.height !== appearance.height
-    ) {
-      try {
-        win.setTitleBarOverlay(merged);
-        if (next.color !== undefined && next.color !== appearance.color) win.setBackgroundColor(next.color);
-        appearance = merged;
-      } catch {
-        log.warn({}, "window overlay appearance update failed");
-        return { status: "rejected", reason: "native-update-failed" };
-      }
+    if (!overlayAvailable) return { status: "unsupported", reason: "native-overlay-appearance-unavailable" };
+    override = { ...override, ...next };
+    return applyOverlay();
+  };
+  const declareAppearance = (event: IpcMainInvokeEvent, input: unknown): OverlayAppearanceResult => {
+    if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
+    const next = parseOverlayDeclaration(input);
+    if (!next) return { status: "rejected", reason: "invalid-appearance" };
+    if (next.revision <= declarationRevision) return { status: "rejected", reason: "stale-declaration" };
+    if (next.appearance !== null && owner !== undefined && owner !== next.owner)
+      return { status: "rejected", reason: "appearance-owner-conflict" };
+    declarationRevision = next.revision;
+    if (next.appearance !== null) {
+      owner = next.owner;
+      override = next.appearance;
+    } else if (owner === next.owner) {
+      owner = undefined;
+      override = {};
     }
-    if (next.color !== undefined || next.symbolColor !== undefined) callerOwnsColors = true;
-    return { status: "applied", appearance: { ...appearance } };
+    return applyOverlay();
+  };
+  const syncTheme = (event: IpcMainInvokeEvent, input: unknown): VisualThemeResult => {
+    if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
+    if (
+      typeof input !== "object" ||
+      input === null ||
+      !("preference" in input) ||
+      !isVisualThemePreference(input.preference) ||
+      !("document" in input) ||
+      typeof input.document !== "string" ||
+      !/^[\w-]{1,80}$/.test(input.document) ||
+      !("revision" in input) ||
+      typeof input.revision !== "number" ||
+      !Number.isSafeInteger(input.revision) ||
+      input.revision < 1
+    )
+      return { status: "rejected", reason: "invalid-request" };
+    if (
+      expiredDocuments.has(input.document) ||
+      (themeDocument !== undefined && themeDocument !== input.document) ||
+      input.revision <= themeRevision
+    )
+      return { status: "rejected", reason: "stale-document" };
+    themeDocument = input.document;
+    themeRevision = input.revision;
+    preference = input.preference;
+    return { status: "processed", ...applyTheme(), persistence: themeStore?.save(preference) ? "saved" : "failed" };
   };
   const themeChanged = () => {
-    if (win.isDestroyed() || callerOwnsColors) return;
-    const next = chromeAppearance(nativeTheme.shouldUseDarkColors);
-    win.setBackgroundColor(next.color);
-    if (policy.resolvedMode === "native-overlay" && policy.platform !== "darwin") {
-      try {
-        const merged = { ...appearance, color: next.color, symbolColor: next.symbolColor };
-        win.setTitleBarOverlay(merged);
-        appearance = merged;
-      } catch {
-        log.warn({}, "system window overlay appearance update failed");
-      }
-    }
+    if (!win.isDestroyed() && preference === "auto") applyTheme();
   };
-  if (policy.followsSystemTheme) nativeTheme.on("updated", themeChanged);
+  nativeTheme.on("updated", themeChanged);
+  ipcMain.handle(DESKTOP_CHROME_IPC.declaration, declareAppearance);
+  ipcMain.handle(DESKTOP_CHROME_IPC.visualTheme, syncTheme);
   ipcMain.handle(DESKTOP_CHROME_IPC.subscribe, subscribe);
   ipcMain.handle(DESKTOP_CHROME_IPC.appearance, updateAppearance);
   ipcMain.on(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
@@ -131,9 +200,11 @@ export function installWindowChrome(
     disposed = true;
     if (installedCleanup === dispose) installedCleanup = undefined;
     clear();
-    if (policy.followsSystemTheme) nativeTheme.off("updated", themeChanged);
+    nativeTheme.off("updated", themeChanged);
     ipcMain.removeHandler(DESKTOP_CHROME_IPC.subscribe);
     ipcMain.removeHandler(DESKTOP_CHROME_IPC.appearance);
+    ipcMain.removeHandler(DESKTOP_CHROME_IPC.declaration);
+    ipcMain.removeHandler(DESKTOP_CHROME_IPC.visualTheme);
     ipcMain.off(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
     for (const event of STATE_EVENTS) win.off(event, refresh);
     contents.off("did-start-navigation", navigate);

@@ -5,6 +5,7 @@ import type { BootProfile } from "./boot-profile.ts";
 import { chromeWindowOptions, type ChromePolicy } from "./chrome-policy.ts";
 import { installWindowChrome } from "./chrome.ts";
 import type { Logger } from "./log.ts";
+import type { VisualThemeStore } from "./visual-theme.ts";
 
 export const IPC = {
   /** Renderer → main: the preload saw two animation frames, so the page has painted. */
@@ -19,7 +20,7 @@ export interface MainWindowOptions {
   profile: BootProfile;
   /** Development: forward the page's console to the main log, so Vite's HMR messages show up. */
   logRendererConsole?: boolean;
-  chrome?: { bootstrap: DesktopBootstrap; policy: ChromePolicy };
+  chrome?: { bootstrap: DesktopBootstrap; policy: ChromePolicy; visualThemeStore?: VisualThemeStore };
 }
 
 const EXTERNAL_SCHEMES = new Set(["http:", "https:", "mailto:"]);
@@ -137,7 +138,7 @@ export function createMainWindow({
   });
 
   if (chrome) {
-    installWindowChrome(win, chrome.policy, (event) => isTrustedSender(event, win), log);
+    installWindowChrome(win, chrome.policy, (event) => isTrustedSender(event, win), log, chrome.visualThemeStore);
     log.info(
       {
         requestedMode: chrome.policy.requestedMode,

@@ -24,7 +24,7 @@ describe("chrome policy", () => {
     });
   });
   it("centers native mac controls in the 48-unit header without assuming a button size or position", () => {
-    const policy = resolveChromePolicy({ platform: "darwin", prefs: { theme: "dark" } });
+    const policy = resolveChromePolicy({ platform: "darwin", themePreference: "dark" });
     expect(chromeWindowOptions(policy)).toEqual({
       backgroundColor: "#17191d",
       titleBarStyle: "hidden",
@@ -34,7 +34,7 @@ describe("chrome policy", () => {
   it("selects theme before construction and leaves decorated windows decorated", () => {
     expect(resolveChromePolicy({ platform: "win32", darkColors: true }).appearance.color).toBe("#17191d");
     expect(
-      resolveChromePolicy({ platform: "win32", darkColors: true, prefs: { theme: "light" } }).appearance.color,
+      resolveChromePolicy({ platform: "win32", darkColors: true, themePreference: "light" }).appearance.color,
     ).toBe("#ffffff");
     expect(chromeWindowOptions(resolveChromePolicy({ platform: "darwin", requestedMode: "system-decorated" }))).toEqual(
       { backgroundColor: "#ffffff" },

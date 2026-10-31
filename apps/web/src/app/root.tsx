@@ -17,6 +17,7 @@ import { desktopContext, shellContext } from "./lib/shell";
 import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
 import { readVisualRequestSeed } from "./managers/visual/persistence/cookie.server";
+import { DesktopVisualSync } from "./platform/electron/desktop-visual-sync";
 import { AppRoot } from "./providers/app-root";
 import { AppUiProvider } from "./providers/app-ui-provider";
 import { useAppEnvironment } from "./providers/environment";
@@ -54,7 +55,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
       fullscreen={data?.desktop?.fullscreen}
       managersInitialState={data?.managersInitialState}
     >
-      <Document nonce={nonce}>{children}</Document>
+      <DesktopVisualSync>
+        <Document nonce={nonce}>{children}</Document>
+      </DesktopVisualSync>
     </AppRoot>
   );
 }

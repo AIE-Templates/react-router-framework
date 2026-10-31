@@ -8,6 +8,9 @@ import {
   desktopBootstrapFromArguments,
   isDesktopWindowState,
   parseOverlayAppearance,
+  parseOverlayDeclaration,
+  isVisualThemePreference,
+  isVisualThemeResult,
   type PreferenceUpdateResult,
 } from "@repo/shared";
 import { contextBridge, ipcRenderer } from "electron";
@@ -65,6 +68,31 @@ async function updatePref(key: unknown, value: unknown): Promise<PreferenceUpdat
   }
 }
 
+async function invokeAppearance(channel: string, input: unknown): Promise<OverlayAppearanceResult> {
+  try {
+    const response: unknown = await ipcRenderer.invoke(channel, input);
+    if (typeof response === "object" && response !== null && "status" in response) {
+      if (response.status === "applied" && "appearance" in response) {
+        const accepted = parseOverlayAppearance(response.appearance);
+        if (accepted) return { status: "applied", appearance: accepted };
+      }
+      if (
+        (response.status === "unsupported" || response.status === "rejected") &&
+        "reason" in response &&
+        typeof response.reason === "string" &&
+        response.reason.length <= 128
+      )
+        return { status: response.status, reason: response.reason };
+    }
+    return { status: "rejected", reason: "invalid-response" };
+  } catch {
+    return { status: "rejected", reason: "bridge-unavailable" };
+  }
+}
+
+const visualDocument = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+let visualRevision = 0;
+
 const bridge: DesktopBridge = {
   platform: process.platform,
   version: versionArg ? versionArg.slice("--desktop-app-version=".length) : "",
@@ -103,22 +131,22 @@ const bridge: DesktopBridge = {
   async updateOverlayAppearance(input): Promise<OverlayAppearanceResult> {
     const appearance = parseOverlayAppearance(input);
     if (!appearance) return { status: "rejected", reason: "invalid-appearance" };
+    return invokeAppearance(DESKTOP_CHROME_IPC.appearance, appearance);
+  },
+  declareOverlayAppearance(input) {
+    const declaration = parseOverlayDeclaration(input);
+    if (!declaration) return Promise.resolve({ status: "rejected", reason: "invalid-appearance" });
+    return invokeAppearance(DESKTOP_CHROME_IPC.declaration, declaration);
+  },
+  async syncVisualTheme(preference) {
+    if (!isVisualThemePreference(preference)) return { status: "rejected", reason: "invalid-request" };
     try {
-      const response: unknown = await ipcRenderer.invoke(DESKTOP_CHROME_IPC.appearance, appearance);
-      if (typeof response === "object" && response !== null && "status" in response) {
-        if (response.status === "applied" && "appearance" in response) {
-          const accepted = parseOverlayAppearance(response.appearance);
-          if (accepted) return { status: "applied", appearance: accepted };
-        }
-        if (
-          (response.status === "unsupported" || response.status === "rejected") &&
-          "reason" in response &&
-          typeof response.reason === "string" &&
-          response.reason.length <= 128
-        )
-          return { status: response.status, reason: response.reason };
-      }
-      return { status: "rejected", reason: "invalid-response" };
+      const result: unknown = await ipcRenderer.invoke(DESKTOP_CHROME_IPC.visualTheme, {
+        document: visualDocument,
+        revision: ++visualRevision,
+        preference,
+      });
+      return isVisualThemeResult(result) ? result : { status: "rejected", reason: "invalid-response" };
     } catch {
       return { status: "rejected", reason: "bridge-unavailable" };
     }

@@ -4,6 +4,7 @@ import { DESKTOP_PLATFORMS, type DesktopPlatform, type Shell, WEB_SHELL } from "
 import { parseDesktopBootstrap, type DesktopBootstrap, type WindowChromeBridge } from "./window-chrome.ts";
 
 export interface DesktopBridge extends WindowChromeBridge {
+  syncVisualTheme?(this: void, preference: VisualThemePreference): Promise<VisualThemeResult>;
   setPref(this: void, key: string, value: PreferenceValue): Promise<PreferenceUpdateResult>;
   removePref(this: void, key: string): Promise<PreferenceUpdateResult>;
 }
@@ -14,6 +15,8 @@ export const DESKTOP_CHROME_IPC = {
   unsubscribe: "desktop:chrome:unsubscribe",
   state: "desktop:chrome:state",
   appearance: "desktop:chrome:appearance",
+  declaration: "desktop:chrome:declaration",
+  visualTheme: "desktop:visual:theme",
 } as const;
 
 export function desktopBootstrapFromArguments(args: readonly string[]): DesktopBootstrap | null {
@@ -49,4 +52,31 @@ export function shellFromEnv(env: Record<string, string | undefined>): Shell {
 
 function isDesktopPlatform(value: string | undefined): value is DesktopPlatform {
   return (DESKTOP_PLATFORMS as readonly (string | undefined)[]).includes(value);
+}
+
+export type VisualThemePreference = "auto" | "light" | "dark";
+export type VisualThemeResult =
+  | {
+      status: "processed";
+      background: "applied" | "failed";
+      overlay: "applied" | "failed" | "unsupported";
+      persistence: "saved" | "failed";
+    }
+  | { status: "rejected"; reason: string };
+export function isVisualThemePreference(value: unknown): value is VisualThemePreference {
+  return value === "auto" || value === "light" || value === "dark";
+}
+export function isVisualThemeResult(value: unknown): value is VisualThemeResult {
+  if (typeof value !== "object" || value === null || !("status" in value)) return false;
+  if (value.status === "rejected")
+    return "reason" in value && typeof value.reason === "string" && value.reason.length <= 128;
+  return (
+    value.status === "processed" &&
+    "background" in value &&
+    ["applied", "failed"].includes(String(value.background)) &&
+    "overlay" in value &&
+    ["applied", "failed", "unsupported"].includes(String(value.overlay)) &&
+    "persistence" in value &&
+    ["saved", "failed"].includes(String(value.persistence))
+  );
 }

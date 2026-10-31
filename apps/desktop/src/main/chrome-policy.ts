@@ -1,4 +1,4 @@
-import type { ChromeMode, DesktopPrefs, OverlayAppearance } from "@repo/shared";
+import type { ChromeMode, VisualThemePreference, OverlayAppearance } from "@repo/shared";
 
 export interface ChromePolicy {
   platform: string;
@@ -8,6 +8,7 @@ export interface ChromePolicy {
   appearance: OverlayAppearance;
   backgroundColor: string;
   followsSystemTheme: boolean;
+  themePreference: VisualThemePreference;
 }
 
 export function chromeAppearance(dark: boolean): OverlayAppearance & { color: string } {
@@ -18,22 +19,23 @@ export function chromeAppearance(dark: boolean): OverlayAppearance & { color: st
 export function resolveChromePolicy({
   platform,
   requestedMode = "native-overlay",
-  prefs = {},
+  themePreference = "auto",
   darkColors = false,
 }: {
   platform: string;
   requestedMode?: ChromeMode;
-  prefs?: DesktopPrefs;
+  themePreference?: VisualThemePreference;
   darkColors?: boolean;
 }): ChromePolicy {
-  const dark = prefs.theme === "dark" || (prefs.theme !== "light" && darkColors);
+  const dark = themePreference === "dark" || (themePreference !== "light" && darkColors);
   const appearance = { ...chromeAppearance(dark), height: platform === "win32" ? 48 : 36 };
   const base = {
     platform,
     requestedMode,
+    themePreference,
     appearance,
     backgroundColor: appearance.color,
-    followsSystemTheme: prefs.theme !== "light" && prefs.theme !== "dark",
+    followsSystemTheme: themePreference !== "light" && themePreference !== "dark",
   };
   if (requestedMode === "system-decorated") return { ...base, resolvedMode: "system-decorated" };
   if (requestedMode === "custom-controls")

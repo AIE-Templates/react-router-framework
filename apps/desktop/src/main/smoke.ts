@@ -231,6 +231,30 @@ export async function runSmoke(
     checks.layoutMatrix = { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
 
+  await check(
+    "visualThemeDark",
+    `return await window.desktop.syncVisualTheme("dark");`,
+    (v) =>
+      isRecord(v) &&
+      v.status === "processed" &&
+      v.background === "applied" &&
+      v.persistence === "saved" &&
+      win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
+  );
+  await check(
+    "appearanceDoesNotChangeBackground",
+    `return await window.desktop.updateOverlayAppearance({ color: "#224466" });`,
+    (v) =>
+      isRecord(v) &&
+      (v.status === "applied" || v.status === "unsupported") &&
+      win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
+  );
+  await check(
+    "visualThemeRestore",
+    `const saved = JSON.parse(localStorage.getItem("framework-app:visual-preferences") || "null"); return await window.desktop.syncVisualTheme(saved?.preferences?.colorScheme || "auto");`,
+    (v) => isRecord(v) && v.status === "processed" && v.background === "applied" && v.persistence === "saved",
+  );
+
   // A real document reload must recreate the preload and document-scoped IPC subscription.
   try {
     await new Promise<void>((resolve, reject) => {

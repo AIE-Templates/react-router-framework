@@ -21,7 +21,7 @@ Unrecognized or missing `DESKTOP_CHROME_MODE` requests the default. There is no 
 
 These alignment values assume default fonts and 100% page zoom. Electron API units must not be equated with zoomed CSS pixels. Do not rescale WCO/DOM coordinates using display scale or derive viewport coordinates by simply dividing screen DIP by page zoom.
 
-Initial theme preference `dark` or `light` selects colors; other values follow `nativeTheme`. Dark color/symbolColor defaults are `#17191d`/`#f3f4f6`; light defaults are `#ffffff`/`#202124`. Desktop environment/session strings are diagnostic hints, not proof that Chromium uses Wayland. Native theme/button parity is not guaranteed across every Linux or macOS configuration.
+The versioned `visual-theme.json` mirror supplies the initial theme preference. Explicit `dark` or `light` selects colors; `auto`, missing or invalid data follows `nativeTheme`. Generic preferences do not supply the theme. Dark color/symbolColor defaults are `#17191d`/`#f3f4f6`; light defaults are `#ffffff`/`#202124`. Desktop environment/session strings are diagnostic hints, not proof that Chromium uses Wayland. Native theme/button parity is not guaranteed across every Linux or macOS configuration.
 
 ## Runtime contract (CHR-03)
 
@@ -45,7 +45,7 @@ Bootstrap is synchronous immutable creation data, not a synchronous IPC request.
 
 Appearance updates allow only color, symbolColor and height, with at least one valid value. Colors are `#RRGGBB` or `#RRGGBBAA`; height is an integer from 32 through 80. Preload and main both validate. Windows/Linux native-overlay uses `setTitleBarOverlay`; unchanged values do not cause another write. macOS and system-decorated return unsupported. Invalid values/senders or native failure return rejected without changing mode.
 
-Height-only updates preserve system theme ownership. Explicit colors transfer color ownership to the caller. System theme updates retain accepted height. AppShell is the only appearance owner. Every IPC checks the registered window, current main frame and trusted app URL; lifecycle cleanup invalidates listeners, tokens and asynchronous results.
+The theme layer owns window background and default overlay colors. Appearance writes only change the overlay layer and never change the background. Each missing overlay field inherits the theme default. System or explicit theme changes retain all declared overrides. `declareOverlayAppearance` accepts an owner token, increasing revision and a complete appearance snapshot or null release. Removed fields return to theme defaults; stale revisions and conflicting active owners are rejected. An old owner release cannot clear another owner. Main-document navigation clears overrides. AppShell is the only appearance owner. Every IPC checks the registered window, current main frame and trusted app URL; lifecycle cleanup invalidates listeners, tokens and asynchronous results.
 
 ## Geometry and interaction (CHR-05)
 

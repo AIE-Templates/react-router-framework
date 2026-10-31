@@ -17,6 +17,7 @@ import { createWindowRecovery } from "./main/recovery.ts";
 import { resolveRunModes } from "./main/run-modes.ts";
 import { startServerProcess } from "./main/server-process.ts";
 import { runSmoke } from "./main/smoke.ts";
+import { createVisualThemeStore } from "./main/visual-theme.ts";
 import { createMainWindow, createWindowKeeper, isAppUrl, isTrustedSender } from "./main/window.ts";
 import { portAckCoalesce } from "./port-options.ts";
 
@@ -100,6 +101,7 @@ async function main(): Promise<void> {
   profile.mark("ready");
   const appSession = session.fromPartition("persist:app");
   // Preferences the page writes through the preload; every request carries the current ones.
+  const visualThemeStore = createVisualThemeStore(app.getPath("userData"), { log });
   const prefsStore = createPrefsStore(app.getPath("userData"), { log });
   installPrefsIpc(prefsStore, (event) => isTrustedSender(event, mainWindow()));
   const shell = shellFromEnv({
@@ -114,7 +116,7 @@ async function main(): Promise<void> {
   const chromePolicy = resolveChromePolicy({
     platform: shell.platform,
     requestedMode: requested === "system-decorated" || requested === "custom-controls" ? requested : "native-overlay",
-    prefs: prefsStore.current(),
+    themePreference: visualThemeStore.current(),
     darkColors: nativeTheme.shouldUseDarkColors,
   });
   const bootstrap: DesktopBootstrap = { protocolVersion: 1, shell, mode: chromePolicy.resolvedMode };
@@ -219,7 +221,7 @@ async function main(): Promise<void> {
 
   const windowOptions = {
     session: appSession,
-    chrome: { bootstrap, policy: chromePolicy },
+    chrome: { bootstrap, policy: chromePolicy, visualThemeStore },
     preloadPath: join(__dirname, "preload.cjs"),
     appVersion: app.getVersion(),
     log,
