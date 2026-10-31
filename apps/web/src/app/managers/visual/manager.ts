@@ -30,6 +30,7 @@ export function createVisualManager({
       ? { ...stored, state: visualCodec.resolve(visualCodec.parse(bootstrap.state.preferences), host) }
       : stored;
   let state = freeze(initial.state);
+  let storagePresent = initial.storagePresent;
   const serverStatus: VisualStatus = Object.freeze({ initialized: false, persistence: "unavailable" });
   let status: VisualStatus = { initialized: false, persistence: initial.persistence };
   const listeners = new Set<() => void>();
@@ -61,6 +62,7 @@ export function createVisualManager({
       }
       host.localStorage.setItem(config.storageKey, JSON.stringify({ version: 1, preferences }));
       unsaved = false;
+      storagePresent = true;
       setStatus({ ...status, persistence: "saved" });
     } catch {
       unsaved = true;
@@ -91,6 +93,7 @@ export function createVisualManager({
       return;
     }
     unsaved = false;
+    storagePresent = next.storagePresent;
     publish(next.state.preferences);
     setStatus({ ...status, persistence: next.persistence });
   }
@@ -131,10 +134,11 @@ export function createVisualManager({
       if (!host) return () => {};
       connections++;
       if (connections === 1) {
-        // Reconcile reads without overwriting failed in-memory commands or a missing cookie seed.
+        // Preserve an unpersisted request seed, but never resurrect a record removed while disconnected.
         if (!unsaved) {
-          const next = visualCodec.read(config, state.preferences, host);
-          publish(next.state.preferences);
+          const next = visualCodec.read(config, storagePresent ? DEFAULT_VISUAL_PREFERENCES : state.preferences, host);
+          if (next.storagePresent !== undefined) storagePresent = next.storagePresent;
+          if (next.persistence !== "unavailable") publish(next.state.preferences);
           setStatus({ initialized: true, persistence: next.persistence });
         } else setStatus({ ...status, initialized: true });
         if (applyToDocument) visualCodec.apply(config, state, host.document.documentElement);
