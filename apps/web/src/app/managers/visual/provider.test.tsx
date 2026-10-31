@@ -25,17 +25,17 @@ it("keeps one committed manager through registry rerenders and cleans up StrictM
     seen.push(manager);
     return <output>{state.preferences.colorScheme}</output>;
   }
-  const tree = () => (
+  const tree = (
     <StrictMode>
       <AppRoot>
         <Consumer />
       </AppRoot>
     </StrictMode>
   );
-  const { rerender, unmount } = render(tree());
+  const { rerender, unmount } = render(tree);
   const manager = seen.at(-1);
   const count = active.size;
-  rerender(tree());
+  rerender(tree);
   expect(seen.at(-1)).toBe(manager);
   expect(active.size).toBe(count);
   expect(count).toBeGreaterThan(0);
