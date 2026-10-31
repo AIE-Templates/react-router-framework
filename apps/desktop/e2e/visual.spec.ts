@@ -78,7 +78,7 @@ test("reopening a macOS window uses the current mirror before renderer synchroni
     ({ app: electronApp }) =>
       new Promise<string>((resolve) => {
         electronApp.once("browser-window-created", (_event, window) =>
-          resolve(window.getBackgroundColor().toLowerCase()),
+          queueMicrotask(() => resolve(window.getBackgroundColor().toLowerCase())),
         );
         electronApp.emit("activate");
       }),
