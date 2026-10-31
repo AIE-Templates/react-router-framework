@@ -19,6 +19,11 @@ export interface OverlayAppearance {
   symbolColor?: string;
   height?: number;
 }
+export interface OverlayAppearanceDeclaration {
+  owner: string;
+  revision: number;
+  appearance: OverlayAppearance | null;
+}
 export type OverlayAppearanceResult =
   | { status: "applied"; appearance: OverlayAppearance }
   | { status: "unsupported" | "rejected"; reason: string };
@@ -28,6 +33,7 @@ export interface WindowChromeBridge {
   readonly bootstrap: DesktopBootstrap | null;
   subscribeWindowState(this: void, listener: (state: DesktopWindowState) => void): () => void;
   updateOverlayAppearance(this: void, appearance: OverlayAppearance): Promise<OverlayAppearanceResult>;
+  declareOverlayAppearance?(this: void, declaration: OverlayAppearanceDeclaration): Promise<OverlayAppearanceResult>;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -94,4 +100,20 @@ export function isDesktopWindowState(value: unknown): value is DesktopWindowStat
     typeof value.maximized === "boolean" &&
     typeof value.fullscreen === "boolean"
   );
+}
+
+export function parseOverlayDeclaration(value: unknown): OverlayAppearanceDeclaration | null {
+  if (
+    !record(value) ||
+    !keysWithin(value, ["owner", "revision", "appearance"]) ||
+    typeof value.owner !== "string" ||
+    !/^[\w:-]{1,128}$/.test(value.owner) ||
+    !Number.isSafeInteger(value.revision) ||
+    typeof value.revision !== "number" ||
+    value.revision < 1
+  )
+    return null;
+  const appearance = value.appearance === null ? null : parseOverlayAppearance(value.appearance);
+  if (value.appearance !== null && !appearance) return null;
+  return { owner: value.owner, revision: value.revision, appearance };
 }
