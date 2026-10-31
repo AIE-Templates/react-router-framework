@@ -147,3 +147,22 @@ it("renders explicit integration seeds without resolving unknown automatic serve
   expect(visualServerAttributes("dark", config)).toEqual({ "data-example-scheme": "dark" });
   expect(visualServerAttributes("auto", config)).toEqual({});
 });
+
+it("does not replay the prepaint snapshot after later writes or deletion", () => {
+  stored("dark");
+  window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, undefined, window);
+  const first = create();
+  first.actions.setColorSchemePreference("light");
+  expect(create().getSnapshot().preferences.colorScheme).toBe("light");
+  localStorage.removeItem(key);
+  expect(create().getSnapshot().preferences.colorScheme).toBe("auto");
+});
+it("retains the prepaint preference if storage becomes inaccessible before hydration", () => {
+  stored("dark");
+  window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, undefined, window);
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  expect(create().getSnapshot().preferences.colorScheme).toBe("dark");
+  expect(create().getStatus().persistence).toBe("unavailable");
+});
