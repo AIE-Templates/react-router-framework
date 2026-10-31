@@ -6,11 +6,13 @@ import { useAppEnvironment } from "~/providers/environment";
 
 import { DesktopVisualContext, type DesktopVisualStatus } from "./desktop-visual-context";
 
+const idle: DesktopVisualStatus = { status: "idle" };
+
 /** Electron owns this adapter; Core registries do not know about platform dependencies. */
 export function DesktopVisualSync({ children }: { children: ReactNode }) {
   const manager = useVisualManager();
   const environment = useAppEnvironment();
-  const [status, setStatus] = useState<DesktopVisualStatus>({ status: "idle" });
+  const [status, setStatus] = useState<DesktopVisualStatus>(idle);
   useEffect(() => {
     if (environment.enhancement !== "available" || environment.shell.kind !== "desktop") return undefined;
     const bridge = window.desktop;
@@ -66,5 +68,6 @@ export function DesktopVisualSync({ children }: { children: ReactNode }) {
       releaseCommands();
     };
   }, [environment.enhancement, environment.shell.kind, manager]);
-  return <DesktopVisualContext.Provider value={status}>{children}</DesktopVisualContext.Provider>;
+  const available = environment.enhancement === "available" && environment.shell.kind === "desktop";
+  return <DesktopVisualContext.Provider value={available ? status : idle}>{children}</DesktopVisualContext.Provider>;
 }

@@ -8,8 +8,12 @@ import { createVisualManager } from "~/managers/visual/manager";
 import { useDesktopVisualStatus } from "./desktop-visual-context";
 import { DesktopVisualSync } from "./desktop-visual-sync";
 
+const environment = vi.hoisted(() => ({ available: true }));
 vi.mock("~/providers/environment", () => ({
-  useAppEnvironment: () => ({ enhancement: "available", shell: { kind: "desktop" } }),
+  useAppEnvironment: () => ({
+    enhancement: environment.available ? "available" : "unavailable",
+    shell: { kind: "desktop" },
+  }),
 }));
 const processed: VisualThemeResult = {
   status: "processed",
@@ -40,6 +44,14 @@ function mount(syncVisualTheme: (preference: string) => Promise<VisualThemeResul
   );
   return {
     manager,
+    refresh: () =>
+      view.rerender(
+        <VisualManagerContext.Provider value={manager}>
+          <DesktopVisualSync>
+            <Status />
+          </DesktopVisualSync>
+        </VisualManagerContext.Provider>,
+      ),
     close: () => {
       view.unmount();
       disconnect();
@@ -47,6 +59,7 @@ function mount(syncVisualTheme: (preference: string) => Promise<VisualThemeResul
   };
 }
 afterEach(() => {
+  environment.available = true;
   delete window.desktop;
   localStorage.clear();
   delete window.frameworkVisualBootstrap;
@@ -85,5 +98,14 @@ it("does not publish a stale response after a newer preference has completed", a
     await Promise.resolve();
   });
   expect(screen.getByRole("status")).not.toHaveTextContent("stale-failure");
+  view.close();
+});
+
+it("stops reporting an applied result when the host enhancement becomes unavailable", async () => {
+  const view = mount(async () => processed);
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent('"persistence":"saved"'));
+  environment.available = false;
+  view.refresh();
+  expect(screen.getByRole("status")).toHaveTextContent('"status":"idle"');
   view.close();
 });
