@@ -9,6 +9,9 @@ export const visualTheme = createTheme({
     Popover: { defaultProps: { shadow: "md", radius: "md" } },
     Menu: { defaultProps: { shadow: "md", radius: "md" } },
     Modal: { defaultProps: { shadow: "lg", radius: "md" } },
+    // Read by the single <Notifications /> host in AppUiProvider; position follows direction in the provider.
+    Notifications: { defaultProps: { limit: 5, autoClose: 4000, pauseResetOnHover: "notification" } },
+    Notification: { defaultProps: { radius: "md", withBorder: true } },
   },
 });
 export const resolvedVisualTheme = mergeMantineTheme(DEFAULT_THEME, visualTheme);

@@ -1,9 +1,27 @@
 import { Button, Group, Menu, Modal, Popover, Select, Text, Tooltip } from "@mantine/core";
+import { modals } from "@mantine/modals";
+import { notifications } from "@mantine/notifications";
 import { useRef, useState } from "react";
 
 import { getInteractiveProps } from "../../providers/environment";
 import { visualCodec } from "./bootstrap";
 import { useVisualActions, useVisualState, useVisualStatus } from "./hooks";
+
+/** Imperative modal and notification APIs are served by AppUiProvider. */
+function confirmReset(reset: () => void, trigger: HTMLElement | null) {
+  modals.openConfirmModal({
+    // The menu item that opened the dialog unmounts, so return focus to the persistent trigger.
+    returnFocus: false,
+    onExitTransitionEnd: () => trigger?.focus(),
+    title: "Reset appearance?",
+    children: <Text size="sm">Color scheme, direction and motion return to system defaults.</Text>,
+    labels: { confirm: "Reset", cancel: "Cancel" },
+    onConfirm: () => {
+      reset();
+      notifications.show({ title: "Appearance reset", message: "System defaults restored." });
+    },
+  });
+}
 
 export function VisualSettings() {
   const { preferences } = useVisualState();
@@ -71,6 +89,9 @@ export function VisualSettings() {
           </Menu.Target>
           <Menu.Dropdown {...popup}>
             <Menu.Item onClick={() => setOpened(true)}>Open dialog</Menu.Item>
+            <Menu.Item onClick={() => confirmReset(actions.resetVisualPreferences, previewButton.current)}>
+              Reset with confirmation
+            </Menu.Item>
           </Menu.Dropdown>
         </Menu>
       </Group>
