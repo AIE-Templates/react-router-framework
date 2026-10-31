@@ -136,9 +136,11 @@ export function createVisualManager({
       if (connections === 1) {
         // Preserve an unpersisted request seed, but never resurrect a record removed while disconnected.
         if (!unsaved) {
-          const next = visualCodec.read(config, storagePresent ? DEFAULT_VISUAL_PREFERENCES : state.preferences, host);
+          const next = visualCodec.read(config, state.preferences, host);
+          const preferences =
+            storagePresent && next.storagePresent === false ? DEFAULT_VISUAL_PREFERENCES : next.state.preferences;
           if (next.storagePresent !== undefined) storagePresent = next.storagePresent;
-          if (next.persistence !== "unavailable") publish(next.state.preferences);
+          if (next.persistence !== "unavailable") publish(preferences);
           setStatus({ initialized: true, persistence: next.persistence });
         } else setStatus({ ...status, initialized: true });
         if (applyToDocument) visualCodec.apply(config, state, host.document.documentElement);
