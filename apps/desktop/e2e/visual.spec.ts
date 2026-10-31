@@ -72,13 +72,14 @@ test("reopening a macOS window uses the current mirror before renderer synchroni
   await expect
     .poll(async () => JSON.parse(await readFile(join(userData, "visual-theme.json"), "utf8")))
     .toEqual({ version: 1, colorScheme: "dark" });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(0);
   const initialColor = await app.evaluate(
-    ({ app: electronApp, BrowserWindow }) =>
+    ({ app: electronApp }) =>
       new Promise<string>((resolve) => {
         electronApp.once("browser-window-created", (_event, window) =>
           resolve(window.getBackgroundColor().toLowerCase()),
         );
-        BrowserWindow.getAllWindows()[0].close();
         electronApp.emit("activate");
       }),
   );
