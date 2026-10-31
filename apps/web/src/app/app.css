@@ -1,5 +1,7 @@
 @layer theme, base, mantine, components, utilities;
 @import "@mantine/core/styles.layer.css";
+/* Package styles follow core styles in the same mantine layer. @mantine/modals and @mantine/form ship no CSS. */
+@import "@mantine/notifications/styles.layer.css";
 @import "tailwindcss";
 @custom-variant dark (&:where([data-color-scheme=dark], [data-color-scheme=dark] *));
 
@@ -715,7 +717,8 @@
       .mantine-Menu-dropdown,
       .mantine-Modal-content,
       .mantine-Modal-overlay,
-      .mantine-Tooltip-tooltip
+      .mantine-Tooltip-tooltip,
+      .mantine-Notifications-notification
     ) {
     transition-duration: 0s !important;
     animation-duration: 0s !important;
@@ -731,7 +734,8 @@
         .mantine-Menu-dropdown,
         .mantine-Modal-content,
         .mantine-Modal-overlay,
-        .mantine-Tooltip-tooltip
+        .mantine-Tooltip-tooltip,
+        .mantine-Notifications-notification
       ) {
       transition-duration: 0s !important;
       animation-duration: 0s !important;
@@ -740,7 +744,8 @@
   .mantine-Modal-content,
   .mantine-Popover-dropdown,
   .mantine-Menu-dropdown,
-  .mantine-Tooltip-tooltip {
+  .mantine-Tooltip-tooltip,
+  .mantine-Notifications-notification {
     -webkit-app-region: no-drag;
   }
 }
