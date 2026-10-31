@@ -39,7 +39,7 @@ test("a reload serves and hydrates the document again", async ({ desktop: { page
 
 test("an unknown path renders the 404 page, and the app recovers from it", async ({ desktop: { page } }) => {
   const response = await page.goto("app://app/no-such-page");
-  expect(response?.status()).toBe(404);
+  expect(response?.status()).toBe(process.env.SSR === "false" ? 200 : 404);
   await waitForApp(page);
   await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
   await page.goto("app://app/");

@@ -49,5 +49,16 @@ test("visual controls persist through reload and synchronize the independent nat
   const systemDark = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches);
   await expect(page.locator("html")).toHaveAttribute("data-color-scheme", systemDark ? "dark" : "light");
   expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("system");
+  // Mantine integrations also exercise the real native pointer path through portals.
+  const preview = page.getByRole("button", { name: "Preview options", exact: true });
+  if (await preview.count()) {
+    await preview.click();
+    await page.getByRole("menuitem", { name: "Open dialog" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCSS("direction", "rtl");
+    await page.getByRole("button", { name: "Close preview" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(preview).toBeFocused();
+  }
   expect(errors).toEqual([]);
 });
