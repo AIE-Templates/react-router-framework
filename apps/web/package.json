@@ -13,7 +13,10 @@
   },
   "dependencies": {
     "@mantine/core": "9.7.4",
+    "@mantine/form": "9.7.4",
     "@mantine/hooks": "9.7.4",
+    "@mantine/modals": "9.7.4",
+    "@mantine/notifications": "9.7.4",
     "@react-router/node": "^8.5.0",
     "@react-router/serve": "^8.5.0",
     "@repo/shared": "workspace:*",
