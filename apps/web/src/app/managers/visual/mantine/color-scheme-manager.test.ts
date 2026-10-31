@@ -10,6 +10,8 @@ it("breaks Mantine's subscribe/set feedback loop and releases replaced subscript
   const notify = vi.fn<(value: "auto" | "light" | "dark") => void>((value) => manager.set(value));
   manager.subscribe(notify);
   manager.subscribe(notify);
+  expect(notify).toHaveBeenLastCalledWith("auto");
+  notify.mockClear();
   visual.actions.setColorSchemePreference("dark");
   expect(notify).toHaveBeenCalledExactlyOnceWith("dark");
   visual.actions.setDirection("rtl");

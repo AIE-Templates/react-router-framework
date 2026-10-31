@@ -25,6 +25,7 @@ function DirectionBridge() {
 export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ nonce?: string }>) {
   const manager = useVisualManager();
   const [colorSchemeManager] = useState(() => createMantineColorSchemeManager(manager));
+  // The first component render matches SSR; DirectionBridge adopts client state before paint.
   const { resolved } = useVisualState();
   const theme = useMemo(() => {
     const transitionProps = { duration: resolved.reducedMotion ? 0 : 150 };
@@ -38,7 +39,7 @@ export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ n
     });
   }, [resolved.reducedMotion]);
   return (
-    <DirectionProvider initialDirection={manager.getSnapshot().resolved.direction} detectDirection={false}>
+    <DirectionProvider initialDirection={resolved.direction} detectDirection={false}>
       <MantineProvider
         theme={theme}
         cssVariablesResolver={visualVariables}
