@@ -17,6 +17,9 @@ unknown versions are preserved until an explicit whole reset. Single-field reset
 preferences. Never clear unrelated storage. Storage failures retain the current session state and
 are reported separately; repeated commands retry persistence. External storage changes reconcile
 without write echoes. Concurrent documents use last successful whole-record write semantics.
+Reconnects reread storage without writing. Once a stored record has been observed, its removal
+restores defaults instead of replaying a request seed. A never-persisted seed and unsaved session
+commands survive effect replay; unavailable storage does not erase the current session.
 
 ## First paint and hydration
 

@@ -166,3 +166,40 @@ it("retains the prepaint preference if storage becomes inaccessible before hydra
   expect(create().getSnapshot().preferences.colorScheme).toBe("dark");
   expect(create().getStatus().persistence).toBe("unavailable");
 });
+
+it("reconciles deletion while disconnected without reviving an old request seed", () => {
+  const seed = { colorScheme: "dark", direction: "rtl", reducedMotion: "reduce" } as const;
+  const manager = createVisualManager({ host: window, initialPreferences: seed });
+  const disconnect = manager.connect();
+  expect(manager.getSnapshot().preferences).toEqual(seed);
+  manager.actions.setDirection("rtl");
+  disconnect();
+  localStorage.removeItem(key);
+  const reconnect = manager.connect();
+  expect(manager.getSnapshot().preferences).toEqual({ colorScheme: "auto", direction: "ltr", reducedMotion: "auto" });
+  expect(localStorage.getItem(key)).toBeNull();
+  reconnect();
+});
+
+it("preserves a never-persisted seed across effect replay and unavailable reconnects", () => {
+  const seed = { colorScheme: "dark", direction: "rtl", reducedMotion: "reduce" } as const;
+  const manager = createVisualManager({ host: window, initialPreferences: seed });
+  manager.connect()();
+  manager.connect()();
+  expect(manager.getSnapshot().preferences).toEqual(seed);
+  manager.actions.setDirection("rtl");
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  const disconnect = manager.connect();
+  expect(manager.getSnapshot().preferences).toEqual(seed);
+  expect(manager.getStatus().persistence).toBe("unavailable");
+  disconnect();
+});
+it("observes removal between construction and the first connection", () => {
+  stored();
+  const manager = create();
+  localStorage.removeItem(key);
+  manager.connect()();
+  expect(manager.getSnapshot().preferences.colorScheme).toBe("auto");
+});
