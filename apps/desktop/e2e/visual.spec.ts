@@ -67,20 +67,23 @@ test("reopening a macOS window uses the current mirror before renderer synchroni
   desktop: { app, page },
 }) => {
   test.skip(process.platform !== "darwin", "Other platforms quit after their last window closes");
-  await choose(page, "Color scheme", "dark", "Dark");
+  const systemDark = await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
+  const preference = systemDark ? "light" : "dark";
+  await choose(page, "Color scheme", preference, systemDark ? "Light" : "Dark");
   const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
   await expect
     .poll(async () => JSON.parse(await readFile(join(userData, "visual-theme.json"), "utf8")))
-    .toEqual({ version: 1, colorScheme: "dark" });
+    .toEqual({ version: 1, colorScheme: preference });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(0);
   const initialColor = await app.evaluate(
-    ({ app: electronApp, BrowserWindow }) =>
+    ({ app: electronApp }) =>
       new Promise<string>((resolve) => {
         electronApp.once("browser-window-created", (_event, window) =>
-          resolve(window.getBackgroundColor().toLowerCase()),
+          queueMicrotask(() => resolve(window.getBackgroundColor().toLowerCase())),
         );
-        BrowserWindow.getAllWindows()[0].close();
         electronApp.emit("activate");
       }),
   );
-  expect(initialColor).toBe("#17191d");
+  expect(initialColor).toBe(systemDark ? "#ffffff" : "#17191d");
 });
