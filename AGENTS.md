@@ -47,3 +47,7 @@ Middleware extends the same host/server chain before Router fallback; do not wra
 In-process server data APIs provide SSR data and cookie forwarding but prevent SPA builds. Client data APIs support either build mode with a first-render skeleton and a browser request. Moving SSR server-data routes to SPA requires rewriting them.
 
 Inline CHROME_SAFETY_CSS relies on the default CSP style-src unsafe-inline allowance; add a hash before tightening it.
+
+## Visual state
+
+VisualManager owns preferences, storage and system resolution. Use useVisualState/useVisualActions; do not write its storage key directly. Registry components only compose providers. Keep the serialized visualKernel self-contained: production prepaint execution is tested separately from module execution. AppUiProvider is the body UI integration slot; never put style-producing providers around html. Keep server and client snapshots separate and do not overwrite prepaint attributes with hydration defaults.
