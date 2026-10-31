@@ -1,9 +1,11 @@
 import type { WindowChromeBridge } from "@repo/shared";
 import { act, render, screen } from "@testing-library/react";
+import { Activity, StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { BasicShell } from "../layouts/app-shell/app-shell";
 import { AppRoot } from "./app-root";
 import { useAppEnvironment } from "./environment";
 
@@ -97,4 +99,73 @@ describe("AppRoot", () => {
     );
     expect(screen.getByText("web:unavailable")).toBeInTheDocument();
   });
+});
+
+function appearanceHost() {
+  let owner: string | undefined;
+  let color: string | undefined;
+  const host = desktopBridge();
+  host.declareOverlayAppearance = async (declaration) => {
+    if (declaration.appearance && owner && owner !== declaration.owner)
+      return { status: "rejected", reason: "appearance-owner-conflict" };
+    if (declaration.appearance) {
+      owner = declaration.owner;
+      color = declaration.appearance.color;
+    } else if (owner === declaration.owner) {
+      owner = undefined;
+      color = undefined;
+    }
+    return { status: "applied", appearance: { color: color ?? "#ffffff" } };
+  };
+  window.desktop = host;
+  return { owner: () => owner, color: () => color };
+}
+function AppearanceTree() {
+  return (
+    <AppRoot>
+      <BasicShell overlayAppearance={{ color: "#123456" }}>Content</BasicShell>
+    </AppRoot>
+  );
+}
+it("releases owned native appearance when the entire AppRoot is replaced", () => {
+  const host = appearanceHost();
+  const first = render(
+    <StrictMode>
+      <AppearanceTree />
+    </StrictMode>,
+  );
+  expect(host.color()).toBe("#123456");
+  first.unmount();
+  expect(host.owner()).toBeUndefined();
+  const second = render(
+    <StrictMode>
+      <AppearanceTree />
+    </StrictMode>,
+  );
+  expect(host.color()).toBe("#123456");
+  second.unmount();
+  expect(host.owner()).toBeUndefined();
+});
+it("releases and reapplies native appearance when an Activity disconnects the provider effects", () => {
+  const host = appearanceHost();
+  const view = render(
+    <Activity mode="visible">
+      <AppearanceTree />
+    </Activity>,
+  );
+  expect(host.color()).toBe("#123456");
+  view.rerender(
+    <Activity mode="hidden">
+      <AppearanceTree />
+    </Activity>,
+  );
+  expect(host.owner()).toBeUndefined();
+  view.rerender(
+    <Activity mode="visible">
+      <AppearanceTree />
+    </Activity>,
+  );
+  expect(host.color()).toBe("#123456");
+  view.unmount();
+  expect(host.owner()).toBeUndefined();
 });
