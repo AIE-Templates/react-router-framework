@@ -203,3 +203,14 @@ it("observes removal between construction and the first connection", () => {
   manager.connect()();
   expect(manager.getSnapshot().preferences.colorScheme).toBe("auto");
 });
+
+it("keeps the request seed when an existing storage record is malformed", () => {
+  const seed = { colorScheme: "dark", direction: "rtl", reducedMotion: "reduce" } as const;
+  localStorage.setItem(key, "malformed");
+  const manager = createVisualManager({ host: window, initialPreferences: seed });
+  expect(manager.getSnapshot().preferences).toEqual(seed);
+  const disconnect = manager.connect();
+  expect(manager.getSnapshot().preferences).toEqual(seed);
+  expect(localStorage.getItem(key)).toBe("malformed");
+  disconnect();
+});
