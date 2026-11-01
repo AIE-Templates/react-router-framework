@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
 import { app, type BrowserWindow, dialog, nativeTheme, protocol, session } from "electron";
 
-import { benchConfigFromEnv, runBench } from "./main/bench.ts";
+import { benchConfigFromEnv, runBench } from "./diagnostics/bench/bench.ts";
+import { runSmoke } from "./diagnostics/smoke/smoke.ts";
 import { createBootProfile } from "./main/boot-profile.ts";
 import { resolveChromePolicy } from "./main/chrome-policy.ts";
 import { COOKIE_JAR_ORIGIN, createCookieJar, flushForQuit } from "./main/cookie-jar.ts";
@@ -16,15 +17,10 @@ import { APP_SCHEME, registerAppProtocol } from "./main/protocol.ts";
 import { createWindowRecovery } from "./main/recovery.ts";
 import { resolveRunModes } from "./main/run-modes.ts";
 import { startServerProcess } from "./main/server-process.ts";
-import { runSmoke } from "./main/smoke.ts";
+import { configureUserData } from "./main/user-data.ts";
 import { createVisualThemeStore } from "./main/visual-theme.ts";
 import { createMainWindow, createWindowKeeper, isAppUrl, isTrustedSender } from "./main/window.ts";
 import { portAckCoalesce } from "./port-options.ts";
-
-// Node's compile cache for the utility process (NODE_COMPILE_CACHE covers its 1 MB bundle: about
-// 15 ms off its boot once warm). Not enabled here: the main bundle is small and loads nothing else,
-// and measuring showed no change. Under userData, which is known before `ready`.
-const compileCacheDir = join(app.getPath("userData"), "compile-cache");
 
 // The main process must never die of an uncaught exception: Electron shows a blocking dialog for
 // those, which stalls the whole app. Log and carry on.
@@ -36,9 +32,7 @@ const profile = createBootProfile();
 const devServerUrl = DESKTOP_DEV_SERVER_URL;
 
 // A development instance keeps its own storage, apart from the installed app's.
-if (process.env.DESKTOP_USER_DATA_SUFFIX) {
-  app.setPath("userData", `${app.getPath("userData")}-${process.env.DESKTOP_USER_DATA_SUFFIX}`);
-}
+const { compileCacheDir } = configureUserData(app, process.env.DESKTOP_USER_DATA_SUFFIX);
 
 // Before `ready`: the scheme behaves like https (standard origin, fetch and streams, CORS, code cache).
 protocol.registerSchemesAsPrivileged([
@@ -316,6 +310,7 @@ async function main(): Promise<void> {
       log,
       development: devServerUrl !== undefined,
       smokeRoutes: server !== undefined,
+      layout: process.env.DESKTOP_SMOKE_LAYOUT === "1",
       exit: async (code) => {
         quitting = true;
         recovery.shutdown();

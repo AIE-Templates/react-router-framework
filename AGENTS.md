@@ -80,7 +80,7 @@ Port-fetch and channel must remain Electron-independent. Test with worker_thread
 
 Desktop page document.cookie is unavailable. Main manages server cookies in the dedicated session and sends them only to the app upstream. Client-readable state uses loader data, localStorage or explicit helpers. Visual preferences use VisualManager; the Electron theme mirror uses its dedicated IPC and visual-theme.json. Other small display preferences use getPreference/useSetPreference/writePreference, never shell-specific business branches or direct cookie writes. Desktop persists prefs.json and injects x-desktop-prefs; web derives preference cookie names from PREFERENCE_COOKIE_PREFIX = cookieName("pref_") in @repo/shared. Both enforce shared key/size limits. Preferences are user-controlled and must never authorize access or store credentials.
 
-Run build:desktop, DESKTOP_SMOKE=1 DESKTOP_BOOT_PROFILE=1 with desktop start, and check packaged artifacts (desktop package for test-profile; package:release changes Fuses). Desktop E2E uses Playwright with isolated userData and closes all launched processes. Build/package before both E2E targets; unpackaged needs only build. Test endpoints require DESKTOP_E2E=1 and never mount in release-profile. Release cannot be driven with the inspector-based test driver. Compare repeated boot-profile medians for startup changes. Specs live in docs/specs; decisions in docs/adrs.
+Run build:desktop, DESKTOP_SMOKE=1 DESKTOP_SMOKE_LAYOUT=1 DESKTOP_BOOT_PROFILE=1 with desktop start, and check packaged artifacts (desktop package for test-profile; package:release changes Fuses). Desktop E2E uses Playwright with isolated userData and closes all launched processes. Build/package before both E2E targets; unpackaged needs only build. Test endpoints require DESKTOP_E2E=1 and never mount in release-profile. Release cannot be driven with the inspector-based test driver. Compare repeated boot-profile medians for startup changes. Specs live in docs/specs; decisions in docs/adrs.
 
 Inline CHROME_SAFETY_CSS relies on the default CSP style-src unsafe-inline allowance; add a hash before tightening it.
 
@@ -95,6 +95,10 @@ Application identity is defined once in @repo/shared app-identity.ts. Choose APP
 Mantine adapters derive both palettes from Core semantic tokens in managers/visual/mantine/theme.ts. Keep typography, radius and breakpoints tied to app config; dynamic prepaint fallback uses the same resolved theme and resolver. Global Mantine imports, focus ring, reduced-motion and no-drag rules belong in styles/ui.css. Keep native-control styling scoped to explicitly owned controls; appearance-settings uses Mantine controls and only owns its fieldset layout.
 
 Use CSS Modules for Core components; do not convert inherited modules just to use Sass. Mantine-specific SCSS may use the injected mantine namespace: mantine.rem() preserves --mantine-scale, breakpoint mixins use config/breakpoints.ts, hover handles pointer capabilities, and rtl is only for cases logical properties cannot express. Colors use semantic variables, never color-scheme mixins or light-dark(). The _mantine.scss tool module emits no CSS and is injected once per compilation by the shared Vite/Vitest CSS configuration; do not @use or @forward it again. Global styles remain CSS. Build integration tests compile temporary fixtures through the actual Sass and PostCSS pipeline and clean them up.
+
+## Desktop diagnostic organization
+
+Keep diagnostic runners/routes under apps/desktop/src/diagnostics/{smoke,bench,e2e}; main/ contains application runtime services. DESKTOP_SMOKE selects the application suite; DESKTOP_SMOKE_LAYOUT explicitly adds the demo fixture matrix and is mandatory for template acceptance. Do not silently skip a requested fixture. Derive utility cache paths only after configuring the selected userData directory.
 
 ## Architecture checks
 

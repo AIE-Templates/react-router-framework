@@ -36,12 +36,12 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
           win.setContentSize(1320, 800);
           // Exercise the same React controls a person uses, including client route navigation.
           await evaluate(`
-            for (const [index, value] of [[0, ${JSON.stringify(shell)}], [1, ${JSON.stringify(header)}]]) {
-              const select = document.querySelectorAll('[data-demo-controls] select')[index];
+            for (const [name, value] of [["shell", ${JSON.stringify(shell)}], ["header", ${JSON.stringify(header)}]]) {
+              const select = document.querySelector('[data-demo-' + name + ']');
               if (!select) throw new Error('layout demo select missing');
               select.value = value; select.dispatchEvent(new Event('change', { bubbles: true }));
               // Navigation can await a loader; two frames alone do not imply React committed it.
-              const committed = () => index === 0
+              const committed = () => name === "shell"
                 ? document.querySelector('.app-shell')?.hasAttribute('data-navigation-shell') === (value === 'navigation')
                 : document.querySelector('.app-shell')?.dataset.headerMode === value;
               while (!committed()) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -53,8 +53,8 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Retained through all widths');
             input.dispatchEvent(new Event('input', { bubbles: true }));
             ${settle}
-            for (const name of ['Sidebar', 'Auxiliary']) {
-              const button = [...document.querySelectorAll('.module-workspace > .module-header button')].find((element) => element.textContent === name);
+            for (const name of ['sidebar', 'auxiliary']) {
+              const button = document.querySelector('[data-module-panel-toggle=' + name + ']');
               if (!button) throw new Error('module toggle missing: ' + name);
               if (button.getAttribute('aria-expanded') !== 'true') button.click();
             }

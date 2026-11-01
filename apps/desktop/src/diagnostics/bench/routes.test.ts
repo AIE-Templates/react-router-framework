@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { withBenchRoutes } from "./bench-routes.ts";
+import { withBenchRoutes } from "./routes.ts";
 
 const origin = "http://app.desktop";
 const handler = withBenchRoutes(
