@@ -1,0 +1,5 @@
+@layer theme, base, mantine, components, utilities;
+@import "tailwindcss";
+@import "./base.css";
+/* Migration bridge: downstream layers remove their styles before this file is deleted. */
+@import "../app.css";
