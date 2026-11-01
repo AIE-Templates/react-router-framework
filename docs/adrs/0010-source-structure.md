@@ -1,4 +1,4 @@
-# ADR 0009: Organize features and preserve infrastructure boundaries
+# ADR 0010: Organize features and preserve infrastructure boundaries
 
 Status: Accepted
 
