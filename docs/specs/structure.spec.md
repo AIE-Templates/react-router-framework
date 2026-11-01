@@ -6,7 +6,7 @@
 
 `features/main` contains the SPA 404 and can later hold application layout routes and navigation data. `features/demo` is a disposable sandbox outside the main layout: no other directory imports it. Removing its route registrations and directory removes the template home page. Feature-specific UI, state, types, hooks and pure functions stay together; feature-to-feature imports are not part of the design. Share reusable UI through components/layouts and reusable infrastructure through hooks/managers/services/lib/utils/config as appropriate.
 
-The dependency direction is recommended, not lint-enforced. App imports use `~/` when crossing directories; `./` may reference the same directory or children. Do not introduce parent-relative imports. Existing imports migrate in their owning layer; lint enforcement starts only in final cleanup (P6). Packages use workspace names and retain package-internal relative imports. Do not add barrel index.ts files under src/app. Tests stay beside source unless their dependency on the real host requires src/host.
+The dependency direction is recommended, not lint-enforced. App imports use `~/` when crossing directories; `./` may reference the same directory or children. The import/no-relative-parent-imports lint rule forbids parent-relative imports within apps/*/src/**; build configuration, scripts and e2e files remain outside its scope. Packages use workspace names and retain package-internal relative imports. Do not add barrel index.ts files under src/app. Tests stay beside source unless their dependency on the real host requires src/host.
 
 ## Infrastructure owners
 
@@ -18,9 +18,9 @@ The dependency direction is recommended, not lint-enforced. App imports use `~/`
 
 ## Styles and identifiers
 
-The global entry is `styles/index.css`, with layer order `theme, base, mantine, components, utilities`. Base document rules, semantic tokens and shell styles live in base.css, tokens.css and shell.css. Core provides an empty ui.css integration slot. Component styles are colocated CSS Modules, using camelCase classes and the import name `classes`; module rules also belong to `@layer components` so utility overrides retain their intended order. UI-library layers may prefer SCSS Modules without converting inherited Core modules.
+The global entry is `styles/index.css`, with layer order `theme, base, mantine, components, utilities`. Base document rules, semantic tokens and shell styles live in base.css, tokens.css and shell.css. Core provides an empty ui.css integration slot, populated by UI-library layers. Component styles are colocated CSS Modules, using camelCase classes and the import name `classes`; module rules also belong to `@layer components` so utility overrides retain their intended order. UI-library layers may prefer SCSS Modules without converting inherited Core modules.
 
-`CHROME_SAFETY_CSS` in `layouts/app-shell/chrome-safety.ts` is an explicit exception: preserve inline delivery and unlayered rules so window safety does not wait for external stylesheets, providers or bootstrap. During migration, app.css remains an import bridge for downstream layer content; it only shrinks and is removed during final cleanup.
+`CHROME_SAFETY_CSS` in `layouts/app-shell/chrome-safety.ts` is an explicit exception: preserve inline delivery and unlayered rules so window safety does not wait for external stylesheets, providers or bootstrap.
 
 Core semantic variables use `--app-`, including `--app-color-*`, `--app-font-sans`, `--app-radius` and `--app-shadow-surface`. Tailwind and UI-library variables derive from them. `--app-shell-*` is reserved for Mantine AppShell. Feature-private variables use exactly `--<feature>-` on that feature's root rather than :root. Feature names cannot occupy application, Mantine or Tailwind theme namespaces. Data attributes use domain-name without an application prefix; preserve existing and third-party attributes.
 
