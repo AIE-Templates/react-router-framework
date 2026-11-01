@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 
 import { BREAKPOINTS } from "~/config/breakpoints";
 
-const appDirectory = resolve(import.meta.dirname, "..");
+const appDirectory = resolve(import.meta.dirname, "../../src/app");
 const reservedFeatures = new Set([
   "app",
   "mantine",
