@@ -14,7 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
-import type { BenchCaseResult } from "../src/main/bench.ts";
+import type { BenchCaseResult } from "~/main/bench";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 

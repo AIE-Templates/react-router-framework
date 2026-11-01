@@ -1,7 +1,8 @@
 import type { PortStats } from "@repo/port-fetch";
 import type { BrowserWindow, ProcessMetric } from "electron";
 
-import type { BenchProc } from "../bench-routes.ts";
+import type { BenchProc } from "~/bench-routes";
+
 import { type PageCaseResult, type PageCaseSpec, type PageOp, runPageCase } from "./bench-page.ts";
 import type { Logger } from "./log.ts";
 

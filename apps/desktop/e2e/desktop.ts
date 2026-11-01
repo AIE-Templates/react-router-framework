@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
+import { packagedExecutable } from "./packaged-path.ts";
+
 /**
  * What the Playwright Electron driver launches:
  * - `unpackaged`: `electron .` in apps/desktop, on the output of `pnpm build:desktop`;
@@ -25,14 +27,8 @@ export function electronBinary(): string {
 
 /** The test-profile executable electron-builder's `--dir` writes for this machine. */
 export function packagedBinary(): string {
-  const out = join(desktopDir, "out");
-  if (process.platform === "darwin") {
-    const dir = process.arch === "arm64" ? "mac-arm64" : "mac";
-    return join(out, dir, "Desktop.app", "Contents", "MacOS", "Desktop");
-  }
-  if (process.platform === "win32")
-    return join(out, process.arch === "arm64" ? "win-arm64-unpacked" : "win-unpacked", "Desktop.exe");
-  return join(out, process.arch === "arm64" ? "linux-arm64-unpacked" : "linux-unpacked", "desktop");
+  const metadata = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
+  return packagedExecutable(join(desktopDir, "out"), metadata, process.platform, process.arch);
 }
 
 /** Every process of a launch (main, renderer, GPU, utility) has its executable under this directory. */
