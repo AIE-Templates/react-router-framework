@@ -38,6 +38,8 @@ SPA builds reject non-root server loaders, server actions/middleware/headers and
 
 ## Server and host
 
+Host-dependent integration tests live under apps/web/src/host with an explicit node/jsdom environment. Preserve real BFF and load-context calls; colocated application tests cover pure components or fake clients. Host tests import application modules via ~/ and derive route argument types from exported functions instead of aliasing generated +types.
+
 packages/server is Hono, independently runnable under native Node and also hosted in-process. Use explicit .ts relative imports and erasable TypeScript; no enums, namespaces, parameter properties, import.meta.env or React Router dependency. Development-only behavior checks NODE_ENV === "development"; unset means production.
 
 Keep host logic in apps/web/src/host. app.ts composes createServerApp with Router; web-app.ts adds static/SPA handling as createWebApp. server.ts only loads environment/build and starts production. getHostApp serves dev/prerender through the Vite adapter. Load .env only in react-router.config.ts and server.ts. Preserve dotenv 17.x/dotenv-expand 13.x; command substitution in newer expand versions needs review.

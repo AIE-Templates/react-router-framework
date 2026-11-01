@@ -1,10 +1,10 @@
+// @vitest-environment jsdom
 import type { ApiType } from "@repo/server/types";
 import { render, screen } from "@testing-library/react";
 import { hc } from "hono/client";
 import { createRoutesStub, RouterContextProvider, useLoaderData, type LoaderFunctionArgs } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
-import { createTestContext } from "../../host/testing";
 import { apiContext } from "./api";
 
 // A loader written the way route modules call the BFF.
@@ -19,12 +19,6 @@ function HealthStatus() {
 }
 
 describe("loaders using apiContext", () => {
-  it("call the real BFF in-process with createTestContext()", async () => {
-    const result = await loader({ context: createTestContext() });
-
-    expect(result).toEqual({ status: "ok" });
-  });
-
   it("can use a fake BFF client instead", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ status: "degraded" }));
     const context = new RouterContextProvider();
