@@ -2,9 +2,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { createPortal } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 
-import { AppRoot } from "../../providers/app-root";
-import { getInteractiveProps } from "../../providers/environment";
-import { BasicShell, NavigationShell } from "../app-shell/app-shell";
+import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
+import { getInteractiveProps } from "~/managers/environment/dom-props";
+import { AppRoot } from "~/providers/app-root";
+
 import { ModuleLayout } from "./module-layout";
 
 const layout = (headerMode: "fused" | "standalone") => (

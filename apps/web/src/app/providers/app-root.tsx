@@ -1,10 +1,10 @@
 import type { ChromeMode, WindowChromeBridge, Shell } from "@repo/shared";
 import { useEffect, useState, type ReactNode } from "react";
 
-import type { ManagersInitialState } from "../managers/initial-state";
-import { ManagersRegistry } from "../managers/registry";
-import { createWindowChromeRuntime } from "../window-chrome/runtime";
-import { EnvironmentContext } from "./environment";
+import { EnvironmentContext } from "~/managers/environment/context";
+import { createWindowChromeRuntime } from "~/managers/environment/runtime";
+import type { ManagersInitialState } from "~/managers/initial-state";
+import { ManagersRegistry } from "~/managers/registry";
 
 declare global {
   interface Window {

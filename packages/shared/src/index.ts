@@ -1,3 +1,5 @@
+export { APP_ID, cookieSafe, storageKey, cookieName } from "./app-identity.ts";
+
 export { DESKTOP_PLATFORMS, type DesktopPlatform, type Shell, WEB_SHELL } from "./shell.ts";
 
 export {

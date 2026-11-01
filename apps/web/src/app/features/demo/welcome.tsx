@@ -1,21 +1,23 @@
 import { DemoIcon } from "./demo-icon";
 
+import classes from "./welcome.module.css";
+
 export function Welcome() {
   return (
-    <section id="resources" aria-label="Welcome resources" className="demo-resources">
-      <div className="demo-section-heading">
+    <section id="resources" aria-label="Welcome resources" className={classes.demoResources}>
+      <div className={classes.demoSectionHeading}>
         <h2>Keep building</h2>
         <span>A few useful places to go next.</span>
       </div>
-      <div className="demo-resource-grid">
+      <div className={classes.demoResourceGrid}>
         <a
           href="https://reactrouter.com/docs"
           target="_blank"
           rel="noreferrer"
-          className="demo-resource"
+          className={classes.demoResource}
           aria-label="React Router Docs"
         >
-          <span className="demo-icon-box">
+          <span className={classes.demoIconBox}>
             <DemoIcon name="book" />
           </span>
           <span>
@@ -28,10 +30,10 @@ export function Welcome() {
           href="https://rmx.as/discord"
           target="_blank"
           rel="noreferrer"
-          className="demo-resource"
+          className={classes.demoResource}
           aria-label="Join Discord"
         >
-          <span className="demo-icon-box">
+          <span className={classes.demoIconBox}>
             <DemoIcon name="code" />
           </span>
           <span>
