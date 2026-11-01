@@ -21,7 +21,8 @@ afterEach(() => {
 
 describe("root loader", () => {
   it("reports no nonce without a Content-Security-Policy", () => {
-    expect(loader(loaderArgs(createTestContext()))).toEqual({
+    // The host suite owns nonce/visual fields; Electron root tests assert its additional shell/facts.
+    expect(loader(loaderArgs(createTestContext()))).toMatchObject({
       nonce: undefined,
       managersInitialState: { visual: undefined },
     });
