@@ -10,18 +10,4 @@
     border-radius: var(--app-radius);
     background: var(--app-color-card);
   }
-
-  .visualSettings label {
-    display: grid;
-    gap: 0.4rem;
-  }
-
-  .visualSettings select:not([class*="mantine-"]),
-  .visualSettings button:not([class*="mantine-"]) {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--app-color-input);
-    border-radius: 0.4rem;
-    background: var(--app-color-card);
-    color: var(--app-color-foreground);
-  }
 }

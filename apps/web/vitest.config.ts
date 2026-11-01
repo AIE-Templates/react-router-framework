@@ -21,7 +21,7 @@ export default defineConfig({
   test: {
     name: "web",
     environment: "jsdom",
-    include: ["src/**/*.test.{ts,tsx}", "vite-plugins/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.{ts,tsx}", "vite-plugins/**/*.test.ts"],
     setupFiles: ["./vitest.setup.ts"],
   },
 });
