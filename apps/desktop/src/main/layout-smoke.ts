@@ -37,7 +37,7 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
           // Exercise the same React controls a person uses, including client route navigation.
           await evaluate(`
             for (const [index, value] of [[0, ${JSON.stringify(shell)}], [1, ${JSON.stringify(header)}]]) {
-              const select = document.querySelectorAll('.layout-demo-controls select')[index];
+              const select = document.querySelectorAll('[data-demo-controls] select')[index];
               if (!select) throw new Error('layout demo select missing');
               select.value = value; select.dispatchEvent(new Event('change', { bubbles: true }));
               // Navigation can await a loader; two frames alone do not imply React committed it.
@@ -48,7 +48,7 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
               ${settle}
             }
             document.documentElement.dir = ${JSON.stringify(direction)};
-            const input = document.querySelector('.demo-draft-label input');
+            const input = document.querySelector('[data-demo-draft] input');
             if (!input) throw new Error('module draft missing');
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Retained through all widths');
             input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -68,7 +68,7 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
               const module = document.querySelector('.module-layout');
               const sidebar = document.querySelector('.module-sidebar');
               const auxiliary = document.querySelector('.module-auxiliary');
-              const input = document.querySelector('.demo-draft-label input');
+              const input = document.querySelector('[data-demo-draft] input');
               const moduleWidth = module.getBoundingClientRect().width;
               const mode = moduleWidth <= 640 ? 'compact' : moduleWidth <= 960 ? 'medium' : 'expanded';
               const overflow = [document.documentElement, document.querySelector('.root-content'), ...document.querySelectorAll('.module-scroll')].filter((element) => element && element.getBoundingClientRect().width > 0).map((element) => ({ region: element.className || element.tagName, excess: element.scrollWidth - element.clientWidth })).filter((value) => value.excess > 1);
