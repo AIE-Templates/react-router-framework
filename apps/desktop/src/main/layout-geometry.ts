@@ -1,6 +1,6 @@
 /** Pure expectations for the layout smoke's top-band measurements (CSS px, as the renderer reports them). */
 
-/** The shell header height (`--shell-header-height: 3rem` at the default font size). */
+/** The shell header height (`--app-layout-header-height: 3rem` at the default font size). */
 export const SHELL_HEADER_HEIGHT = 48;
 
 // Chromium positions boxes in 1/64 px layout units; a measured height can be off by that much.

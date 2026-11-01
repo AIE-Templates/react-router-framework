@@ -42,6 +42,21 @@ for (const scenario of [
   });
 }
 
+test("Tailwind utilities override the demo CSS Module in the components layer", async ({ desktop: { page } }) => {
+  const card = page.locator("#scratchpad");
+  const originalPadding = await card.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingTop));
+  expect(originalPadding).toBeGreaterThan(0);
+  expect(originalPadding).toBeLessThan(64);
+  // pt-16 already occurs in the root fallback, so this tests a utility emitted in the real build.
+  await card.evaluate((element) => element.classList.add("pt-16"));
+  try {
+    await expect(card).toHaveCSS("padding-top", "64px");
+  } finally {
+    await card.evaluate((element) => element.classList.remove("pt-16"));
+  }
+  await expect(card).toHaveCSS("padding-top", `${originalPadding}px`);
+});
+
 test("visual controls persist through reload and synchronize the independent native mirror", async ({
   desktop: { app, page },
 }) => {

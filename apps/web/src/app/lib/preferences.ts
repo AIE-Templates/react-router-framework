@@ -11,7 +11,7 @@ import {
 import { useCallback } from "react";
 import { createContext, type RouterContextProvider, useRevalidator } from "react-router";
 
-import { useAppEnvironment } from "~/providers/environment";
+import { useAppEnvironment } from "~/managers/environment/hooks";
 
 export type { PreferenceValue };
 
