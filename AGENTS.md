@@ -53,3 +53,7 @@ Pass request.signal to upstream fetch. Use createTestContext or a fake apiContex
 Middleware extends the same host/server chain before Router fallback; do not wrap it in a second Hono app. Keep entry.server.tsx aligned with Router's default Node entry during upgrades. CSP uses one SSR document nonce for ServerRouter, React, Links, ScrollRestoration and Scripts; preserve it across revalidation. Static HTML uses sha256 hashes. Production script-src excludes unsafe-inline; configure additional resource origins explicitly.
 
 In-process server data APIs provide SSR data and cookie forwarding but prevent SPA builds. Client data APIs support either build mode with a first-render skeleton and a browser request. Moving SSR server-data routes to SPA requires rewriting them.
+
+## Architecture checks
+
+Cross-cutting source guards live in apps/web/tests/architecture and run with the Web Vitest project. They enforce app-to-host isolation, private feature modules (including demo), and production-to-test isolation for literal module references, including re-exports and dynamic imports. Colocated test files and testing/ helpers are exempt as consumers; runtime-computed module paths are not statically checked. Keep unit tests beside their implementation.
