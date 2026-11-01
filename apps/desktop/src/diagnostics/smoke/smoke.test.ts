@@ -1,6 +1,8 @@
+import { runInNewContext } from "node:vm";
+
 import { describe, expect, it } from "vitest";
 
-import { sseStreamed } from "./smoke.ts";
+import { documentHydrationScript, sseStreamed } from "./smoke.ts";
 
 const options = { count: 4, interval: 100 };
 const server = { events: 4, aborted: false, completed: true };
@@ -29,5 +31,29 @@ describe("sseStreamed", () => {
         options,
       ),
     ).toBe(false);
+  });
+});
+
+describe("return-from-error renderer hydration check", () => {
+  it.each<{ initial?: string; after?: string; expected: boolean }>([
+    { expected: false },
+    { initial: "false", expected: false },
+    { initial: "true", expected: true },
+    { after: "true", expected: true },
+    { initial: "false", after: "true", expected: true },
+  ])("requires an actual hydrated document: %j", async ({ initial, after, expected }) => {
+    let elapsed = 0;
+    const dataset = { hydrated: initial };
+    const result: unknown = await runInNewContext(`(async () => { ${documentHydrationScript} })()`, {
+      document: { documentElement: { dataset } },
+      Date: { now: () => elapsed },
+      setTimeout: (callback: () => void, ms: number) => {
+        elapsed += ms;
+        if (after !== undefined) dataset.hydrated = after;
+        callback();
+      },
+    });
+    expect(result).toBe(expected);
+    expect(elapsed).toBe(expected ? (initial === "true" ? 0 : 25) : 5000);
   });
 });

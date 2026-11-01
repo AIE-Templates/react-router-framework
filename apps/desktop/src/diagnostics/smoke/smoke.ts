@@ -14,6 +14,17 @@ const SMOKE_SSE_INTERVAL_MS = 150;
 /** How soon a cancel in the renderer must show up as an aborted `request.signal` in the utility. */
 const SMOKE_ABORT_BOUND_MS = 2_000;
 
+/** Shared with the regression test: execute the same serialized function as the renderer. */
+export const documentHydrationScript = `return await (${waitForDocumentHydration.toString()})(5000);`;
+
+async function waitForDocumentHydration(timeoutMs: number): Promise<boolean> {
+  const until = Date.now() + timeoutMs;
+  while (document.documentElement.dataset.hydrated !== "true" && Date.now() < until) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  return document.documentElement.dataset.hydrated === "true";
+}
+
 interface Check {
   ok: boolean;
   /** Not run on purpose; never counted as a pass of what it would have checked. */
@@ -311,11 +322,7 @@ export async function runSmoke(
         v.contentTop >= v.safeTop - 1,
     );
     await win.loadURL(returnUrl);
-    await check(
-      "returnFromError",
-      `const until = Date.now() + 5000; while (document.documentElement.dataset.hydrated !== "true" && Date.now() < until) await new Promise((r) => setTimeout(r, 25)); return !document.documentElement.dataset.hydrated !== "true";`,
-      (v) => v === true,
-    );
+    await check("returnFromError", documentHydrationScript, (v) => v === true);
   } catch (error) {
     checks.routeErrorSafety = { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
