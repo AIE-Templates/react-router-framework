@@ -34,4 +34,5 @@ export default defineConfig({
     conditions: ["@repo/source", ...defaultClientConditions],
     tsconfigPaths: true,
   },
+  css: { modules: { localsConvention: "camelCaseOnly" } },
 });
