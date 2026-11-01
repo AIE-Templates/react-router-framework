@@ -1,8 +1,6 @@
-@layer theme, base, mantine, components, utilities;
 @import "@mantine/core/styles.layer.css";
 /* Package styles follow core styles in the same mantine layer. @mantine/modals and @mantine/form ship no CSS. */
 @import "@mantine/notifications/styles.layer.css";
-@import "tailwindcss";
 @custom-variant dark (&:where([data-color-scheme=dark], [data-color-scheme=dark] *));
 
 @theme {
