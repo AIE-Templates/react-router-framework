@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-import { visualCookie } from "../../../config/visual-cookie";
-import { DEFAULT_VISUAL_PREFERENCES } from "../types";
+import { visualCookie } from "~/config/visual-cookie";
+import { DEFAULT_VISUAL_PREFERENCES } from "~/managers/visual/types";
+
 import { readVisualCookie, writeVisualCookie } from "./cookie";
 import { readVisualRequestSeed } from "./cookie.server";
 afterEach(() => {

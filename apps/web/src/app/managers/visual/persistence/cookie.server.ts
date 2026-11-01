@@ -1,4 +1,5 @@
-import { visualCookie } from "../../../config/visual-cookie";
+import { visualCookie } from "~/config/visual-cookie";
+
 import { readVisualCookie } from "./cookie";
 /** Pure per-request parsing. Missing build-time cookies never become a user seed. */
 export function readVisualRequestSeed(request: Request) {
