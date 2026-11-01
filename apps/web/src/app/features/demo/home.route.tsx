@@ -115,6 +115,7 @@ export default function Home() {
               <label>
                 App shell
                 <select
+                  data-demo-shell
                   value={basic ? "basic" : "navigation"}
                   onChange={(event) => choose("shell", event.target.value)}
                 >
@@ -124,7 +125,7 @@ export default function Home() {
               </label>
               <label>
                 Title bar
-                <select value={headerMode} onChange={(event) => choose("header", event.target.value)}>
+                <select data-demo-header value={headerMode} onChange={(event) => choose("header", event.target.value)}>
                   <option value="fused">Fused</option>
                   <option value="standalone">Standalone</option>
                 </select>
