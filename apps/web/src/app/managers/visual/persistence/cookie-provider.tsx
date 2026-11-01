@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type PropsWithChildren } from "react";
 
+import { useAppEnvironment } from "~/managers/environment/hooks";
+
 import { STORAGE_KEYS } from "../../../config/storage";
 import { visualCookie } from "../../../config/visual-cookie";
-import { useAppEnvironment } from "../../../providers/environment";
 import { visualCodec } from "../bootstrap";
 import { useVisualManager } from "../hooks";
 import { writeVisualCookie } from "./cookie";
