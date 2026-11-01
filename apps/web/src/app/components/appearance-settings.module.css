@@ -16,8 +16,8 @@
     gap: 0.4rem;
   }
 
-  .visualSettings select,
-  .visualSettings button {
+  .visualSettings select:not([class*="mantine-"]),
+  .visualSettings button:not([class*="mantine-"]) {
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--app-color-input);
     border-radius: 0.4rem;

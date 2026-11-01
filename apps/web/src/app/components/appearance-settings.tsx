@@ -3,10 +3,9 @@ import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useRef, useState } from "react";
 
+import { getInteractiveProps } from "~/managers/environment/dom-props";
 import { visualCodec } from "~/managers/visual/bootstrap";
 import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
-
-import { getInteractiveProps } from "../../providers/environment";
 
 import classes from "./appearance-settings.module.css";
 

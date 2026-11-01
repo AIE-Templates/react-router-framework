@@ -4,10 +4,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 
-import { AppUiProvider } from "../../providers/app-ui-provider";
-import { VisualManagerContext } from "./context";
-import { createVisualManager } from "./manager";
-import { VisualSettings } from "./settings";
+import { VisualManagerContext } from "~/managers/visual/context";
+import { createVisualManager } from "~/managers/visual/manager";
+import { AppUiProvider } from "~/providers/app-ui-provider";
+
+import { VisualSettings } from "./appearance-settings";
 
 afterEach(() => {
   act(() => {

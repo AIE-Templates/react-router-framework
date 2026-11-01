@@ -11,9 +11,9 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  button,
-  input,
-  select {
+  button:not([class*="mantine-"]),
+  input:not([class*="mantine-"]),
+  select:not([class*="mantine-"]) {
     font: inherit;
   }
 

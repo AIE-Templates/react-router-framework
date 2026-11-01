@@ -172,7 +172,7 @@ export default function Home() {
                 <p>Try a thought, a task, or your next big idea.</p>
               </div>
             </div>
-            <div className="demo-draft-label">
+            <div>
               <TextInput
                 label="Module draft"
                 value={note}
