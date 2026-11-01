@@ -55,3 +55,5 @@ Colors use Core semantic variables; viewport media widths come from `~/config/br
 ## Host integration tests
 
 `src/host/api.integration.test.ts` exercises the real in-process BFF; the fake-client component test remains beside `src/app/lib/api.ts`. `src/host/root.integration.test.tsx` exercises the actual root loader and CSP nonce handoff. Host tests explicitly select Node or jsdom and import application code through `~/`; generated route argument types are inferred from the exported function. Pure component tests remain colocated.
+
+The fullstack Core host root suite also verifies web document attributes and hydration. The no-loader safety/bootstrap fallback test stays beside `root.tsx`. Visual cookie names come from `cookieName("visual")` in `@repo/shared`; the build-time `VITE_VISUAL_COOKIE=true` opt-in and cookie lifetime remain unchanged.
