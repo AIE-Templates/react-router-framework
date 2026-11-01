@@ -23,6 +23,7 @@ export default defineConfig({
     },
   },
   rules: {
+    "unicorn/filename-case": ["error", { case: "kebabCase" }],
     // Hook rules sit in the `pedantic` category, which is not enabled.
     "react/rules-of-hooks": "error",
     // Not needed with the automatic JSX runtime.
