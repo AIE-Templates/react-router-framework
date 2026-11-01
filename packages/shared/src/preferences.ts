@@ -1,9 +1,10 @@
 // Electron layer: host request and preference protocol.
+import { cookieName } from "./app-identity.ts";
 import type { DesktopPrefs } from "./desktop-headers.ts";
 
 /**
  * Small user preferences that client code writes and server rendering reads (theme, locale, sidebar
- * width). The web shell keeps each one in a `pref-<key>` cookie; the desktop shell, which has no
+ * width). The web shell keeps each one in an application-prefixed cookie; the desktop shell, which has no
  * cookies under `app://`, keeps them in the main process and sends them as `x-desktop-prefs`. Both
  * shells apply the same rules, so a key that works in one works in the other.
  */
@@ -17,7 +18,7 @@ export const PREFERENCE_LIMITS = {
   /**
    * All preferences together, measured both ways they travel, each at most this: as ASCII JSON
    * (non-ASCII characters count as their 6-byte `\uXXXX` escape), the `x-desktop-prefs` header; and
-   * as the web shell's `pref-*` cookies (`preferenceCookiesSize()`: names, `=`, encoded values and
+   * as the web shell's application-prefixed cookies (`preferenceCookiesSize()`: names, `=`, encoded values and
    * the `; ` between them). Both bounds apply in both shells, so the shells accept the same values.
    * 4 KiB keeps every single cookie within what browsers store (Chromium silently drops a cookie
    * whose name and value exceed 4096 bytes) and the preferences' share of a request's headers far
@@ -26,8 +27,8 @@ export const PREFERENCE_LIMITS = {
   totalBytes: 4096,
 } as const;
 
-/** Prefix of the web shell's preference cookies: `theme` is stored as `pref-theme`. */
-export const PREFERENCE_COOKIE_PREFIX = "pref-";
+/** Prefix of the web shell's preference cookies: derived once from the application identity. */
+export const PREFERENCE_COOKIE_PREFIX = cookieName("pref_");
 
 /** IPC channels between the desktop preload and the main process. */
 export const DESKTOP_PREFS_IPC = {
@@ -98,7 +99,7 @@ export function sanitizePreferences(value: unknown): DesktopPrefs {
 }
 
 /**
- * The web shell's preferences from a `Cookie` header (or `document.cookie`): `pref-*` cookies, JSON
+ * The web shell's preferences from a `Cookie` header (or `document.cookie`): application-prefixed cookies, JSON
  * values. When a name repeats (same name, different paths), the first wins: browsers send the most
  * specific path first.
  */
@@ -133,7 +134,7 @@ export function preferenceCookieValue(value: PreferenceValue): string {
   return JSON.stringify(value).replace(COOKIE_UNSAFE, (c) => encodeURIComponent(c));
 }
 
-/** The bytes `prefs` take as `pref-*` cookies in a `Cookie` header: `name=value` pairs joined by `; `. */
+/** The bytes `prefs` take as application-prefixed cookies in a `Cookie` header: `name=value` pairs joined by `; `. */
 export function preferenceCookiesSize(prefs: DesktopPrefs): number {
   let size = 0;
   let count = 0;

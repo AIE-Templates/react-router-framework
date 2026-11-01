@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createAdaptorServer } from "@hono/node-server";
 import { logger } from "@repo/server";
-import type { Shell } from "@repo/shared";
+import { PREFERENCE_COOKIE_PREFIX, type Shell } from "@repo/shared";
 import type { Hono } from "hono";
 import { pino } from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -215,7 +215,10 @@ describe("createLoadContext", () => {
 
   it("gives loaders the preferences of the shell it was started with, never of the request", () => {
     const request = new Request("https://example.com/", {
-      headers: { cookie: "pref-theme=%22light%22; other=1", "x-desktop-prefs": JSON.stringify({ theme: "dark" }) },
+      headers: {
+        cookie: `${PREFERENCE_COOKIE_PREFIX}theme=%22light%22; other=1`,
+        "x-desktop-prefs": JSON.stringify({ theme: "dark" }),
+      },
     });
     const web = createLoadContext(request);
     expect(web.get(preferencesContext)).toEqual({ theme: "light" });

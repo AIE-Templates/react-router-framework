@@ -5,7 +5,7 @@ import { expect, quit, test, waitForApp } from "./desktop.ts";
 // Preferences under app://app (HOST-08): the page writes them through the preload bridge, the main
 // process keeps them (and prefs.json in the user data directory) and sends them with every request
 // as `x-desktop-prefs`, so server rendering sees them after a reload and after a relaunch. The app's
-// code uses `useSetPreference()` from `~/lib/preferences`; these tests call the bridge underneath it.
+// code uses `useSetPreference()` from `~/platform/electron/preferences`; these tests call the bridge underneath it.
 
 const KEY = "e2eProbe";
 const VALUE = "e2e-pref-value-7f3a";
@@ -70,4 +70,16 @@ test("a preference survives quitting and relaunching on the same user data", asy
   await quit(first);
   const second = await launchApp();
   expect(await rendered(second.page)).toEqual({ document: true, fetched: true });
+});
+
+test("desktop writes enforce the application-prefixed cookie budget", async ({ desktop: { page } }) => {
+  const keys = ["budget0", "budget1", "budget2", "budget3"];
+  try {
+    for (const key of keys.slice(0, 3))
+      expect(await setPref(page, key, "x".repeat(1000))).toEqual({ status: "applied" });
+    // JSON remains below the limit, but four named cookies exceed the shared 4 KiB budget.
+    expect(await setPref(page, keys[3], "x".repeat(1000))).toEqual({ status: "rejected", reason: "too-large" });
+  } finally {
+    for (const key of keys) expect(await setPref(page, key, null)).toEqual({ status: "applied" });
+  }
 });

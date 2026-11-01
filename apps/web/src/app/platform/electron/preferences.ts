@@ -17,7 +17,7 @@ export type { PreferenceValue };
 
 /**
  * Small user preferences that client code writes and server rendering reads (theme, locale, sidebar
- * width), the same in both shells. The web shell keeps them in `pref-<key>` cookies; the desktop
+ * width), the same in both shells. The web shell keeps them in application-prefixed cookies; the desktop
  * shell has no cookies under `app://`, so its main process keeps them and sends them with every
  * request as `x-desktop-prefs`. Read them in loaders and actions with `getPreference()`, write them
  * from components with `useSetPreference()`; never through `document.cookie` directly, which the
@@ -27,7 +27,7 @@ export type { PreferenceValue };
 export type Preferences = Readonly<Record<string, PreferenceValue>>;
 
 /**
- * This request's preferences, set by the host from the shell it was started with: the `pref-*`
+ * This request's preferences, set by the host from the shell it was started with: the application-prefixed
  * cookies in the web shell, the parsed `x-desktop-prefs` header in the desktop shell. Read them with
  * `getPreference()`.
  */
