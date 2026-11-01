@@ -1,13 +1,14 @@
+// @vitest-environment jsdom
 import { render, waitFor } from "@testing-library/react";
 import { createRoutesStub, RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createLoadContext } from "../host/app";
-import { createTestContext } from "../host/testing";
-import type { Route } from "./+types/root";
-import { Layout, loader } from "./root";
+import { Layout, loader } from "~/root";
 
-function loaderArgs(context: RouterContextProvider): Route.LoaderArgs {
+import { createLoadContext } from "./app";
+import { createTestContext } from "./testing";
+
+function loaderArgs(context: RouterContextProvider): Parameters<typeof loader>[0] {
   const url = new URL("http://localhost/");
   return { context, request: new Request(url), url, params: {}, pattern: "/" };
 }
