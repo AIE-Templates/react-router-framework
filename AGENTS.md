@@ -35,3 +35,7 @@ Use kebab-case file and directory names, PascalCase component exports and useXxx
 This branch builds a static SPA with ssr: false.
 
 SPA builds reject non-root server loaders, server actions/middleware/headers and non-root HydrateFallback. The root loader runs at build time. Components, meta, links, ErrorBoundary and client data APIs can support both modes. Select rendering requirements deliberately rather than assuming every application can switch unchanged.
+
+## Architecture checks
+
+Cross-cutting source guards live in apps/web/tests/architecture and run with the Web Vitest project. They enforce app-to-host isolation, private feature modules (including demo), and production-to-test isolation for literal module references, including re-exports and dynamic imports. Colocated test files and testing/ helpers are exempt as consumers; runtime-computed module paths are not statically checked. Keep unit tests beside their implementation.
