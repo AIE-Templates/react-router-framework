@@ -14,4 +14,4 @@ Accepted decisions explain why the design takes its current form. Contracts are 
 
 - [Desktop visual mirror](0009-desktop-visual-mirror.md)
 
-- [Organize features and preserve infrastructure boundaries](0009-source-structure.md)
+- [Organize features and preserve infrastructure boundaries](0010-source-structure.md)
