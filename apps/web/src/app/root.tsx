@@ -2,7 +2,7 @@ import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration }
 
 import type { Route } from "./+types/root";
 
-import "./app.css";
+import "./styles/index.css";
 
 // No external stylesheets or fonts: pages may load offline (a desktop shell, an intranet), and an
 // unreachable host would hold up the document. Self-host fonts if needed.
