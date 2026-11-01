@@ -28,7 +28,7 @@ it("generates complete variable fallbacks guarded by both missing attributes", (
   const css = createVisualFallbackCss();
   expect(css).toContain(":root:not([data-color-scheme]):not([data-mantine-color-scheme])");
   expect(css).toContain("@media(prefers-color-scheme:dark)");
-  expect(css).toContain("--mantine-color-body:var(--background)");
+  expect(css).toContain("--mantine-color-body:var(--app-color-background)");
   expect(css).toContain("--mantine-color-scheme:light");
   expect(css).toContain("--mantine-color-scheme:dark");
   expect(css).not.toContain("undefined");

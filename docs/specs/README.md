@@ -12,3 +12,5 @@ Settled design contracts; rationale belongs in [ADRs](../adrs/README.md).
 
 - [Desktop visual synchronization](desktop-visual.spec.md)
 - [Mantine integration](mantine.spec.md)
+
+- [Application source structure](structure.spec.md)

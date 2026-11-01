@@ -1,0 +1,67 @@
+@custom-variant dark (&:where([data-color-scheme=dark], [data-color-scheme=dark] *));
+
+@theme inline {
+  --color-background: var(--app-color-background);
+  --color-foreground: var(--app-color-foreground);
+  --color-card: var(--app-color-card);
+  --color-muted: var(--app-color-muted);
+  --color-muted-foreground: var(--app-color-muted-foreground);
+  --color-border: var(--app-color-border);
+  --color-input: var(--app-color-input);
+  --color-ring: var(--app-color-ring);
+  --color-accent: var(--app-color-accent);
+  --radius-app: var(--app-radius);
+  --shadow-surface: var(--app-shadow-surface);
+  --font-sans: var(--app-font-sans);
+}
+
+@layer components {
+  /* Neutral, semantic surface tokens for the sample UI. No component-library runtime. */
+  :root {
+    --app-font-sans:
+      "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+      "Noto Color Emoji";
+    color-scheme: light;
+    --app-color-background: #fafafa;
+    --app-color-foreground: #18181b;
+    --app-color-card: #ffffff;
+    --app-color-muted: #f4f4f5;
+    --app-color-muted-foreground: #686871;
+    --app-color-border: #e4e4e7;
+    --app-color-input: #d4d4d8;
+    --app-color-ring: #a1a1aa;
+    --app-color-accent: #ededf0;
+    --app-radius: 0.75rem;
+    --app-shadow-surface: 0 1px 2px rgb(0 0 0 / 0.025);
+  }
+
+  :root[data-color-scheme="dark"] {
+    color-scheme: dark;
+    --app-color-background: #17191d;
+    --app-color-foreground: #f4f4f5;
+    --app-color-card: #1d1f23;
+    --app-color-muted: #24262b;
+    --app-color-muted-foreground: #a1a1aa;
+    --app-color-border: #32343a;
+    --app-color-input: #42444c;
+    --app-color-ring: #71717a;
+    --app-color-accent: #303238;
+    --app-shadow-surface: 0 1px 2px rgb(0 0 0 / 0.12);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-color-scheme]) {
+      color-scheme: dark;
+      --app-color-background: #17191d;
+      --app-color-foreground: #f4f4f5;
+      --app-color-card: #1d1f23;
+      --app-color-muted: #24262b;
+      --app-color-muted-foreground: #a1a1aa;
+      --app-color-border: #32343a;
+      --app-color-input: #42444c;
+      --app-color-ring: #71717a;
+      --app-color-accent: #303238;
+      --app-shadow-surface: 0 1px 2px rgb(0 0 0 / 0.12);
+    }
+  }
+}
