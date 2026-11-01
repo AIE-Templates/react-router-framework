@@ -14,7 +14,8 @@ const serverBuildStub: Plugin = {
       : undefined,
 };
 
-import { visualFallbackPlugin } from "./visual-fallback-plugin.ts";
+import { mantineCss } from "./vite-plugins/styles.ts";
+import { visualFallbackPlugin } from "./vite-plugins/visual-fallback.ts";
 
 // Workspace packages resolve to their source, as in vite.config.ts.
 const conditions = ["@repo/source", ...defaultServerConditions];
@@ -29,10 +30,11 @@ export default defineConfig({
     conditions,
     tsconfigPaths: true,
   },
+  css: mantineCss,
   test: {
     name: "web",
     environment: "jsdom",
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "vite-plugins/**/*.test.ts"],
     setupFiles: ["./vitest.setup.ts"],
   },
 });
