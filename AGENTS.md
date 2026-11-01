@@ -42,7 +42,7 @@ Compose global providers in AppRoot. Components read useAppEnvironment from ~/ma
 
 Pages compose BasicShell or NavigationShell with ModuleLayout. Modules do not handle OS branches, native control geometry or window IPC. Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness. CHROME_SAFETY_CSS remains inline and unlayered; the global stylesheet entry rule does not move it into styles/. Environment runtime/context/hooks/dom-props live in managers/environment. AppRoot creates the environment runtime directly; it is not a ManagersRegistry member. The reusable appearance panel lives in components/appearance-settings.tsx.
 
-The dependency direction is a convention, not a lint-enforced graph. Production features use shared components/layouts/hooks, then managers/services, then lib/utils/config. Providers are composition points used by root/entry.server; testing/render.tsx composes them for ordinary UI tests. Specialized provider/lifecycle tests may mount providers directly. New resource APIs belong in services/ when needed; no Core ApiClient is introduced.
+Layer ordering remains a convention; architecture tests enforce the app/host, feature and test boundaries. Production features use shared components/layouts/hooks, then managers/services, then lib/utils/config. Providers are composition points used by root/entry.server; testing/render.tsx composes them for ordinary UI tests. Specialized provider/lifecycle tests may mount providers directly. New resource APIs belong in services/ when needed; no Core ApiClient is introduced.
 
 @repo/shared must remain browser-importable with no node: imports or runtime dependencies. Resolve source through @repo/source in workspace Vite, Vitest and TypeScript configuration; new consumers need the same condition.
 
@@ -93,3 +93,7 @@ Application identity is defined once in @repo/shared app-identity.ts. Choose APP
 ## Desktop diagnostic organization
 
 Keep diagnostic runners/routes under apps/desktop/src/diagnostics/{smoke,bench,e2e}; main/ contains application runtime services. DESKTOP_SMOKE selects the application suite; DESKTOP_SMOKE_LAYOUT explicitly adds the demo fixture matrix and is mandatory for template acceptance. Do not silently skip a requested fixture. Derive utility cache paths only after configuring the selected userData directory.
+
+## Architecture checks
+
+Cross-cutting source guards live in apps/web/tests/architecture and run with the Web Vitest project. They enforce app-to-host isolation, private feature modules (including demo), and production-to-test isolation for literal module references, including re-exports and dynamic imports. Colocated test files and testing/ helpers are exempt as consumers; runtime-computed module paths are not statically checked. Keep unit tests beside their implementation.
