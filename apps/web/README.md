@@ -7,3 +7,9 @@ Run `pnpm dev` at the workspace root for HMR at http://localhost:5173. Build wit
 ## Static deployment
 
 This branch builds a static SPA (ssr: false). Deploy build/client to static hosting; development still uses the Router dev server. Configure deep-link fallback to __spa-fallback.html when prerendering supplies it, otherwise index.html. Serve assets as files and let the client router resolve routes. Use the supplied Docker configuration for static hosting. Server loaders/actions are not available; the root loader runs only at build time.
+
+## Source organization
+
+`src/app/routes.ts` maps URLs to feature route modules (`features/<name>/<page>.route.tsx`). The disposable home example lives in `features/demo`; removing its route registration and directory removes `/`. `features/main` holds the SPA 404. The root document remains in `root.tsx`.
+
+Global CSS enters through `styles/index.css`. Prefer colocated CSS Modules in the `components` cascade layer; Tailwind utilities remain available. Use `~/` for app-root imports and `./` within a directory or its children. See the root and directory-level AGENTS.md files for conventions.
