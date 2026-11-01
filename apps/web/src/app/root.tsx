@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
 
+import { useAppEnvironment } from "~/managers/environment/hooks";
+
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
@@ -9,7 +11,6 @@ import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
 import { AppRoot } from "./providers/app-root";
 import { AppUiProvider } from "./providers/app-ui-provider";
-import { useAppEnvironment } from "./providers/environment";
 
 import "./styles/index.css";
 

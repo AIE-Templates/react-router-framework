@@ -57,7 +57,7 @@ The top interaction band stays in the viewport while body content scrolls. Safet
 
 ContentScrollRestoration tracks .root-content and module panels by history entry key. New navigation resets positions, POP restores them and fragment navigation locates its target. The current document retains at most 100 entries; positions do not survive reload/restart. Router ScrollRestoration still owns the window.
 
-Ordinary headers use `--shell-header-height: 3rem` (48 CSS px at the default font size). Window headers use `--window-header-height`, inheriting that value. A larger WCO safe area increases layout height; Windows headers are not shrunk to the reported WCO height.
+Ordinary headers use `--app-layout-header-height: 3rem` (48 CSS px at the default font size). Window headers use `--app-window-header-height`, inheriting that value. A larger WCO safe area increases layout height; Windows headers are not shrunk to the reported WCO height.
 
 Windows native-overlay uses a 48px body plus a separate 1px bottom separator, totaling 49px by default. Fused column headers, navigation drag bands and standalone title bars share this rule; lower business headers and floating headers do not add this separator. Borders do not contribute to native overlay height. macOS keeps its own height policy.
 
@@ -69,7 +69,7 @@ Larger text and wrapping content must remain accessible. A title sharing the nat
 | Above 40rem, at most 60rem | Sidebar can be inline; auxiliary remains a drawer |
 | Above 60rem                | Sidebar, workspace and auxiliary can be inline    |
 
-Application navigation becomes a drawer at a viewport width of at most 48rem. These are configurable layout defaults, not device identities. Responsive changes must not recreate business state. Device safe areas and WCO constraints are distinct inputs and must be combined deliberately.
+Application navigation becomes a drawer at a viewport width of at most 48em. These are configurable layout defaults, not device identities. Responsive changes must not recreate business state. Device safe areas and WCO constraints are distinct inputs and must be combined deliberately.
 
 ## Required behavior
 

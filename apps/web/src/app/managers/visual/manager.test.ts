@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { STORAGE_KEYS } from "../../config/storage";
+import { STORAGE_KEYS } from "~/config/storage";
+
 import { visualBootstrapConfig, visualCodec, visualScript, visualServerAttributes } from "./bootstrap";
 import { createVisualManager } from "./manager";
 
