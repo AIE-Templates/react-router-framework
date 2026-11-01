@@ -1,0 +1,50 @@
+@use "sass:math";
+
+$mantine-breakpoint-xs: 36em !default;
+$mantine-breakpoint-sm: 48em !default;
+$mantine-breakpoint-md: 62em !default;
+$mantine-breakpoint-lg: 75em !default;
+$mantine-breakpoint-xl: 88em !default;
+
+@function rem($value) {
+  // Tool declaration only; callers use mantine.rem().
+  $number: math.div($value, $value * 0 + 1);
+  @return calc(#{math.div($number, 16)}rem * var(--mantine-scale));
+}
+
+@mixin smaller-than($breakpoint) {
+  @media (max-width: $breakpoint) {
+    @content;
+  }
+}
+
+@mixin larger-than($breakpoint) {
+  @media (min-width: $breakpoint) {
+    @content;
+  }
+}
+
+@mixin hover {
+  @media (hover: hover) {
+    &:hover {
+      @content;
+    }
+  }
+  @media (hover: none) {
+    &:active {
+      @content;
+    }
+  }
+}
+
+@mixin rtl {
+  [dir="rtl"] & {
+    @content;
+  }
+}
+
+@mixin ltr {
+  [dir="ltr"] & {
+    @content;
+  }
+}

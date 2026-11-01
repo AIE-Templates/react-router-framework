@@ -108,6 +108,13 @@ it("keeps application CSS definitions in their namespaces and avoids transformed
           .map((match) => ({ text: match[0], index: match.index }));
     for (const region of regions) {
       for (const match of region.text.matchAll(/(?<![\w.-])(light-dark|rem)\s*\(/g)) {
+        // The Sass tool declaration is not a bare CSS function call; keep all calls guarded.
+        if (
+          path === "styles/_mantine.scss" &&
+          match[1] === "rem" &&
+          /@function\s+$/.test(region.text.slice(0, match.index))
+        )
+          continue;
         report(region.index + match.index, `${match[1]}() is forbidden; use semantic colors or mantine.rem()`);
       }
     }
