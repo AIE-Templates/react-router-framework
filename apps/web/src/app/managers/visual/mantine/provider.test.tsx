@@ -5,7 +5,8 @@ import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { STORAGE_KEYS } from "../../../config/storage";
+import { STORAGE_KEYS } from "~/config/storage";
+
 import { VisualManagerContext } from "../context";
 import { useVisualState } from "../hooks";
 import { createVisualManager } from "../manager";

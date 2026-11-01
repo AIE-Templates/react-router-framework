@@ -20,7 +20,7 @@ Use Conventional Commits, checked by @commitlint/config-conventional. Lefthook r
 
 Business routes and UI live in features/<name>. Route modules use <page>.route.tsx and layout routes use <name>.layout.tsx; routes.ts is the only URL-to-file map. Generated route types use ./+types/<page>.route. features/main holds application layout routes and the SPA 404; features/demo is a disposable sandbox and must not be imported by other directories. Removing demo and its route registration removes the template home page.
 
-Use ~/ for app-root imports; ./ may reference the same directory or its children. Do not introduce ../ imports in application code. Cross-package imports use workspace package names. Features do not import one another. Keep reusable UI, hooks and pure helpers outside features when shared. Do not add barrel index.ts files under src/app. Colocate tests with their source; host-dependent integration tests belong to src/host when that layer exists. Create directories only when needed.
+Use ~/ for app-root imports; ./ may reference the same directory or its children. Do not introduce ../ imports in application code. Existing parent-relative imports migrate by layer; the lint prohibition is enabled only during final cleanup (P6). Cross-package imports use workspace package names. Features do not import one another. Keep reusable UI, hooks and pure helpers outside features when shared. Do not add barrel index.ts files under src/app. Colocate tests with their source; host-dependent integration tests belong to src/host when that layer exists. Create directories only when needed.
 
 ## Styling
 
@@ -38,9 +38,11 @@ SPA builds reject non-root server loaders, server actions/middleware/headers and
 
 ## Application infrastructure
 
-Compose global providers in AppRoot. Components read useAppEnvironment from ~/providers/environment; never infer host identity from user agents, query parameters or data-shell. Do not call the bridge during rendering. Root loader data seeds hydration; confirmed preload identity survives revalidation.
+Compose global providers in AppRoot. Components read useAppEnvironment from ~/managers/environment/hooks; never infer host identity from user agents, query parameters or data-shell. Do not call the bridge during rendering. Root loader data seeds hydration; confirmed preload identity survives revalidation.
 
-Pages compose BasicShell or NavigationShell with ModuleLayout. Modules do not handle OS branches, native control geometry or window IPC. Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness.
+Pages compose BasicShell or NavigationShell with ModuleLayout. Modules do not handle OS branches, native control geometry or window IPC. Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness. CHROME_SAFETY_CSS remains inline and unlayered; the global stylesheet entry rule does not move it into styles/. Environment runtime/context/hooks/dom-props live in managers/environment. AppRoot creates the environment runtime directly; it is not a ManagersRegistry member. The reusable appearance panel lives in components/appearance-settings.tsx.
+
+The dependency direction is a convention, not a lint-enforced graph. Production features use shared components/layouts/hooks, then managers/services, then lib/utils/config. Providers are composition points used by root/entry.server; testing/render.tsx composes them for ordinary UI tests. Specialized provider/lifecycle tests may mount providers directly. New resource APIs belong in services/ when needed; no Core ApiClient is introduced.
 
 @repo/shared must remain browser-importable with no node: imports or runtime dependencies. Resolve source through @repo/source in workspace Vite, Vitest and TypeScript configuration; new consumers need the same condition.
 
@@ -65,3 +67,5 @@ Inline CHROME_SAFETY_CSS relies on the default CSP style-src unsafe-inline allow
 ## Visual state
 
 VisualManager owns preferences, storage and system resolution. Use useVisualState/useVisualActions; do not write its storage key directly. Registry components only compose providers. Keep the serialized visualKernel self-contained: production prepaint execution is tested separately from module execution. AppUiProvider is the body UI integration slot; never put style-producing providers around html. Keep server and client snapshots separate and do not overwrite prepaint attributes with hydration defaults.
+
+Application identity is defined once in @repo/shared app-identity.ts. Choose APP_ID when creating a project; config/storage.ts derives keys through storageKey(). Color tokens use --app-color-* and are the source for Tailwind aliases and UI-library adapters. BREAKPOINTS in config/breakpoints.ts owns viewport media-query widths in em. CSS naming and media-query source guards run with the Web tests; reviewed exceptions require a same-line naming-allow: reason comment.

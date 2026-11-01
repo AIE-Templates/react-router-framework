@@ -17,6 +17,12 @@ export const visualTheme = createTheme({
 export const resolvedVisualTheme = mergeMantineTheme(DEFAULT_THEME, visualTheme);
 export const visualVariables: CSSVariablesResolver = () => ({
   variables: {},
-  light: { "--mantine-color-body": "var(--background)", "--mantine-color-text": "var(--foreground)" },
-  dark: { "--mantine-color-body": "var(--background)", "--mantine-color-text": "var(--foreground)" },
+  light: {
+    "--mantine-color-body": "var(--app-color-background)",
+    "--mantine-color-text": "var(--app-color-foreground)",
+  },
+  dark: {
+    "--mantine-color-body": "var(--app-color-background)",
+    "--mantine-color-text": "var(--app-color-foreground)",
+  },
 });

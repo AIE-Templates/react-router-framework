@@ -1,8 +1,8 @@
 import { useContext, useId, type ReactNode } from "react";
 
-import { getInteractiveProps } from "../../providers/environment";
-import { ShellChromeContext } from "../app-shell/chrome-context";
-import { usePanelEscape, usePanelState } from "../use-panel-state";
+import { ShellChromeContext } from "~/layouts/app-shell/chrome-context";
+import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
+import { getInteractiveProps } from "~/managers/environment/dom-props";
 
 export interface ModuleLayoutProps {
   moduleId: string;

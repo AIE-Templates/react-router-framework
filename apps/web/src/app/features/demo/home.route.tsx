@@ -2,14 +2,16 @@ import { TextInput } from "@mantine/core";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
+import { VisualSettings } from "~/components/appearance-settings";
 import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
 import { ModuleLayout } from "~/layouts/module/module-layout";
-import { VisualSettings } from "~/managers/visual/settings";
-import { useAppEnvironment } from "~/providers/environment";
+import { useAppEnvironment } from "~/managers/environment/hooks";
 
 import type { Route } from "./+types/home.route";
 import { DemoIcon } from "./demo-icon";
 import { Welcome } from "./welcome";
+
+import classes from "./home.route.module.css";
 
 export const meta: Route.MetaFunction = () => [
   { title: "Layout foundation" },
@@ -38,8 +40,8 @@ export default function Home() {
       title="Layout foundation"
       sidebarTitle="Module navigation"
       sidebar={
-        <div className="demo-panel">
-          <p className="demo-eyebrow">On this page</p>
+        <div className={classes.demoPanel}>
+          <p className={classes.demoEyebrow}>On this page</p>
           <a href="#layout-settings">
             <DemoIcon name="settings" />
             Layout settings
@@ -52,16 +54,16 @@ export default function Home() {
             <DemoIcon name="book" />
             Resources
           </a>
-          <p className="demo-panel-hint">
+          <p className={classes.demoPanelHint}>
             A little space for your module&apos;s navigation. Independent of the application rail.
           </p>
         </div>
       }
       auxiliaryTitle="Inspector"
       auxiliary={
-        <div className="demo-panel">
-          <p className="demo-eyebrow">Current workspace</p>
-          <dl className="demo-properties">
+        <div className={classes.demoPanel}>
+          <p className={classes.demoEyebrow}>Current workspace</p>
+          <dl className={classes.demoProperties}>
             <div>
               <dt>App shell</dt>
               <dd>{basic ? "Basic" : "Navigation"}</dd>
@@ -75,34 +77,34 @@ export default function Home() {
               <dd>{environment.shell.kind}</dd>
             </div>
           </dl>
-          <p className="demo-panel-hint">Keep supporting details here while the main workspace stays focused.</p>
+          <p className={classes.demoPanelHint}>Keep supporting details here while the main workspace stays focused.</p>
         </div>
       }
     >
-      <div className="layout-demo">
-        <div className="demo-breadcrumb">
+      <div className={classes.layoutDemo}>
+        <div className={classes.demoBreadcrumb}>
           <span>Workspace</span>
           <span aria-hidden="true">/</span>
           <span>Overview</span>
         </div>
-        <header className="demo-intro">
-          <div className="demo-eyebrow">
+        <header className={classes.demoIntro}>
+          <div className={classes.demoEyebrow}>
             <DemoIcon name="layers" />
             Your starting point
           </div>
           <h1>One application, three layout layers</h1>
           <p>A quiet workspace, ready to make your own. Explore the layout, open a panel, and find the right fit.</p>
-          <span className="demo-badge">
-            <span className="demo-status-dot" aria-hidden="true" />
+          <span className={classes.demoBadge}>
+            <span className={classes.demoStatusDot} aria-hidden="true" />
             Host: {environment.shell.kind}.
           </span>
         </header>
 
         <VisualSettings />
-        <div className="demo-grid">
-          <section id="layout-settings" className="demo-card" aria-labelledby="layout-settings-title">
-            <div className="demo-card-heading">
-              <div className="demo-icon-box">
+        <div className={classes.demoGrid}>
+          <section id="layout-settings" className={classes.demoCard} aria-labelledby="layout-settings-title">
+            <div className={classes.demoCardHeading}>
+              <div className={classes.demoIconBox}>
                 <DemoIcon name="settings" />
               </div>
               <div>
@@ -110,7 +112,7 @@ export default function Home() {
                 <p>Two small choices. A different workspace.</p>
               </div>
             </div>
-            <div className="layout-demo-controls" data-demo-controls>
+            <div className={classes.layoutDemoControls} data-demo-controls>
               <label>
                 App shell
                 <select
@@ -130,22 +132,22 @@ export default function Home() {
               </label>
             </div>
             <div
-              className="demo-layout-preview"
+              className={classes.demoLayoutPreview}
               data-basic={basic}
               data-standalone={headerMode === "standalone"}
               aria-hidden="true"
             >
-              <div className="demo-preview-title">
+              <div className={classes.demoPreviewTitle}>
                 <i />
                 <i />
                 <i />
               </div>
-              <div className="demo-preview-rail">
+              <div className={classes.demoPreviewRail}>
                 <i />
                 <i />
                 <i />
               </div>
-              <div className="demo-preview-body">
+              <div className={classes.demoPreviewBody}>
                 <span />
                 <div>
                   <i />
@@ -153,16 +155,16 @@ export default function Home() {
                 </div>
                 <span />
               </div>
-              <span className="demo-preview-caption">
+              <span className={classes.demoPreviewCaption}>
                 {basic ? "Basic shell" : "Navigation shell"} · {headerMode}
               </span>
             </div>
-            <p className="demo-card-footnote">Resize the window. Your workspace adapts with you.</p>
+            <p className={classes.demoCardFootnote}>Resize the window. Your workspace adapts with you.</p>
           </section>
 
-          <section id="scratchpad" data-demo-draft className="demo-card" aria-labelledby="scratchpad-title">
-            <div className="demo-card-heading">
-              <div className="demo-icon-box">
+          <section id="scratchpad" data-demo-draft className={classes.demoCard} aria-labelledby="scratchpad-title">
+            <div className={classes.demoCardHeading}>
+              <div className={classes.demoIconBox}>
                 <DemoIcon name="file" />
               </div>
               <div>
@@ -170,7 +172,7 @@ export default function Home() {
                 <p>Try a thought, a task, or your next big idea.</p>
               </div>
             </div>
-            <div className="demo-draft-label">
+            <div>
               <TextInput
                 label="Module draft"
                 value={note}
@@ -179,27 +181,27 @@ export default function Home() {
                 aria-describedby="draft-hint"
               />
             </div>
-            <div className="demo-note-preview">
-              <div className="demo-note-meta">
+            <div className={classes.demoNotePreview}>
+              <div className={classes.demoNoteMeta}>
                 <span>SCRATCHPAD</span>
-                <span className="demo-badge">Local draft</span>
+                <span className={classes.demoBadge}>Local draft</span>
               </div>
-              <p className={note ? "demo-note-text" : "demo-note-text demo-note-empty"}>
+              <p className={`${classes.demoNoteText}${note ? "" : ` ${classes.demoNoteEmpty}`}`}>
                 {note || "Every great workspace starts with a little space to think."}
               </p>
-              <div className="demo-note-lines" aria-hidden="true">
+              <div className={classes.demoNoteLines} aria-hidden="true">
                 <i />
                 <i />
               </div>
             </div>
-            <p id="draft-hint" className="demo-card-footnote">
+            <p id="draft-hint" className={classes.demoCardFootnote}>
               Kept while you resize or change the title bar. Cleared on reload.
             </p>
           </section>
         </div>
 
         <Welcome />
-        <footer className="demo-footer">
+        <footer className={classes.demoFooter}>
           <span>Built to feel at home, on web and desktop.</span>
           <span>Layout foundation</span>
         </footer>
@@ -216,7 +218,7 @@ export default function Home() {
       headerMode={headerMode}
       navigation={
         <>
-          <span className="demo-brand" title="Layout foundation" aria-hidden="true">
+          <span className={classes.demoBrand} title="Layout foundation" aria-hidden="true">
             <DemoIcon name="layers" />
           </span>
           <Link to={{ search: `?${homeParams.toString()}` }} aria-current="page">
@@ -227,7 +229,7 @@ export default function Home() {
             <DemoIcon name="book" />
             <span>Docs</span>
           </a>
-          <span className="demo-rail-footer" aria-hidden="true">
+          <span className={classes.demoRailFooter} aria-hidden="true">
             LF
           </span>
         </>

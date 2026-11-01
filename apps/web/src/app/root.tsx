@@ -9,6 +9,8 @@ import {
   useRouteLoaderData,
 } from "react-router";
 
+import { useAppEnvironment } from "~/managers/environment/hooks";
+
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
@@ -20,7 +22,6 @@ import { readVisualRequestSeed } from "./managers/visual/persistence/cookie.serv
 import { AppRoot } from "./providers/app-root";
 import { AppUiProvider } from "./providers/app-ui-provider";
 import { DocumentNonceContext } from "./providers/document-nonce";
-import { useAppEnvironment } from "./providers/environment";
 
 import "./styles/index.css";
 

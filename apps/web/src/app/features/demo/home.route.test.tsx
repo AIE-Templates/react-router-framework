@@ -1,9 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { expect, it } from "vitest";
 
-import { AppRoot } from "~/providers/app-root";
-import { AppUiProvider } from "~/providers/app-ui-provider";
+import { renderWithProviders } from "~/testing/render";
 
 import Home from "./home.route";
 
@@ -12,13 +11,7 @@ it("uses client navigation while preserving the basename, query settings and dra
     [
       {
         path: "/",
-        Component: () => (
-          <AppRoot>
-            <AppUiProvider>
-              <Home />
-            </AppUiProvider>
-          </AppRoot>
-        ),
+        Component: Home,
       },
     ],
     {
@@ -26,7 +19,7 @@ it("uses client navigation while preserving the basename, query settings and dra
       initialEntries: ["/workspace/?header=standalone&keep=1"],
     },
   );
-  render(<RouterProvider router={router} />);
+  renderWithProviders(<RouterProvider router={router} />);
   const draft = screen.getByRole("textbox", { name: "Module draft" });
   fireEvent.change(draft, { target: { value: "Unsaved draft" } });
   const home = screen.getByRole("link", { name: "Home" });
