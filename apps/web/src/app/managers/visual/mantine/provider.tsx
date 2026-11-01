@@ -1,7 +1,8 @@
 import { DirectionProvider, MantineProvider, useDirection, mergeThemeOverrides } from "@mantine/core";
 import { useEffect, useLayoutEffect, useMemo, useState, type PropsWithChildren } from "react";
 
-import { useVisualManager, useVisualState } from "../hooks";
+import { useVisualManager, useVisualState } from "~/managers/visual/hooks";
+
 import { createMantineColorSchemeManager } from "./color-scheme-manager";
 import { visualTheme, visualVariables } from "./theme";
 

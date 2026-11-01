@@ -57,3 +57,9 @@ media query for system fallback. Dynamic component states still require JavaScri
 SSR style tags accept the document nonce through AppUiProvider. Static HTML continues to use the
 host's actual inline-script hashes. No additional script-src allowance is needed. UI-library CSS
 and runtime initialization are validated in production builds, not inferred from unit tests alone.
+
+## Shared style configuration
+
+`vite-plugins/styles.ts` supplies identical Sass injection and module naming to Vite and Vitest. `_mantine.scss` contains tools only, with breakpoints configured from `config/breakpoints.ts`; existing Core modules remain CSS. The build integration test in `vite-plugins/styles-pipeline.test.ts` compiles disposable fixtures through the project PostCSS configuration, including a separate preset expansion probe.
+
+`styles/ui.css` owns Mantine package styles, focus-ring color, reduced-motion and no-drag rules. Both palettes derive semantic colors from Core tokens; font families, default radius and breakpoints use the same application sources. `vite-plugins/visual-fallback.ts` loads the dynamic generator with Vite's module runner so application aliases resolve, and registers its dependencies for invalidation. It never ships a frozen copy of theme variables.
