@@ -9,7 +9,7 @@ import { useDesktopVisualStatus } from "./desktop-visual-context";
 import { DesktopVisualSync } from "./desktop-visual-sync";
 
 const environment = vi.hoisted(() => ({ available: true }));
-vi.mock("~/providers/environment", () => ({
+vi.mock("~/managers/environment/hooks", () => ({
   useAppEnvironment: () => ({
     enhancement: environment.available ? "available" : "unavailable",
     shell: { kind: "desktop" },

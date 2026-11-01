@@ -1,8 +1,8 @@
 import { isVisualThemeResult } from "@repo/shared";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { useAppEnvironment } from "~/managers/environment/hooks";
 import { useVisualManager } from "~/managers/visual/hooks";
-import { useAppEnvironment } from "~/providers/environment";
 
 import { DesktopVisualContext, type DesktopVisualStatus } from "./desktop-visual-context";
 
