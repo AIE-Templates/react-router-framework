@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { clientLoader } from "./routes/not-found";
+import { clientLoader } from "./features/main/not-found.route";
 
 const originalSsr = process.env.SSR;
 afterEach(() => {
@@ -23,7 +23,7 @@ describe("missing-route hydration", () => {
     process.env.SSR = "false";
     vi.resetModules();
     const { default: routes } = await import("./routes");
-    expect(routes.find((entry) => entry.path === "*")?.file).toBe("routes/not-found.tsx");
+    expect(routes.find((entry) => entry.path === "*")?.file).toBe("features/main/not-found.route.tsx");
     let error: unknown;
     try {
       clientLoader();
