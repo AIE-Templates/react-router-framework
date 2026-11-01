@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type PropsWithChildren } from "react";
 
+import { STORAGE_KEYS } from "~/config/storage";
+import { visualCookie } from "~/config/visual-cookie";
 import { useAppEnvironment } from "~/managers/environment/hooks";
+import { visualCodec } from "~/managers/visual/bootstrap";
+import { useVisualManager } from "~/managers/visual/hooks";
 
-import { STORAGE_KEYS } from "../../../config/storage";
-import { visualCookie } from "../../../config/visual-cookie";
-import { visualCodec } from "../bootstrap";
-import { useVisualManager } from "../hooks";
 import { writeVisualCookie } from "./cookie";
 import { VisualCookieContext, type VisualCookieStatus } from "./cookie-context";
 
