@@ -1,10 +1,10 @@
 import type { PortStats } from "@repo/port-fetch";
 import type { BrowserWindow, ProcessMetric } from "electron";
 
-import type { BenchProc } from "~/bench-routes";
+import type { Logger } from "~/main/log.ts";
 
 import { type PageCaseResult, type PageCaseSpec, type PageOp, runPageCase } from "./bench-page.ts";
-import type { Logger } from "./log.ts";
+import type { BenchProc } from "./routes";
 
 /**
  * `DESKTOP_BENCH=1` (unpackaged or the packaged test profile): the real-app transport benchmark. Once the page has hydrated,

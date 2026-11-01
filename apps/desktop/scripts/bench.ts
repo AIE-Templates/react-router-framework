@@ -14,7 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
-import type { BenchCaseResult } from "~/main/bench";
+import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 
@@ -194,7 +194,13 @@ process.on("SIGTERM", () => cleanupAndExit(143));
 async function runOnce(round: number, mode: Mode, env: Record<string, string>, timeoutMs: number): Promise<RunRecord> {
   const started = performance.now();
   const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env, DESKTOP_PORT_ACK_COALESCE: mode === "on" ? "1" : "0" };
-  for (const key of ["DESKTOP_SMOKE", "DESKTOP_BOOT_PROFILE", "DESKTOP_SMOKE_SCREENSHOT", "ELECTRON_RUN_AS_NODE"])
+  for (const key of [
+    "DESKTOP_SMOKE",
+    "DESKTOP_SMOKE_LAYOUT",
+    "DESKTOP_BOOT_PROFILE",
+    "DESKTOP_SMOKE_SCREENSHOT",
+    "ELECTRON_RUN_AS_NODE",
+  ])
     delete childEnv[key];
   const { command, args, cwd } = target!;
   const child = spawn(command, args, {

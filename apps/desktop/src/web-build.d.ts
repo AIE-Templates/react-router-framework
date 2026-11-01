@@ -12,6 +12,6 @@ declare module "web/build/server/index.js" {
   }): {
     fetch(request: Request): Response | Promise<Response>;
   };
-  export const rethrowNonErrors: import("./smoke-routes.ts").StreamHelpers["rethrowNonErrors"];
-  export const logStreamFailure: import("./smoke-routes.ts").StreamHelpers["logStreamFailure"];
+  export const rethrowNonErrors: import("./diagnostics/smoke/routes.ts").StreamHelpers["rethrowNonErrors"];
+  export const logStreamFailure: import("./diagnostics/smoke/routes.ts").StreamHelpers["logStreamFailure"];
 }

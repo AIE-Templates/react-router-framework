@@ -1,7 +1,7 @@
 import { createServerApp, logger } from "@repo/server";
 import { describe, expect, it } from "vitest";
 
-import { E2E_PREFIX, e2eRoutes, MAX_E2E_COOKIE_AGE_S, parseCookies } from "./e2e-routes.ts";
+import { E2E_PREFIX, e2eRoutes, MAX_E2E_COOKIE_AGE_S, parseCookies } from "./routes.ts";
 
 const origin = "http://app.desktop";
 

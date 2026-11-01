@@ -2,10 +2,10 @@ import { fromElectronPort, type PortServer, servePort } from "@repo/port-fetch";
 import { shellFromEnv } from "@repo/shared";
 import { createWebApp, logStreamFailure, rethrowNonErrors } from "web/build/server/index.js";
 
-import { withBenchRoutes } from "./bench-routes.ts";
-import { E2E_PREFIX, e2eRoutes } from "./e2e-routes.ts";
+import { withBenchRoutes } from "./diagnostics/bench/routes.ts";
+import { E2E_PREFIX, e2eRoutes } from "./diagnostics/e2e/routes.ts";
+import { SMOKE_PREFIX, smokeRoutes } from "./diagnostics/smoke/routes.ts";
 import { portAckCoalesce } from "./port-options.ts";
-import { SMOKE_PREFIX, smokeRoutes } from "./smoke-routes.ts";
 
 // The utility process: the whole web app (createWebApp(): the API, static files, React Router SSR)
 // served over the MessagePortMain the main process sends, no TCP port. Everything is bundled into

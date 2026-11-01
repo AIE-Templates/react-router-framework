@@ -3,9 +3,10 @@ import { writeFile } from "node:fs/promises";
 import { storageKey } from "@repo/shared";
 import type { BrowserWindow } from "electron";
 
-import type { BootProfile } from "./boot-profile.ts";
+import type { BootProfile } from "~/main/boot-profile.ts";
+import type { Logger } from "~/main/log.ts";
+
 import { runLayoutSmoke } from "./layout-smoke.ts";
-import type { Logger } from "./log.ts";
 
 /** The `sse` check's stream: enough events, spaced widely enough, to tell streaming from buffering. */
 const SMOKE_SSE_EVENTS = 6;
@@ -35,6 +36,7 @@ export async function runSmoke(
     exit,
     development = false,
     smokeRoutes = false,
+    layout = false,
   }: {
     profile: BootProfile;
     log: Logger;
@@ -42,6 +44,8 @@ export async function runSmoke(
     development?: boolean;
     /** Whether the utility serves the `/__smoke/*` endpoints; not without a utility (development), which skips `sse`. */
     smokeRoutes?: boolean;
+    /** Explicit template fixture suite; application smoke never depends on the demo route. */
+    layout?: boolean;
   },
 ): Promise<void> {
   const js = (code: string): Promise<unknown> =>
@@ -185,7 +189,7 @@ export async function runSmoke(
           v.links.every((l) => isRecord(l) && l.applied === true && typeof l.rules === "number" && l.rules > 0)),
   );
   // Server-sent events through the whole path (renderer → app:// → main → port-fetch → utility →
-  // Hono's streamSSE), on the smoke-only /__smoke/* endpoints (src/smoke-routes.ts): events arrive
+  // Hono's streamSSE), on the smoke-only /__smoke/* endpoints (diagnostics/smoke/routes.ts): events arrive
   // one by one while the stream is open (not buffered to the end), and a cancel in the renderer
   // aborts `request.signal` in the utility within `SMOKE_ABORT_BOUND_MS`. That a body outlives the
   // headers timeout is covered by port-fetch's unit tests, not here: the smoke keeps the real 60 s.
@@ -225,11 +229,13 @@ export async function runSmoke(
     );
   }
 
-  try {
-    const result = await runLayoutSmoke(win);
-    checks.layoutMatrix = { ok: result.ok, detail: result };
-  } catch (error) {
-    checks.layoutMatrix = { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  if (layout) {
+    try {
+      const result = await runLayoutSmoke(win);
+      checks.layoutMatrix = { ok: result.ok, detail: result };
+    } catch (error) {
+      checks.layoutMatrix = { ok: false, detail: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   await check(
@@ -307,7 +313,7 @@ export async function runSmoke(
     await win.loadURL(returnUrl);
     await check(
       "returnFromError",
-      `const until = Date.now() + 5000; while (!document.querySelector(".module-layout") && Date.now() < until) await new Promise((r) => setTimeout(r, 25)); return !!document.querySelector(".module-layout");`,
+      `const until = Date.now() + 5000; while (document.documentElement.dataset.hydrated !== "true" && Date.now() < until) await new Promise((r) => setTimeout(r, 25)); return !document.documentElement.dataset.hydrated !== "true";`,
       (v) => v === true,
     );
   } catch (error) {
@@ -333,6 +339,7 @@ export async function runSmoke(
     .map(([name]) => name);
   const result = {
     ok,
+    suite: layout ? "template-layout" : "application",
     skipped,
     checks,
     bootProfile: profile.marks(),

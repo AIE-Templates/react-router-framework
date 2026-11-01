@@ -1,7 +1,7 @@
 import { createServerApp, logger, logStreamFailure, rethrowNonErrors } from "@repo/server";
 import { describe, expect, it } from "vitest";
 
-import { SMOKE_PREFIX, smokeRoutes, type SmokeStreamStatus } from "./smoke-routes.ts";
+import { SMOKE_PREFIX, smokeRoutes, type SmokeStreamStatus } from "./routes.ts";
 
 const origin = "http://app.desktop";
 

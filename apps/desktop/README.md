@@ -12,7 +12,7 @@ pnpm build:desktop
 pnpm package:desktop
 pnpm release:desktop
 pnpm dist:desktop
-DESKTOP_SMOKE=1 DESKTOP_BOOT_PROFILE=1 pnpm --filter desktop start
+DESKTOP_SMOKE=1 DESKTOP_SMOKE_LAYOUT=1 DESKTOP_BOOT_PROFILE=1 pnpm --filter desktop start
 pnpm --filter desktop test:e2e
 ```
 
@@ -61,3 +61,11 @@ Here `~/` resolves to `src` in TypeScript and Vite/Vitest. Native Node `scripts/
 Packaged E2E paths follow the builder's default executable names: macOS uses `<productName>.app/Contents/MacOS/<productName>`, Windows uses `<productName>.exe`, and Linux uses the lowercased package `name` (currently `desktop`), not `productName`. The helper selects the existing architecture-specific output directory. `executableName` overrides are not supported by this template's launcher and are rejected by configuration tests.
 
 Keep both package `name` and `productName` portable for that path helper: an ASCII letter first, then ASCII letters, digits, spaces, dots, underscores or hyphens; no trailing dot/space or Windows reserved filename. The helper validates this constraint instead of approximating electron-builder's filename sanitization. Product names may contain spaces; package names must also satisfy package-manager metadata requirements.
+
+## Diagnostic suites
+
+Runtime window, storage and transport code stays in `src/main`. Benchmark runners and routes live in `src/diagnostics/bench`; smoke runners, layout measurements and routes in `src/diagnostics/smoke`; E2E utility routes in `src/diagnostics/e2e`. Release/test-profile restrictions remain owned by `main/run-modes.ts`.
+
+`DESKTOP_SMOKE=1 pnpm --filter desktop start` runs the application suite (bootstrap, transport, styles, window safety and reload/error recovery). It does not require the demo homepage. `DESKTOP_SMOKE=1 DESKTOP_SMOKE_LAYOUT=1 pnpm --filter desktop start` additionally runs the template layout fixture matrix against `features/demo`. Template acceptance must explicitly enable this matrix; a requested matrix with missing controls fails rather than silently skipping. The result identifies `suite: application` or `suite: template-layout`. Business projects may delete demo and its route registration and keep the application suite; remove or replace demo-specific E2E cases as part of adopting the template.
+
+The layout fixture uses named `data-demo-shell` / `data-demo-header` controls and `data-module-panel-toggle` attributes, independent of control order and translated button labels.
