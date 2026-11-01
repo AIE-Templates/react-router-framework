@@ -3,9 +3,11 @@ import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useRef, useState } from "react";
 
-import { getInteractiveProps } from "../../providers/environment";
-import { visualCodec } from "./bootstrap";
-import { useVisualActions, useVisualState, useVisualStatus } from "./hooks";
+import { getInteractiveProps } from "~/managers/environment/dom-props";
+import { visualCodec } from "~/managers/visual/bootstrap";
+import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
+
+import classes from "./appearance-settings.module.css";
 
 /** Imperative modal and notification APIs are served by AppUiProvider. */
 function confirmReset(reset: () => void, trigger: HTMLElement | null) {
@@ -31,7 +33,7 @@ export function VisualSettings() {
   const previewButton = useRef<HTMLButtonElement>(null);
   const popup = getInteractiveProps();
   return (
-    <fieldset className="visual-settings" {...popup}>
+    <fieldset className={classes.visualSettings} {...popup}>
       <legend>Appearance</legend>
       <Select
         label="Color scheme"

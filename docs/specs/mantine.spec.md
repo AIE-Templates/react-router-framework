@@ -20,6 +20,20 @@ fallback before hydration. Portal interaction surfaces are no-drag; the transpar
 is not. The sample exercises Select, Button, Tooltip, Popover, Menu, Modal, a confirm modal and a
 notification; notifications are no-drag and follow the reduced-motion CSS.
 
+## Source and style ownership
+
+The reusable VisualSettings panel and its tests live in components/appearance-settings; its
+colocated CSS Module uses the components layer. Native-control defaults in base.css and the panel
+module exclude Mantine classes, so they do not override the library's input and button styles.
+The demo preserves the Mantine TextInput while using Core's feature-local module classes and
+stable data-demo controls. Ordinary UI tests use testing/render.tsx, which already composes the
+Mantine AppUiProvider through the shared slot.
+
+During the structure migration, app.css retains only the Mantine core/notification imports and
+Mantine reduced-motion/no-drag rules. Core tokens, base and shell rules live in styles/; demo
+rules stay in feature modules. Moving the remaining library rules into styles/ui.css and adding
+SCSS/PostCSS tooling belongs to the separate Mantine style stage.
+
 ## Modals, notifications and forms
 
 AppUiProvider composes ModalsProvider and the single Notifications host directly inside

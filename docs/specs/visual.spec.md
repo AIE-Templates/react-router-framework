@@ -11,8 +11,8 @@ state/status snapshots and expose stable actions. Server requests never share a 
 `reducedMotion: auto | reduce | full`. Defaults and whole resets are auto/ltr/auto. Resolved state is
 light/dark, ltr/rtl and a motion boolean; it is never persisted. Explicit modes override media queries.
 
-`config/storage.ts` defines a stable application ID, prefix and key. Change the ID when making a new
-application. The value is `{ version: 1, preferences }`. Known records are validated per field;
+`@repo/shared` defines `APP_ID`, `storageKey()` and `cookieName()` in `app-identity.ts`;
+`config/storage.ts` derives the Web keys. Change the shared ID when making a new application. The value is `{ version: 1, preferences }`. Known records are validated per field;
 unknown versions are preserved until an explicit whole reset. Single-field resets preserve other
 preferences. Never clear unrelated storage. Storage failures retain the current session state and
 are reported separately; repeated commands retry persistence. External storage changes reconcile
@@ -50,3 +50,7 @@ platform identification and window bridges keep their existing owners. Core cont
 or Electron persistence protocol. Reduced motion affects the sample's transitions; explicit full
 permits them even when the OS requests reduced motion. Direction changes layout through logical CSS,
 without reversing the native window's physical reserved geometry.
+
+## Semantic styles
+
+Core `styles/tokens.css` owns `--app-color-*`, `--app-font-sans`, `--app-radius` and `--app-shadow-surface`. Tailwind theme aliases refer to these values. Explicit appearance follows `data-color-scheme`; only missing attributes use system media-query fallback. `styles/base.css` must not reintroduce starter OS-driven color rules that override explicit preferences. Appearance controls are reusable UI in `components/appearance-settings.tsx`, outside the manager implementation.
