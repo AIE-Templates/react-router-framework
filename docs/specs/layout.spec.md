@@ -47,7 +47,7 @@ The application shell is the sole overlay appearance writer. Modules must not us
 
 The root Layout keeps `.root-chrome-fallback` outside route children, including normal pages, hydration fallback, root errors and 404. Critical safety CSS is inline: margin reset, nonshrinking flex geometry, scrolling boundaries and fused handoff rules must survive missing external styles.
 
-`--window-safe-top` is `titlebar-area-y + titlebar-area-height`, defaulting to zero. The fallback occupies this height in normal flow; its drag rectangle uses WCO x, width and height without covering native controls. Geometry does not depend on `data-shell`, providers or bootstrap. WCO variables can also exist in a web application; zero fallback values are not evidence that native controls are absent.
+`--app-window-safe-top` is `titlebar-area-y + titlebar-area-height`, defaulting to zero. The fallback occupies this height in normal flow; its drag rectangle uses WCO x, width and height without covering native controls. Geometry does not depend on `data-shell`, providers or bootstrap. WCO variables can also exist in a web application; zero fallback values are not evidence that native controls are absent.
 
 Only directly composed, visible top regions that cover the complete constraints may hide the fallback through structural markers and `:has()`. Arbitrary descendants, portals, hidden headers or partial regions cannot trigger handoff. Unmounting or hiding participating content/ancestors with `hidden` restores the fallback in the same style calculation. Custom hiding mechanisms must update composition markers explicitly.
 
