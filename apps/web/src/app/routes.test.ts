@@ -1,12 +1,12 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
+import { clientLoader } from "./features/main/not-found.route";
 import routes from "./routes";
-import { clientLoader } from "./routes/not-found";
 
 describe("missing-route hydration", () => {
   it("matches unknown SPA URLs before hydration and reports a 404 from its client loader", async () => {
-    expect(routes.find((entry) => entry.path === "*")?.file).toBe("routes/not-found.tsx");
+    expect(routes.find((entry) => entry.path === "*")?.file).toBe("features/main/not-found.route.tsx");
     let error: unknown;
     try {
       clientLoader();
