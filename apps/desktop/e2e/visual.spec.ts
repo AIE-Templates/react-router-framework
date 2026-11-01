@@ -14,6 +14,34 @@ async function choose(page: Page, label: string, value: string, option: string) 
   }
 }
 
+for (const scenario of [
+  { system: "dark", preference: "light", option: "Light", background: "rgb(250, 250, 250)" },
+  { system: "light", preference: "dark", option: "Dark", background: "rgb(23, 25, 29)" },
+] as const) {
+  test(`explicit ${scenario.preference} styles override the ${scenario.system} system preference`, async ({
+    desktop: { page },
+  }) => {
+    await page.emulateMedia({ colorScheme: scenario.system });
+    try {
+      await choose(page, "Color scheme", scenario.preference, scenario.option);
+      // Native theme synchronization must not remove the opposing renderer media emulation.
+      expect(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(
+        scenario.system === "dark",
+      );
+      await expect(page.locator("html")).toHaveAttribute("data-color-scheme", scenario.preference);
+      await expect(page.locator("body")).toHaveCSS("background-color", scenario.background);
+      await expect(page.locator("body")).toHaveCSS("color-scheme", scenario.preference);
+      await expect(page.getByRole("textbox", { name: "Module draft" })).toHaveCSS("color-scheme", scenario.preference);
+      await page.reload();
+      await waitForApp(page);
+      await expect(page.locator("body")).toHaveCSS("background-color", scenario.background);
+      await expect(page.locator("body")).toHaveCSS("color-scheme", scenario.preference);
+    } finally {
+      await page.emulateMedia({ colorScheme: null });
+    }
+  });
+}
+
 test("visual controls persist through reload and synchronize the independent native mirror", async ({
   desktop: { app, page },
 }) => {
