@@ -20,11 +20,11 @@ Use Conventional Commits, checked by @commitlint/config-conventional. Lefthook r
 
 Business routes and UI live in features/<name>. Route modules use <page>.route.tsx and layout routes use <name>.layout.tsx; routes.ts is the only URL-to-file map. Generated route types use ./+types/<page>.route. features/main holds application layout routes and the SPA 404; features/demo is a disposable sandbox and must not be imported by other directories. Removing demo and its route registration removes the template home page.
 
-Use ~/ for app-root imports; ./ may reference the same directory or its children. Do not introduce ../ imports in application code. Existing parent-relative imports migrate by layer; the lint prohibition is enabled only during final cleanup (P6). Cross-package imports use workspace package names. Features do not import one another. Keep reusable UI, hooks and pure helpers outside features when shared. Do not add barrel index.ts files under src/app. Colocate tests with their source; host-dependent integration tests belong to src/host when that layer exists. Create directories only when needed.
+Use ~/ for app-root imports; ./ may reference the same directory or its children. Parent-relative imports are forbidden by lint within apps/*/src/**. Package internals, build configuration, scripts and e2e files are outside this scoped rule. Cross-package imports use workspace package names. Features do not import one another. Keep reusable UI, hooks and pure helpers outside features when shared. Do not add barrel index.ts files under src/app. Colocate tests with their source; host-dependent integration tests belong to src/host when that layer exists. Create directories only when needed.
 
 ## Styling
 
-Default to colocated CSS Modules named after the component, imported as classes with camelCase class names. Put module rules in @layer components so Tailwind utilities can override them; Tailwind remains optional and supported. Global stylesheet imports enter through styles/index.css, with layer order theme, base, mantine, components, utilities. Never use light-dark() or bare rem() in project styles. app.css is a temporary downstream migration bridge: only remove content, never add styles.
+Default to colocated CSS Modules named after the component, imported as classes with camelCase class names. Put module rules in @layer components so Tailwind utilities can override them; Tailwind remains optional and supported. Global stylesheet imports enter through styles/index.css, with layer order theme, base, mantine, components, utilities. Never use light-dark() or bare rem() in project styles.
 
 ## Naming
 
