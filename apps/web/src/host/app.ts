@@ -15,8 +15,8 @@ import { visualCookie } from "~/config/visual-cookie";
 import { apiContext } from "~/lib/api";
 import { cspNonceContext } from "~/lib/csp";
 import { loggerContext } from "~/lib/logger";
-import { preferencesContext, requestPreferences } from "~/lib/preferences";
-import { desktopContext, shellContext } from "~/lib/shell";
+import { preferencesContext, requestPreferences } from "~/platform/electron/preferences";
+import { desktopContext, shellContext } from "~/platform/electron/shell";
 
 import { type ContentSecurityPolicy, cspMiddleware, defaultPolicy } from "./csp";
 

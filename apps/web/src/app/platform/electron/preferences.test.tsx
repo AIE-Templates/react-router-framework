@@ -3,7 +3,8 @@ import { act, render, screen } from "@testing-library/react";
 import { createRoutesStub, RouterContextProvider, useLoaderData } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AppRoot } from "../providers/app-root";
+import { AppRoot } from "~/providers/app-root";
+
 import {
   getPreference,
   PreferenceError,

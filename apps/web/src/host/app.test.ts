@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiContext } from "~/lib/api";
 import { loggerContext } from "~/lib/logger";
-import { getPreference, preferencesContext } from "~/lib/preferences";
-import { desktopContext, shellContext } from "~/lib/shell";
+import { getPreference, preferencesContext } from "~/platform/electron/preferences";
+import { desktopContext, shellContext } from "~/platform/electron/shell";
 
 import { createHostApp, createLoadContext, developmentShell, getHostApp } from "./app";
 

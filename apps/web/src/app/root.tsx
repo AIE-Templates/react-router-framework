@@ -10,12 +10,12 @@ import {
 } from "react-router";
 
 import { useAppEnvironment } from "~/managers/environment/hooks";
+import { desktopContext, shellContext } from "~/platform/electron/shell";
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
 import { ContentScrollRestoration } from "./layouts/content-scroll-restoration";
 import { cspNonceContext } from "./lib/csp";
-import { desktopContext, shellContext } from "./lib/shell";
 import { visualServerAttributes } from "./managers/visual/bootstrap";
 import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
