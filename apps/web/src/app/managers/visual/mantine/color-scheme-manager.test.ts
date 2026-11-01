@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 
-import { createVisualManager } from "../manager";
+import { createVisualManager } from "~/managers/visual/manager";
+
 import { createMantineColorSchemeManager } from "./color-scheme-manager";
 import { createVisualFallbackCss } from "./fallback";
 

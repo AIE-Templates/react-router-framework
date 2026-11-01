@@ -6,3 +6,4 @@ packages:
 allowBuilds:
   electron-winstaller: false
   lefthook: true
+  "@parcel/watcher": false

@@ -1,6 +1,6 @@
 import type { MantineColorSchemeManager } from "@mantine/core";
 
-import type { VisualManager } from "../manager";
+import type { VisualManager } from "~/managers/visual/manager";
 /** Mantine can call set from its own subscription; equal values must not write again. */
 export function createMantineColorSchemeManager(visual: VisualManager): MantineColorSchemeManager {
   let release: (() => void) | undefined;

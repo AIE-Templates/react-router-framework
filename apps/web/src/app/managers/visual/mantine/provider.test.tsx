@@ -6,10 +6,10 @@ import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { STORAGE_KEYS } from "~/config/storage";
+import { VisualManagerContext } from "~/managers/visual/context";
+import { useVisualState } from "~/managers/visual/hooks";
+import { createVisualManager } from "~/managers/visual/manager";
 
-import { VisualManagerContext } from "../context";
-import { useVisualState } from "../hooks";
-import { createVisualManager } from "../manager";
 import { VisualMantineProvider } from "./provider";
 
 afterEach(() => {

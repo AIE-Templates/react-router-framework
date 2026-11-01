@@ -2,7 +2,7 @@ import { ModalsProvider } from "@mantine/modals";
 import { Notifications } from "@mantine/notifications";
 import type { PropsWithChildren } from "react";
 
-import { VisualMantineProvider } from "../managers/visual/mantine/provider";
+import { VisualMantineProvider } from "~/managers/visual/mantine/provider";
 
 import "virtual:visual-fallback.css";
 /**

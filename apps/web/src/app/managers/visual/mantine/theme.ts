@@ -1,8 +1,14 @@
 import { createTheme, DEFAULT_THEME, mergeMantineTheme, type CSSVariablesResolver } from "@mantine/core";
+
+import { BREAKPOINTS } from "~/config/breakpoints";
+
 export const visualTheme = createTheme({
   primaryColor: "gray",
   defaultRadius: "md",
-  fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+  fontFamily: "var(--app-font-sans)",
+  headings: { fontFamily: "var(--app-font-sans)" },
+  radius: { ...DEFAULT_THEME.radius, md: "var(--app-radius)" },
+  breakpoints: BREAKPOINTS,
   focusRing: "auto",
   respectReducedMotion: false,
   components: {
@@ -20,9 +26,23 @@ export const visualVariables: CSSVariablesResolver = () => ({
   light: {
     "--mantine-color-body": "var(--app-color-background)",
     "--mantine-color-text": "var(--app-color-foreground)",
+    "--mantine-color-bright": "var(--app-color-foreground)",
+    "--mantine-color-default-color": "var(--app-color-foreground)",
+    "--mantine-color-dimmed": "var(--app-color-muted-foreground)",
+    "--mantine-color-placeholder": "var(--app-color-muted-foreground)",
+    "--mantine-color-default": "var(--app-color-card)",
+    "--mantine-color-default-hover": "var(--app-color-muted)",
+    "--mantine-color-default-border": "var(--app-color-input)",
   },
   dark: {
     "--mantine-color-body": "var(--app-color-background)",
     "--mantine-color-text": "var(--app-color-foreground)",
+    "--mantine-color-bright": "var(--app-color-foreground)",
+    "--mantine-color-default-color": "var(--app-color-foreground)",
+    "--mantine-color-dimmed": "var(--app-color-muted-foreground)",
+    "--mantine-color-placeholder": "var(--app-color-muted-foreground)",
+    "--mantine-color-default": "var(--app-color-card)",
+    "--mantine-color-default-hover": "var(--app-color-muted)",
+    "--mantine-color-default-border": "var(--app-color-input)",
   },
 });

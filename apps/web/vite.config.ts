@@ -3,7 +3,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
 
 import { honoServer } from "./src/host/vite-plugin.ts";
-import { visualFallbackPlugin } from "./visual-fallback-plugin.ts";
+import { mantineCss } from "./vite-plugins/styles.ts";
+import { visualFallbackPlugin } from "./vite-plugins/visual-fallback.ts";
 
 export default defineConfig({
   // The desktop shell's dev script (apps/desktop/scripts/dev.ts) serves this dev server through
@@ -47,5 +48,5 @@ export default defineConfig({
     conditions: ["@repo/source", ...defaultClientConditions],
     tsconfigPaths: true,
   },
-  css: { modules: { localsConvention: "camelCaseOnly" } },
+  css: mantineCss,
 });
