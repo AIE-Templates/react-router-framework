@@ -1,4 +1,5 @@
-/** Change this once when creating an application; keep it stable across releases. */
-export const APP_ID = "framework-app";
-export const STORAGE_PREFIX = `${APP_ID}:`;
-export const STORAGE_KEYS = { visualPreferences: `${STORAGE_PREFIX}visual-preferences` } as const;
+import { APP_ID, storageKey } from "@repo/shared";
+
+export { APP_ID };
+export const STORAGE_PREFIX = storageKey("");
+export const STORAGE_KEYS = { visualPreferences: storageKey("visual-preferences") } as const;

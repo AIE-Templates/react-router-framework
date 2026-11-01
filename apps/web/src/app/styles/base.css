@@ -1,1 +1,34 @@
-/* Core base rules remain in app.css until P2. Starter system-color rules do not apply. */
+@layer components {
+  html,
+  body {
+    background: var(--app-color-background);
+    color: var(--app-color-foreground);
+  }
+
+  body {
+    font-family: var(--app-font-sans);
+    font-size: 0.875rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+
+  button,
+  select {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: var(--app-color-foreground);
+    color: var(--app-color-background);
+  }
+
+  :where(a, button, input, select):focus-visible {
+    outline: 2px solid var(--app-color-ring);
+    outline-offset: 3px;
+  }
+}

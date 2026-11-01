@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { AppRoot } from "../../providers/app-root";
+import { AppRoot } from "~/providers/app-root";
+
 import { useVisualManager, useVisualState } from "./hooks";
 import type { createVisualManager } from "./manager";
 

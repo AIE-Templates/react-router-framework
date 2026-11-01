@@ -1,8 +1,10 @@
 import type { OverlayAppearance } from "@repo/shared";
 import { useEffect, useId, type ReactNode } from "react";
 
-import { getInteractiveProps, useWindowChrome } from "../../providers/environment";
-import { usePanelEscape, usePanelState } from "../use-panel-state";
+import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
+import { getInteractiveProps } from "~/managers/environment/dom-props";
+import { useWindowChrome } from "~/managers/environment/hooks";
+
 import { ShellChromeContext } from "./chrome-context";
 
 export interface BasicShellProps {

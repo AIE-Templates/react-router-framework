@@ -5,9 +5,10 @@ import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BasicShell } from "../layouts/app-shell/app-shell";
+import { BasicShell } from "~/layouts/app-shell/app-shell";
+import { useAppEnvironment } from "~/managers/environment/hooks";
+
 import { AppRoot } from "./app-root";
-import { useAppEnvironment } from "./environment";
 
 function Probe() {
   const environment = useAppEnvironment();

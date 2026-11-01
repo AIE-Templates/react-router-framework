@@ -13,3 +13,5 @@ Accepted decisions explain why the design takes its current form. Contracts are 
 - [Isolate visual preferences from UI and host adapters](0008-visual-manager.md)
 
 - [Desktop visual mirror](0009-desktop-visual-mirror.md)
+
+- [Organize features and preserve infrastructure boundaries](0009-source-structure.md)
