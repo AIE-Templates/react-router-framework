@@ -54,7 +54,7 @@ Application identity is defined once in @repo/shared app-identity.ts. Choose APP
 
 ## UI library
 
-Mantine adapters derive both palettes from Core semantic tokens in managers/visual/mantine/theme.ts. Keep typography, radius and breakpoints tied to app config; dynamic prepaint fallback uses the same resolved theme and resolver. Global Mantine imports, focus ring, reduced-motion and no-drag rules belong in styles/ui.css. Preserve native-control selectors that exclude Mantine classes.
+Mantine adapters derive both palettes from Core semantic tokens in managers/visual/mantine/theme.ts. Keep typography, radius and breakpoints tied to app config; dynamic prepaint fallback uses the same resolved theme and resolver. Global Mantine imports, focus ring, reduced-motion and no-drag rules belong in styles/ui.css. Keep native-control styling scoped to explicitly owned controls; appearance-settings uses Mantine controls and only owns its fieldset layout.
 
 Use CSS Modules for Core components; do not convert inherited modules just to use Sass. Mantine-specific SCSS may use the injected mantine namespace: mantine.rem() preserves --mantine-scale, breakpoint mixins use config/breakpoints.ts, hover handles pointer capabilities, and rtl is only for cases logical properties cannot express. Colors use semantic variables, never color-scheme mixins or light-dark(). The _mantine.scss tool module emits no CSS and is injected once per compilation by the shared Vite/Vitest CSS configuration; do not @use or @forward it again. Global styles remain CSS. Build integration tests compile temporary fixtures through the actual Sass and PostCSS pipeline and clean them up.
 
