@@ -164,7 +164,7 @@
     gap: 0.75rem;
   }
 
-  .layoutDemo label {
+  .demoCard label {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -173,8 +173,8 @@
     font-weight: 500;
   }
 
-  .layoutDemo select:not([class*="mantine-"]),
-  .layoutDemo input:not([class*="mantine-"]) {
+  .demoCard select:not([class*="mantine-"]),
+  .demoCard input:not([class*="mantine-"]) {
     min-width: 0;
     width: 100%;
     height: 2.5rem;
@@ -188,7 +188,7 @@
     box-shadow: var(--app-shadow-surface);
   }
 
-  .layoutDemo input:not([class*="mantine-"])::placeholder {
+  .demoCard input:not([class*="mantine-"])::placeholder {
     color: var(--app-color-muted-foreground);
   }
 
