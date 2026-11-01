@@ -1,9 +1,10 @@
-import { type DesktopBridge, preferencesFromCookies, type Shell } from "@repo/shared";
+import { type DesktopBridge, PREFERENCE_COOKIE_PREFIX, preferencesFromCookies, type Shell } from "@repo/shared";
 import { act, render, screen } from "@testing-library/react";
 import { createRoutesStub, RouterContextProvider, useLoaderData } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AppRoot } from "../providers/app-root";
+import { AppRoot } from "~/providers/app-root";
+
 import {
   getPreference,
   PreferenceError,
@@ -52,7 +53,7 @@ function cookieRecorder(protocol = "http:") {
 afterEach(() => {
   delete window.desktop;
   for (const name of Object.keys(preferencesFromCookies(document.cookie)))
-    document.cookie = `pref-${name}=; Path=/; Max-Age=0`;
+    document.cookie = `${PREFERENCE_COOKIE_PREFIX}${name}=; Path=/; Max-Age=0`;
 });
 
 describe("getPreference", () => {
@@ -67,7 +68,9 @@ describe("getPreference", () => {
   });
 
   it("comes from cookies in the web shell and from x-desktop-prefs facts in the desktop shell", () => {
-    const request = new Request("http://localhost/", { headers: { cookie: "pref-theme=%22light%22" } });
+    const request = new Request("http://localhost/", {
+      headers: { cookie: `${PREFERENCE_COOKIE_PREFIX}theme=%22light%22` },
+    });
     expect(requestPreferences({ kind: "web" }, request)).toEqual({ theme: "light" });
     expect(requestPreferences(desktopShell, request, { prefs: { theme: "dark" } })).toEqual({ theme: "dark" });
     expect(requestPreferences(desktopShell, request)).toEqual({});
@@ -75,7 +78,7 @@ describe("getPreference", () => {
 });
 
 describe("writePreference in the web shell", () => {
-  it("writes a pref-* cookie the server reads back with the same type", async () => {
+  it("writes an application-prefixed cookie the server reads back with the same type", async () => {
     await writePreference("web", "theme", "dark");
     await writePreference("web", "width", 280);
     expect(preferencesFromCookies(document.cookie)).toEqual({ theme: "dark", width: 280 });
@@ -86,17 +89,20 @@ describe("writePreference in the web shell", () => {
   it("sets Path, SameSite, a year's Max-Age, and Secure on https", async () => {
     const http = cookieRecorder();
     await writePreference("web", "theme", "dark", { doc: http.doc });
-    expect(http.written).toEqual(["pref-theme=%22dark%22; Path=/; SameSite=Lax; Max-Age=31536000"]);
+    expect(http.written).toEqual([
+      `${PREFERENCE_COOKIE_PREFIX}theme=%22dark%22; Path=/; SameSite=Lax; Max-Age=31536000`,
+    ]);
     const https = cookieRecorder("https:");
     await writePreference("web", "theme", null, { doc: https.doc });
-    expect(https.written).toEqual(["pref-theme=; Path=/; SameSite=Lax; Max-Age=0; Secure"]);
+    expect(https.written).toEqual([`${PREFERENCE_COOKIE_PREFIX}theme=; Path=/; SameSite=Lax; Max-Age=0; Secure`]);
   });
 
   it("rejects what the desktop shell would reject", async () => {
     await expect(writePreference("web", "bad key", 1)).rejects.toMatchObject({ reason: "invalid-key" });
     await expect(writePreference("web", "x", "y".repeat(2000))).rejects.toMatchObject({ reason: "invalid-value" });
-    for (let i = 0; i < 4; i++) await writePreference("web", `k${i}`, "x".repeat(1000));
-    await expect(writePreference("web", "k4", "x".repeat(1000))).rejects.toBeInstanceOf(PreferenceError);
+    // The application prefix makes four 1000-character values exceed the shared cookie budget.
+    for (let i = 0; i < 3; i++) await writePreference("web", `k${i}`, "x".repeat(1000));
+    await expect(writePreference("web", "k3", "x".repeat(1000))).rejects.toBeInstanceOf(PreferenceError);
   });
 
   it("rejects CJK and quote-heavy values whose cookie the browser would drop, before writing", async () => {

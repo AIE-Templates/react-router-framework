@@ -5,6 +5,7 @@ import {
   applyPreference,
   isPreferenceKey,
   isPreferenceValue,
+  PREFERENCE_COOKIE_PREFIX,
   PREFERENCE_LIMITS,
   preferenceCookieValue,
   preferenceCookiesSize,
@@ -67,19 +68,53 @@ describe("preference rules", () => {
     expect(preferenceCookieValue(280)).toBe("280");
     expect(preferenceCookieValue(false)).toBe("false");
     for (const value of ["\u4e2d\u6587😀", '"quoted"', "a%20b", "x; y", 1.5, true])
-      expect(preferencesFromCookies(`pref-k=${preferenceCookieValue(value)}`)).toEqual({ k: value });
+      expect(preferencesFromCookies(`${PREFERENCE_COOKIE_PREFIX}k=${preferenceCookieValue(value)}`)).toEqual({
+        k: value,
+      });
   });
 
-  it("measures the pref-* cookies the way a Cookie header carries them", () => {
+  it("measures the application-prefixed cookies the way a Cookie header carries them", () => {
     expect(preferenceCookiesSize({})).toBe(0);
-    expect(preferenceCookiesSize({ theme: "dark" })).toBe("pref-theme=%22dark%22".length);
-    expect(preferenceCookiesSize({ a: 1, b: true })).toBe("pref-a=1; pref-b=true".length);
+    expect(preferenceCookiesSize({ theme: "dark" })).toBe(`${PREFERENCE_COOKIE_PREFIX}theme=%22dark%22`.length);
+    expect(preferenceCookiesSize({ a: 1, b: true })).toBe(
+      `${PREFERENCE_COOKIE_PREFIX}a=1; ${PREFERENCE_COOKIE_PREFIX}b=true`.length,
+    );
+  });
+
+  it("includes the application prefix when accepting the exact cookie budget and rejecting one more byte", () => {
+    const overhead = `${PREFERENCE_COOKIE_PREFIX}k=`.length + 6; // Encoded opening and closing quotes.
+    const payloadBytes = PREFERENCE_LIMITS.totalBytes - overhead;
+    const value = "主".repeat(Math.floor(payloadBytes / 9)) + "x".repeat(payloadBytes % 9);
+    const cookie = `${PREFERENCE_COOKIE_PREFIX}k=${encodeURIComponent(JSON.stringify(value))}`;
+    expect(new TextEncoder().encode(cookie)).toHaveLength(PREFERENCE_LIMITS.totalBytes);
+    expect(preferencesSize({ k: value })).toBeLessThan(PREFERENCE_LIMITS.totalBytes);
+    expect(preferenceCookiesSize({ k: value })).toBe(PREFERENCE_LIMITS.totalBytes);
+    expect(applyPreference({}, "k", value)).toEqual({ ok: true, prefs: { k: value } });
+    expect(preferencesFromCookies(cookie)).toEqual({ k: value });
+    expect(applyPreference({}, "k", `${value}x`)).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("counts each prefix and separator in a multi-cookie header", () => {
+    const prefs = { first: "x".repeat(1000), second: "主".repeat(200), third: true };
+    const header = Object.entries(prefs)
+      .map(([key, value]) => `${PREFERENCE_COOKIE_PREFIX}${key}=${encodeURIComponent(JSON.stringify(value))}`)
+      .join("; ");
+    expect(preferenceCookiesSize(prefs)).toBe(new TextEncoder().encode(header).length);
+    expect(preferencesFromCookies(header)).toEqual(prefs);
+  });
+
+  it("ignores legacy and other applications' preference cookies", () => {
+    // Explicit legacy fixture: no compatibility layer reads the former unscoped cookie name.
+    expect(preferencesFromCookies("pref-theme=%22dark%22; another-app_pref_theme=%22dark%22")).toEqual({});
+    expect(preferencesFromCookies(`pref-theme=%22dark%22; ${PREFERENCE_COOKIE_PREFIX}theme=%22light%22`)).toEqual({
+      theme: "light",
+    });
   });
 
   it("rejects values whose cookies would exceed the budget, even when the header would fit", () => {
-    // 600 CJK characters: 3606 bytes as ASCII JSON, but 5416 as a cookie, which Chromium drops.
+    // 600 CJK characters fit the ASCII JSON budget, but their encoded cookie exceeds 4 KiB.
     expect(applyPreference({}, "k", "\u4e3b".repeat(600))).toEqual({ ok: false, reason: "too-large" });
-    // 1024 quotes: 2050 bytes as JSON, 6150 as a cookie (`\"` becomes `%5C%22`).
+    // 1024 quotes fit as JSON but exceed the cookie budget (`\"` becomes `%5C%22`).
     expect(applyPreference({}, "k", '"'.repeat(1024))).toEqual({ ok: false, reason: "too-large" });
     expect(applyPreference({}, "k", "\u4e3b".repeat(400)).ok).toBe(true);
     // Many medium values: 11 keys of 60 CJK characters would be about 6 KB of Cookie header.
@@ -106,16 +141,16 @@ describe("preference rules", () => {
     expect(preferencesSize(sanitizePreferences(big))).toBeLessThanOrEqual(PREFERENCE_LIMITS.totalBytes);
   });
 
-  it("round-trips through pref-* cookies, keeping types", () => {
+  it("round-trips through application-prefixed cookies, keeping types", () => {
     const cookie = [
-      `pref-theme=${preferenceCookieValue("dark; mode=1")}`,
-      `pref-width=${preferenceCookieValue(280)}`,
-      `pref-compact=${preferenceCookieValue(true)}`,
-      `pref-locale=${preferenceCookieValue("\u4e2d\u6587")}`,
+      `${PREFERENCE_COOKIE_PREFIX}theme=${preferenceCookieValue("dark; mode=1")}`,
+      `${PREFERENCE_COOKIE_PREFIX}width=${preferenceCookieValue(280)}`,
+      `${PREFERENCE_COOKIE_PREFIX}compact=${preferenceCookieValue(true)}`,
+      `${PREFERENCE_COOKIE_PREFIX}locale=${preferenceCookieValue("\u4e2d\u6587")}`,
       "session=abc",
-      "pref-broken=%7B",
-      "pref-bad%20key=1",
-      "pref-raw=dark",
+      `${PREFERENCE_COOKIE_PREFIX}broken=%7B`,
+      `${PREFERENCE_COOKIE_PREFIX}bad%20key=1`,
+      `${PREFERENCE_COOKIE_PREFIX}raw=dark`,
     ].join("; ");
     expect(preferencesFromCookies(cookie)).toEqual({
       theme: "dark; mode=1",
@@ -125,7 +160,11 @@ describe("preference rules", () => {
     });
     expect(preferencesFromCookies(undefined)).toEqual({});
     // The same name twice (different paths): the first, most specific one wins.
-    expect(preferencesFromCookies("pref-theme=%22dark%22; pref-theme=%22light%22")).toEqual({ theme: "dark" });
+    expect(
+      preferencesFromCookies(
+        `${PREFERENCE_COOKIE_PREFIX}theme=%22dark%22; ${PREFERENCE_COOKIE_PREFIX}theme=%22light%22`,
+      ),
+    ).toEqual({ theme: "dark" });
     expect(preferencesFromCookies("")).toEqual({});
   });
 });

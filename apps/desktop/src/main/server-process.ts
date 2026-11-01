@@ -8,7 +8,8 @@ import {
 } from "@repo/port-fetch";
 import { MessageChannelMain, utilityProcess } from "electron";
 
-import { PORT_ACK_COALESCE } from "../port-options.ts";
+import { PORT_ACK_COALESCE } from "~/port-options";
+
 import type { Logger } from "./log.ts";
 
 export interface ServerProcessOptions {

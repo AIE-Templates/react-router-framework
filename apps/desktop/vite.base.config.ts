@@ -33,6 +33,7 @@ export function entryConfig({ entry, fileName, format }: EntryOptions): UserConf
       // packages such as react-dom/server resolve to their Node builds.
       conditions: ["@repo/source", ...defaultServerConditions],
       mainFields: ["module", "main"],
+      tsconfigPaths: true,
     },
     build: {
       outDir: ".vite/build",

@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 
+import { storageKey } from "@repo/shared";
 import type { BrowserWindow } from "electron";
 
 import type { BootProfile } from "./boot-profile.ts";
@@ -251,7 +252,7 @@ export async function runSmoke(
   );
   await check(
     "visualThemeRestore",
-    `const saved = JSON.parse(localStorage.getItem("framework-app:visual-preferences") || "null"); return await window.desktop.syncVisualTheme(saved?.preferences?.colorScheme || "auto");`,
+    `const saved = JSON.parse(localStorage.getItem(${JSON.stringify(storageKey("visual-preferences"))}) || "null"); return await window.desktop.syncVisualTheme(saved?.preferences?.colorScheme || "auto");`,
     (v) => isRecord(v) && v.status === "processed" && v.background === "applied" && v.persistence === "saved",
   );
 
