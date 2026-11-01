@@ -12,7 +12,7 @@ const feature = (path: string) => /^features\/([^/]+)\//.exec(path)?.[1];
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
-const testFile = (path: string) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) || path.startsWith("testing/");
+const testFile = (path: string) => /\.(test|spec)(?:\.[cm]?[jt]sx?)?$/.test(path) || path.startsWith("testing/");
 
 /** Check module references, including re-exports, dynamic imports and require, without matching comments/strings. */
 function violations(path: string, source: string): string[] {
@@ -88,6 +88,7 @@ it.each([
   ["root.tsx", 'import type { X } from "~/../host/app"'],
   ["lib/client.ts", 'type X = import("~/../host/app").X'],
   ["components/button.tsx", 'import { x } from "~/testing/render"'],
+  ["components/button.tsx", 'export * from "~/components/button.test"'],
 ])("rejects invalid dependency in %s: %s", (path, source) => {
   expect(violations(path, source).length).toBeGreaterThan(0);
 });
