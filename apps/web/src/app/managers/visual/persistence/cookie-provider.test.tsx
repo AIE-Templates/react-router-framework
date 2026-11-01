@@ -2,12 +2,13 @@ import { act, render, screen } from "@testing-library/react";
 import { StrictMode, useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { STORAGE_KEYS } from "../../../config/storage";
-import { visualCookie } from "../../../config/visual-cookie";
-import { AppRoot } from "../../../providers/app-root";
-import { useVisualManager } from "../hooks";
-import type { VisualManager } from "../manager";
-import { DEFAULT_VISUAL_PREFERENCES } from "../types";
+import { STORAGE_KEYS } from "~/config/storage";
+import { visualCookie } from "~/config/visual-cookie";
+import { useVisualManager } from "~/managers/visual/hooks";
+import type { VisualManager } from "~/managers/visual/manager";
+import { DEFAULT_VISUAL_PREFERENCES } from "~/managers/visual/types";
+import { AppRoot } from "~/providers/app-root";
+
 import { readVisualCookie } from "./cookie";
 import { useVisualCookieStatus } from "./cookie-context";
 

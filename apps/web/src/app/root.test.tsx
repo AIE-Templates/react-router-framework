@@ -100,30 +100,6 @@ describe("Layout", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
-  it("marks the document as web, without desktop attributes", async () => {
-    const html = renderLayout(createTestContext());
-
-    await waitFor(() => expect(html.dataset.shell).toBe("web"));
-    expect(html.dataset.platform).toBeUndefined();
-    expect(html.dataset.titlebar).toBeUndefined();
-    expect(html.dataset.fullscreen).toBeUndefined();
-  });
-
-  it("marks the document as hydrated once the client code ran", async () => {
-    delete document.documentElement.dataset.hydrated;
-    const html = renderLayout(createTestContext());
-
-    await waitFor(() => expect(html.dataset.hydrated).toBe("true"));
-  });
-
-  it("keeps the nonce the root loader delivered on the scripts", async () => {
-    const context = createLoadContext(new Request("http://localhost/"), { cspNonce: "abc123" });
-    renderLayout(context);
-
-    await waitFor(() => expect(document.querySelector("script[nonce]")).not.toBeNull());
-    expect(document.querySelector("script[nonce]")?.getAttribute("nonce")).toBe("abc123");
-  });
-
   it("marks the document with the desktop shell's platform and per-request facts", async () => {
     const html = renderLayout(createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts }));
 

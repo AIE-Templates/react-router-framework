@@ -1,6 +1,6 @@
-import { visualCookie } from "../../../config/visual-cookie";
-import { visualCodec } from "../bootstrap";
-import type { VisualPreferences } from "../types";
+import { visualCookie } from "~/config/visual-cookie";
+import { visualCodec } from "~/managers/visual/bootstrap";
+import type { VisualPreferences } from "~/managers/visual/types";
 export function readVisualCookie(header: string | null) {
   const entry = header
     ?.split(";")
