@@ -32,7 +32,7 @@ Main-document failures use one automatic reload per bounded failure cycle, coord
 
 Server cookies round-trip through main's session cookie jar at the internal HTTPS storage origin. Main strips renderer-supplied Cookie/desktop headers, injects trusted values and flushes mutations before response delivery. Page scripts have no document.cookie. localStorage/sessionStorage remain available.
 
-Small display preferences use `~/lib/preferences`: server getPreference; component useSetPreference; non-React writePreference. Desktop writes persist atomically in prefs.json and reach SSR in x-desktop-prefs. Web uses pref-* cookies. Shared limits apply to both transports. Preferences are user-controlled display settings, never authorization or credentials.
+Small display preferences use `~/platform/electron/preferences`: server getPreference; component useSetPreference; non-React writePreference. Desktop writes persist atomically in prefs.json and reach SSR in x-desktop-prefs. Web uses names derived from `PREFERENCE_COOKIE_PREFIX = cookieName("pref_")` in `@repo/shared` (default `framework-app_pref_`). Old `pref-*` cookies are intentionally ignored; visual preference storage and visual cookie names retain their existing derived values. Shared limits apply to both transports. Preferences are user-controlled display settings, never authorization or credentials.
 
 Every IPC validates the registered window, current main frame and app URL. Navigation stays on app://app; allowed external links open in the system browser. No Node integration is available to pages. Logs exclude secrets and complete cookie/preference payloads.
 
@@ -49,3 +49,15 @@ pnpm --filter desktop bench compare bench-results/<file>.jsonl
 ```
 
 The benchmark runner does not build. Real-app benchmarks run only in unpackaged/test-profile production paths, not release-profile or the dev server. DESKTOP_PORT_ACK_COALESCE=0 disables ACK batching for comparisons; default enables it. `.env.example` documents process environment options; the desktop host does not itself load a .env file. BENCH_VERBOSE passes Chromium stderr through.
+
+## Project identity and imports
+
+When deriving an application, set `APP_ID` in `@repo/shared/src/app-identity.ts`, `productName` in this app's `package.json`, and `appId` in `electron-builder.yml`. Keep the builder's `productName` equal to package metadata; a test checks this. Change the other distribution placeholders listed above as well.
+
+Electron's default userData is `<appData>/<app.name>`; `app.name` uses `productName` when present, otherwise package `name`. Builder `appId` does not choose that directory. `prefs.json`, `visual-theme.json` and `compile-cache/` retain their filenames within the selected application directory. Development and E2E continue using their existing isolated locations.
+
+Here `~/` resolves to `src` in TypeScript and Vite/Vitest. Native Node `scripts/` and `e2e/` can use standalone `import type { ... } from "~/..."`, which is erased; they cannot use runtime alias imports or inline `import { type X }`, which retains an import statement. Runtime sharing across applications goes through workspace packages or the web build package, not relative source paths.
+
+Packaged E2E paths follow the builder's default executable names: macOS uses `<productName>.app/Contents/MacOS/<productName>`, Windows uses `<productName>.exe`, and Linux uses the lowercased package `name` (currently `desktop`), not `productName`. The helper selects the existing architecture-specific output directory. `executableName` overrides are not supported by this template's launcher and are rejected by configuration tests.
+
+Keep both package `name` and `productName` portable for that path helper: an ASCII letter first, then ASCII letters, digits, spaces, dots, underscores or hyphens; no trailing dot/space or Windows reserved filename. The helper validates this constraint instead of approximating electron-builder's filename sanitization. Product names may contain spaces; package names must also satisfy package-manager metadata requirements.
