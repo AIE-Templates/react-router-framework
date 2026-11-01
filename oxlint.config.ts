@@ -22,6 +22,12 @@ export default defineConfig({
       ],
     },
   },
+  overrides: [
+    {
+      files: ["apps/*/src/**"],
+      rules: { "import/no-relative-parent-imports": "error" },
+    },
+  ],
   rules: {
     "unicorn/filename-case": ["error", { case: "kebabCase" }],
     // Hook rules sit in the `pedantic` category, which is not enabled.
