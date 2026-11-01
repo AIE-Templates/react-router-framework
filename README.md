@@ -40,4 +40,8 @@ ContentScrollRestoration tracks root/module containers by history key, resets ne
 
 VisualManager owns color scheme (`auto`, `light`, `dark`), text direction (`ltr`, `rtl`) and reduced motion (`auto`, `reduce`, `full`). Read `useVisualState` and update through `useVisualActions`; `useVisualStatus` distinguishes initialization and persistence failures. Global providers are composed by AppRoot, while the domain provider and registries live under `managers/visual`.
 
-The head initializer applies saved preferences before paint. Core uses `data-color-scheme`, `dir` and `data-reduced-motion`; missing automatic values fall back to system CSS media queries. Storage identifiers are centralized in `config/storage.ts`: choose your application ID before distributing an independent application. The body-only AppUiProvider slot hosts UI integrations. See the [visual specification](docs/specs/visual.spec.md) for snapshot, reset and persistence behavior.
+The head initializer applies saved preferences before paint. Core uses `data-color-scheme`, `dir` and `data-reduced-motion`; missing automatic values fall back to system CSS media queries. Set `APP_ID` in `packages/shared/src/app-identity.ts` before distributing an independent application. `config/storage.ts` derives Web keys through the shared `storageKey()` helper. The body-only AppUiProvider slot hosts UI integrations. See the [visual specification](docs/specs/visual.spec.md) for snapshot, reset and persistence behavior.
+
+## Source structure
+
+Feature routes and demo code live under `apps/web/src/app/features`; shared appearance controls live in `components/appearance-settings.tsx`. Environment contracts are consumed through `managers/environment/hooks` and `dom-props`, with the runtime owned by AppRoot. Global CSS enters through `styles/index.css`; component CSS Modules remain colocated. See the [structure specification](docs/specs/structure.spec.md) for boundaries, naming and migration rules.
