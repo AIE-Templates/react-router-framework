@@ -19,3 +19,5 @@ AppRoot owns environment/providers; BasicShell or NavigationShell owns applicati
 `src/app/routes.ts` maps URLs to feature route modules (`features/<name>/<page>.route.tsx`). The disposable home example lives in `features/demo`; removing its route registration and directory removes `/`. `features/main` holds the SPA 404. The root document remains in `root.tsx`.
 
 Global CSS enters through `styles/index.css`. Prefer colocated CSS Modules in the `components` cascade layer; Tailwind utilities remain available. Use `~/` for app-root imports and `./` within a directory or its children. See the root and directory-level AGENTS.md files for conventions.
+
+Core removes starter system-color and background rules from `styles/base.css`: manual visual preferences must win over the OS preference. The current Core base rules remain in the `app.css` migration bridge until the Core style split. Demo smoke selectors use `data-demo-controls` and `data-demo-draft`, independently of CSS class names.
