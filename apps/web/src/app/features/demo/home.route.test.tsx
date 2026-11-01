@@ -2,8 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { expect, it } from "vitest";
 
-import { AppRoot } from "../providers/app-root";
-import Home from "./home";
+import { AppRoot } from "~/providers/app-root";
+
+import Home from "./home.route";
 
 it("uses client navigation while preserving the basename, query settings and draft", async () => {
   const router = createMemoryRouter(
