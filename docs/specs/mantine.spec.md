@@ -29,10 +29,10 @@ The demo preserves the Mantine TextInput while using Core's feature-local module
 stable data-demo controls. Ordinary UI tests use testing/render.tsx, which already composes the
 Mantine AppUiProvider through the shared slot.
 
-During the structure migration, app.css retains only the Mantine core/notification imports and
-Mantine reduced-motion/no-drag rules. Core tokens, base and shell rules live in styles/; demo
-rules stay in feature modules. Moving the remaining library rules into styles/ui.css and adding
-SCSS/PostCSS tooling belongs to the separate Mantine style stage.
+The global entry styles/index.css imports styles/ui.css, which owns the Mantine core/notification
+imports and library integration rules. Core tokens, base and shell rules live in styles/; demo
+rules stay in feature modules. Shared Sass/PostCSS configuration is in place for Mantine SCSS
+Modules while inherited Core modules remain CSS.
 
 ## Modals, notifications and forms
 
