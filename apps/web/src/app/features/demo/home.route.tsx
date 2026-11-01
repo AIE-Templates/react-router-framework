@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
-import { BasicShell, NavigationShell } from "../layouts/app-shell/app-shell";
-import { ModuleLayout } from "../layouts/module/module-layout";
-import { VisualSettings } from "../managers/visual/settings";
-import { useAppEnvironment } from "../providers/environment";
-import { DemoIcon } from "../welcome/demo-icon";
-import { Welcome } from "../welcome/welcome";
-import type { Route } from "./+types/home";
+import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
+import { ModuleLayout } from "~/layouts/module/module-layout";
+import { VisualSettings } from "~/managers/visual/settings";
+import { useAppEnvironment } from "~/providers/environment";
+
+import type { Route } from "./+types/home.route";
+import { DemoIcon } from "./demo-icon";
+import { Welcome } from "./welcome";
 
 export const meta: Route.MetaFunction = () => [
   { title: "Layout foundation" },
@@ -108,7 +109,7 @@ export default function Home() {
                 <p>Two small choices. A different workspace.</p>
               </div>
             </div>
-            <div className="layout-demo-controls">
+            <div className="layout-demo-controls" data-demo-controls>
               <label>
                 App shell
                 <select
@@ -158,7 +159,7 @@ export default function Home() {
             <p className="demo-card-footnote">Resize the window. Your workspace adapts with you.</p>
           </section>
 
-          <section id="scratchpad" className="demo-card" aria-labelledby="scratchpad-title">
+          <section id="scratchpad" data-demo-draft className="demo-card" aria-labelledby="scratchpad-title">
             <div className="demo-card-heading">
               <div className="demo-icon-box">
                 <DemoIcon name="file" />

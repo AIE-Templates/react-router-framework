@@ -24,7 +24,7 @@ import { AppUiProvider } from "./providers/app-ui-provider";
 import { DocumentNonceContext } from "./providers/document-nonce";
 import { useAppEnvironment } from "./providers/environment";
 
-import "./app.css";
+import "./styles/index.css";
 
 // No external stylesheets or fonts: the desktop shell loads pages offline, and an unreachable host
 // would hold up the document (Google Fonts cost 4 s in the Electron spike). Self-host fonts if needed.
