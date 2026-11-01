@@ -1,11 +1,13 @@
-import { visualCodec } from "./bootstrap";
-import { useVisualActions, useVisualState, useVisualStatus } from "./hooks";
+import { visualCodec } from "~/managers/visual/bootstrap";
+import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
+
+import classes from "./appearance-settings.module.css";
 export function VisualSettings() {
   const { preferences } = useVisualState();
   const actions = useVisualActions();
   const status = useVisualStatus();
   return (
-    <fieldset className="visual-settings" data-window-interactive="">
+    <fieldset className={classes.visualSettings} data-window-interactive="">
       <legend>Appearance</legend>
       <label>
         Color scheme

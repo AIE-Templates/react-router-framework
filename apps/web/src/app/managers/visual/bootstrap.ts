@@ -1,6 +1,7 @@
 /* oxlint-disable unicorn/consistent-function-scoping -- The serialized kernel must have no module-scope dependencies. */
-import { STORAGE_KEYS } from "../../config/storage";
-import { visualIntegration } from "../../config/visual-integration";
+import { STORAGE_KEYS } from "~/config/storage";
+import { visualIntegration } from "~/config/visual-integration";
+
 import type { VisualBootstrapConfig, VisualBootstrapRecord, VisualPreferences, VisualState } from "./types";
 
 export const visualBootstrapConfig: VisualBootstrapConfig = {

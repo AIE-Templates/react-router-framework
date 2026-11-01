@@ -1,0 +1,102 @@
+@layer components {
+  .demoIconBox {
+    display: grid;
+    place-items: center;
+    flex: 0 0 2.25rem;
+    width: 2.25rem;
+    height: 2.25rem;
+    border: 1px solid var(--app-color-border);
+    border-radius: 0.5rem;
+    background: var(--app-color-background);
+    color: var(--app-color-foreground);
+  }
+
+  .demoIconBox svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
+  .demoResources {
+    margin-top: 2.5rem;
+    scroll-margin-top: 1rem;
+  }
+
+  .demoSectionHeading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .demoSectionHeading h2 {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .demoSectionHeading > span {
+    font-size: 0.75rem;
+    color: var(--app-color-muted-foreground);
+  }
+
+  .demoResourceGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+    gap: 1rem;
+  }
+
+  .demoResource {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    min-width: 0;
+    padding: 1rem;
+    border: 1px solid var(--app-color-border);
+    border-radius: 0.6rem;
+    background: var(--app-color-card);
+    text-decoration: none;
+    transition:
+      background 120ms,
+      border-color 120ms;
+  }
+
+  .demoResource:hover {
+    border-color: var(--app-color-input);
+    background: var(--app-color-muted);
+  }
+
+  .demoResource > span:nth-child(2) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .demoResource strong {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
+  .demoResource > span > span {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.6875rem;
+    line-height: 1.5;
+    color: var(--app-color-muted-foreground);
+  }
+
+  .demoResource > svg {
+    flex-shrink: 0;
+    width: 1rem;
+    color: var(--app-color-muted-foreground);
+  }
+
+  :global(:root[data-reduced-motion="reduce"]) .demoResource {
+    transition: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(:root:not([data-reduced-motion])) .demoResource {
+      transition: none;
+    }
+  }
+}
