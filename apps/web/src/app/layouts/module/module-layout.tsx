@@ -80,6 +80,7 @@ export function ModuleLayout({
             {sidebar && (
               <button
                 id={`${sidebarId}-trigger`}
+                data-module-panel-toggle="sidebar"
                 {...getInteractiveProps()}
                 type="button"
                 aria-expanded={side.open}
@@ -94,6 +95,7 @@ export function ModuleLayout({
             {auxiliary && (
               <button
                 id={`${auxiliaryId}-trigger`}
+                data-module-panel-toggle="auxiliary"
                 {...getInteractiveProps()}
                 type="button"
                 aria-expanded={aux.open}
