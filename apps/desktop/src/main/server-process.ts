@@ -253,8 +253,12 @@ export function startServerProcess(
     inst.child.on("exit", (code) => {
       inst.exited = true;
       const wasCurrent = current();
+      const failedStartup = !inst.readySettled;
       retire(inst, new Error(`The server exited (code ${code})`));
       if (wasCurrent && !isStopping()) {
+        // An early exit cannot reach the startup timeout; recovery still needs the failed generation.
+        if (failedStartup)
+          options.onLifecycle?.({ generation: inst.generation, state: "failed", restarted: inst.generation > 1 });
         log.error({ code, generation: inst.generation }, "server process exited unexpectedly");
         scheduleRestart("exited unexpectedly");
       }

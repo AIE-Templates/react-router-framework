@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 
 import { channelFromWebSocket } from "@repo/channel";
 import { WebSocket } from "ws";
@@ -20,7 +21,7 @@ export async function startWsServer(
   const child = spawn(
     process.execPath,
     // The run's own flags (the `@repo/source` condition among them), so the peer loads the same package code.
-    [...process.execArgv, new URL("./peer-ws-server.ts", import.meta.url).pathname, JSON.stringify(config)],
+    [...process.execArgv, fileURLToPath(new URL("./peer-ws-server.ts", import.meta.url)), JSON.stringify(config)],
     {
       stdio: ["ignore", "pipe", "inherit"],
     },

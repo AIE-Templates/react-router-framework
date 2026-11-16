@@ -35,16 +35,18 @@ function fakeBridge(prefs: Record<string, unknown> = {}): DesktopBridge {
   };
 }
 
-/** A document stand-in that records cookie writes instead of applying them. */
+/** A single-cookie document stand-in that records attributes as well as the stored value. */
 function cookieRecorder(protocol = "http:") {
   const written: string[] = [];
+  let cookie = "";
   const doc = {
     location: { protocol },
     get cookie() {
-      return "";
+      return cookie;
     },
     set cookie(value: string) {
       written.push(value);
+      cookie = value.includes("Max-Age=0") ? "" : value.split(";")[0];
     },
   };
   return { doc, written };
@@ -95,6 +97,47 @@ describe("writePreference in the web shell", () => {
     const https = cookieRecorder("https:");
     await writePreference("web", "theme", null, { doc: https.doc });
     expect(https.written).toEqual([`${PREFERENCE_COOKIE_PREFIX}theme=; Path=/; SameSite=Lax; Max-Age=0; Secure`]);
+  });
+
+  it.each([
+    { operation: "new write", cookie: "", value: "dark" },
+    { operation: "update", cookie: `${PREFERENCE_COOKIE_PREFIX}theme=%22light%22`, value: "dark" },
+    { operation: "removal", cookie: `${PREFERENCE_COOKIE_PREFIX}theme=%22light%22`, value: null },
+  ])("rejects a silently dropped cookie $operation", async ({ cookie, value }) => {
+    const doc = {
+      get cookie() {
+        return cookie;
+      },
+      set cookie(_value: string) {},
+    };
+    await expect(writePreference("web", "theme", value, { doc })).rejects.toMatchObject({
+      name: "PreferenceError",
+      reason: "cookie-not-saved",
+    });
+  });
+
+  it.each(["get", "set"] as const)("normalizes cookie %s failures", async (access) => {
+    const { doc } = cookieRecorder();
+    const denied = () => {
+      throw new DOMException(`Cannot ${access} cookies`, "SecurityError");
+    };
+    const failure =
+      access === "get"
+        ? vi.spyOn(doc, "cookie", "get").mockImplementation(denied)
+        : vi.spyOn(doc, "cookie", "set").mockImplementation(denied);
+    try {
+      await expect(writePreference("web", "theme", "dark", { doc })).rejects.toMatchObject({
+        name: "PreferenceError",
+        reason: "cookie-unavailable",
+      });
+    } finally {
+      failure.mockRestore();
+    }
+  });
+
+  it("accepts removing an already absent preference", async () => {
+    const { doc } = cookieRecorder();
+    await expect(writePreference("web", "theme", null, { doc })).resolves.toBeUndefined();
   });
 
   it("rejects what the desktop shell would reject", async () => {

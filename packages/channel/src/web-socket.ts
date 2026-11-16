@@ -286,6 +286,8 @@ class WebSocketChannel implements Channel {
   #error: unknown;
   /** `close()` was called: a late credit `open` no longer opens the channel. */
   #closeRequested = false;
+  /** Local close must read on, but a saturated receiver must not retain more message handlers. */
+  #droppingIncoming = false;
   /**
    * A local failure (a protocol error, a message over `maxMessageBytes`, the overload close):
    * reported as the close's `error`; nothing received after it is processed.
@@ -475,11 +477,18 @@ class WebSocketChannel implements Channel {
   /**
    * Closes with a code the socket accepts and a reason it accepts (at most 123 UTF-8 bytes). If
    * the socket still refuses, the channel is finished here so the other end and any relay are not
-   * left waiting.
+   * left waiting. In-flight messages still arrive unless receiving was paused or reaches a pending
+   * limit during the close; the saturated receiver then ignores further messages.
    */
   close(code?: number, reason?: string): void {
     if (this.state === "closing" || this.state === "closed") return;
     this.#closeRequested = true;
+    // The closing handshake must still read the peer's reply, even when handlers are stalled.
+    if (this.#paused) {
+      this.#droppingIncoming = true;
+      this.#paused = false;
+      this.#socket.resume?.();
+    }
     const sendCode = sendableCloseCode(code);
     const sendReason = normalizeCloseReason(reason);
     try {
@@ -557,12 +566,6 @@ class WebSocketChannel implements Channel {
     this.#failure = new Error(reason);
     clearTimeout(this.#ackTimer);
     this.#ackTimer = undefined;
-    // A paused socket must read on, or the peer's close frame would never arrive; what it still
-    // hands over is dropped above.
-    if (this.#paused) {
-      this.#paused = false;
-      this.#socket.resume?.();
-    }
     this.close(code, reason);
   }
 
@@ -591,7 +594,9 @@ class WebSocketChannel implements Channel {
   };
 
   readonly #onMessage = (event: { data: unknown }): void => {
-    if (this.#failure !== undefined) return;
+    // A saturated receiver still reads the transport's closing handshake, but cannot retain more
+    // handlers from the backlog that close() resumed.
+    if (this.#failure !== undefined || this.#droppingIncoming) return;
     // A credit channel closed before the peer's `open` arrived never opens: whatever still arrives
     // while the socket closes belongs to a session that did not start.
     if (this.#creditMode && this.#window === undefined && (this.#closeRequested || this.#socket.readyState !== OPEN)) {
@@ -655,6 +660,10 @@ class WebSocketChannel implements Channel {
       : this.#maxPendingBytes;
     const overBytes = (this.#creditMode ? ahead : this.#pendingBytes) >= limit;
     if (!overBytes && !overFrames) return;
+    if (this.#closeRequested) {
+      this.#droppingIncoming = true;
+      return;
+    }
     if (this.#socket.pause && this.#socket.resume && !(this.#creditMode && overFrames)) {
       this.#paused = true;
       this.#socket.pause();

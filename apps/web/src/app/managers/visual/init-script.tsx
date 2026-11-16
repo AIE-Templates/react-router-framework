@@ -6,6 +6,8 @@ export function VisualInitScript({ nonce }: { nonce?: string }) {
     <script
       nonce={nonce}
       data-visual-init=""
+      // SSR and client transforms can format the kernel differently; this script has already run.
+      suppressHydrationWarning
       dangerouslySetInnerHTML={{ __html: visualScript(manager.getServerSnapshot().preferences) }}
     />
   );

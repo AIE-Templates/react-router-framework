@@ -701,6 +701,34 @@ describe("WebSocket credit: termination", () => {
     }
   });
 
+  it.each([CREDIT_SUBPROTOCOL, ""])(
+    "bounds in-flight handlers without pausing a closing socket (%s)",
+    async (protocol) => {
+      const socket = new FakeSocket();
+      socket.protocol = protocol;
+      socket.closesLater = true;
+      const pause = vi.fn<() => void>();
+      Object.assign(socket, { pause, resume() {} });
+      const channel = channelFromWebSocket(socket, { maxPendingFrames: 2 });
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const handler = vi.fn<() => Promise<void>>(() => gate);
+      channel.onMessage(handler);
+      if (protocol) socket.peerOpen(1024);
+
+      channel.close(1000);
+      for (let i = 0; i < 20; i++) socket.receive("");
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(channel.stats()).toMatchObject({ framesReceived: 2, heldFrames: 2, overloadCloses: 0 });
+      expect(pause).not.toHaveBeenCalled();
+      const closed = closeInfo(channel);
+      socket.finishClose();
+      expect(await closed).toMatchObject({ code: 1000 });
+      release?.();
+    },
+  );
+
   it("has a relay drop what follows a protocol error and close the other side at once", async () => {
     const socket = new FakeSocket();
     socket.closesLater = true;
