@@ -12,6 +12,8 @@ After changes run `pnpm lint:fix`, then `pnpm fmt`. Before completion run `pnpm 
 
 Unit tests use Vitest and Testing Library, colocated as *.test.ts(x). Each package has a Vitest project. Use createRoutesStub when components need Router context; invoke loaders/actions directly. Keep environment examples synchronized with new variables, document purpose/defaults and never commit .env files.
 
+Inject failures at a narrow external boundary in isolated tests, preserve the real component/provider path, and assert recovery after removing the fault as well as the failure state. Restore injections in finally; use deterministic gates instead of fixed sleeps for races.
+
 ## Commits
 
 Use Conventional Commits, checked by @commitlint/config-conventional. Lefthook runs Oxlint/Oxfmt on staged files. Do not bypass hooks with --no-verify.
@@ -36,9 +38,9 @@ SSR is the default; SSR=false at dev/build selects SPA.
 
 SPA builds reject non-root server loaders, server actions/middleware/headers and non-root HydrateFallback. The root loader runs at build time. Components, meta, links, ErrorBoundary and client data APIs can support both modes. Select rendering requirements deliberately rather than assuming every application can switch unchanged.
 
-## Application infrastructure
+Keep default root revalidation. Optimize only after checking loader dependencies and explicit invalidation; an in-flight navigation can have different current/next URLs even during revalidate(). See apps/web/README.md for dependency optimization, route discovery and revalidation guidance.
 
-Keep default root revalidation. Optimize only after checking loader dependencies and explicit invalidation; an in-flight navigation can have different current/next URLs even during revalidate(). Preference writes must still refresh loaders, including during navigation. See apps/web/README.md for dependency optimization, route discovery and the preference integration test.
+## Application infrastructure
 
 Async results belong to the resource, identity and operation that started them. Propagate cancellation and recheck ownership after awaits before publishing state, writing a cache or navigating. Invalidate old owners before clearing caches; checking only whether a component is mounted is insufficient. Do not suppress errors from the current owner. See the async ownership example in apps/web/README.md; reuse existing lifecycle guards before adding abstractions.
 
@@ -84,7 +86,7 @@ Keep the stable application scheme/host/origin and URL check in apps/desktop/src
 
 Port-fetch and channel must remain Electron-independent. Test with worker_threads MessageChannel and local ws. Port-fetch sends standalone Uint8Array chunks via structured cloning; do not use ArrayBuffer transfer lists with Electron MessagePortMain or assume zero-copy. Propagate cancellation through request.signal. Channel producers await whenDrained; send neither blocks nor drops. Relay preserves ordering/backpressure/close semantics; use shared CLOSE_CODES.
 
-Desktop page document.cookie is unavailable. Main manages server cookies in the dedicated session and sends them only to the app upstream. Client-readable state uses loader data, localStorage or explicit helpers. Visual preferences use VisualManager; the Electron theme mirror uses its dedicated IPC and visual-theme.json. Other small display preferences use getPreference/useSetPreference/writePreference, never shell-specific business branches or direct cookie writes. Desktop persists prefs.json and injects x-desktop-prefs; web derives preference cookie names from PREFERENCE_COOKIE_PREFIX = cookieName("pref_") in @repo/shared. Both enforce shared key/size limits. Preferences are user-controlled and must never authorize access or store credentials.
+Desktop page document.cookie is unavailable. Main manages server cookies in the dedicated session and sends them only to the app upstream. Client-readable state uses loader data, localStorage or explicit helpers. Visual preferences use VisualManager; the Electron theme mirror uses its dedicated IPC and visual-theme.json. Other small display preferences use getPreference/useSetPreference/writePreference, never shell-specific business branches or direct cookie writes. Desktop persists prefs.json and injects x-desktop-prefs; web derives preference cookie names from PREFERENCE_COOKIE_PREFIX = cookieName("pref_") in @repo/shared. Both enforce shared key/size limits. Preferences are user-controlled and must never authorize access or store credentials. Preference writes must still refresh loaders, including during navigation. See apps/web/README.md for the preference integration test.
 
 Run build:desktop, DESKTOP_SMOKE=1 DESKTOP_SMOKE_LAYOUT=1 DESKTOP_BOOT_PROFILE=1 with desktop start, and check packaged artifacts (desktop package for test-profile; package:release changes Fuses). Desktop E2E uses Playwright with isolated userData and closes all launched processes. Build/package before both E2E targets; unpackaged needs only build. Test endpoints require DESKTOP_E2E=1 and never mount in release-profile. Release cannot be driven with the inspector-based test driver. Compare repeated boot-profile medians for startup changes. Specs live in docs/specs; decisions in docs/adrs.
 
@@ -98,7 +100,7 @@ Application identity is defined once in @repo/shared app-identity.ts. Choose APP
 
 ## Desktop diagnostic organization
 
-Inject failures at a narrow external boundary in isolated tests, preserve the real component/provider path, and assert recovery after removing the fault as well as the failure state. Restore injections in finally; use deterministic gates instead of fixed sleeps for races. The demo storage-failure E2E illustrates this without adding production test switches. See apps/desktop/README.md.
+The demo storage-failure E2E illustrates this without adding production test switches. See apps/desktop/README.md.
 
 Keep host E2E independent of demo text and controls. Tag demo-specific tests with @demo; test:e2e includes them for template acceptance, while test:e2e:host remains usable after replacing the demo. Preserve IndexedDB transaction-completion and restart coverage.
 
