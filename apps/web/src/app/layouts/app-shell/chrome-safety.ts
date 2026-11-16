@@ -66,7 +66,7 @@ html,body{margin:0;height:100%;min-width:0}
  .app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.module-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
  .shell-navigation-toggle{display:inline-flex}
  .shell-nav{display:none;position:absolute;inset-block:calc(var(--app-window-safe-top) + 3rem) 0;inset-inline-start:0;width:15rem;z-index:6;background:Canvas}
- .app-shell[data-navigation-open="true"]>.shell-body>.shell-nav{display:block}
+ .app-shell[data-navigation-open="true"]>.shell-body>.shell-nav{display:flex}
  .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{display:none}
  .shell-nav-content{padding-top:1rem!important}
 }
