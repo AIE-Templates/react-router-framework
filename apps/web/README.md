@@ -10,6 +10,27 @@ SSR is the default. Set SSR=false for an SPA build; application route exports mu
 
 Use the configured start command to serve the build through react-router-serve. Run Docker builds from the workspace root.
 
+### Development dependency optimization
+
+`future.unstable_optimizeDeps` lets React Router supply Vite with the client entry and route modules as dependency scanning inputs. It reduces late discovery when a route first imports a dependency. It does not change production data loading or revalidation. The flag is experimental in React Router 8.5; recheck it on upgrades. If it causes dependency optimization errors, remove the flag and restart development.
+
+Validate with a forced dependency scan in both modes (run separately, closing the first server before the second):
+
+```sh
+pnpm --filter web exec react-router dev --force --host 127.0.0.1 --port 5173 --strictPort
+SSR=false pnpm --filter web exec react-router dev --force --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Use an isolated browser. Check the first page hydrates, route changes and reloads work, HMR still connects, and no failed module requests or page errors appear. `--force` forces Vite dependency optimization; a warm-page reload alone does not validate cold startup. This is a development compatibility check, not a measured claim about production startup speed.
+
+### Route discovery and revalidation
+
+SSR keeps React Router's default lazy route discovery. It sends the initially matched route metadata and discovers other paths through `/__manifest`; rendered links normally start discovery ahead of a click. Large route tables benefit from the smaller initial manifest. For small apps with frequent programmatic navigations to new dynamic paths, consider `routeDiscovery: { mode: "initial" }` in `react-router.config.ts`. This sends all route metadata initially, while route code remains split. SPA already uses initial discovery; do not force lazy discovery there.
+
+Compare initial document size and first visits to new dynamic paths before choosing. Manifest discovery, server-loader `.data` requests and application API calls are separate costs; changing discovery does not eliminate loader requests.
+
+The root keeps default revalidation. A custom `shouldRevalidate` defines the freshness contract of its own loader, including explicit refreshes and mutations. Equal current/next URLs are not an explicit-refresh signal: `revalidate()` during a pending navigation targets the destination URL. If optimizing a known navigation with `defaultShouldRevalidate: false`, check every reused loader affected by that call, not just root. Keep dynamic identity and resource invalidation explicit.
+
 ## Layout
 
 AppRoot owns environment/providers; BasicShell or NavigationShell owns application framing; ModuleLayout owns its workspace/panels. The home route demonstrates ?shell=basic and ?header=standalone. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.
