@@ -1,20 +1,12 @@
 import type { PortFetch } from "@repo/port-fetch";
 import type { DesktopRequest } from "@repo/shared";
 
+import { APP_SCHEME } from "./app-url.ts";
 import type { BootProfile } from "./boot-profile.ts";
 import type { CookieJar } from "./cookie-jar.ts";
+import { safeUrl } from "./log-url.ts";
 import type { Logger } from "./log.ts";
 import { failureStatus, shapeRequestHeaders, shapeResponseHeaders, toInternalUrl } from "./mapping.ts";
-
-export const APP_SCHEME = "app";
-
-function safePathname(url: string): string {
-  try {
-    return new URL(url).pathname;
-  } catch {
-    return "(invalid URL)";
-  }
-}
 
 /** The part of Electron's `Session` the handler needs (structural, so tests can pass a fake). */
 export interface ProtocolSession {
@@ -80,7 +72,7 @@ export function registerAppProtocol(
     } catch (err) {
       const { status, message } = failureStatus(err);
       // Never the full URL: query strings can carry tokens.
-      log.error({ err, method: request.method, path: safePathname(request.url), status }, "app:// request failed");
+      log.error({ err, method: request.method, path: safeUrl(request.url, "path"), status }, "app:// request failed");
       return new Response(message, { status, headers: { "content-type": "text/plain", "retry-after": "1" } });
     }
   });

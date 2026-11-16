@@ -38,6 +38,10 @@ SPA builds reject non-root server loaders, server actions/middleware/headers and
 
 ## Application infrastructure
 
+Keep default root revalidation. Optimize only after checking loader dependencies and explicit invalidation; an in-flight navigation can have different current/next URLs even during revalidate(). Preference writes must still refresh loaders, including during navigation. See apps/web/README.md for dependency optimization, route discovery and the preference integration test.
+
+Async results belong to the resource, identity and operation that started them. Propagate cancellation and recheck ownership after awaits before publishing state, writing a cache or navigating. Invalidate old owners before clearing caches; checking only whether a component is mounted is insufficient. Do not suppress errors from the current owner. See the async ownership example in apps/web/README.md; reuse existing lifecycle guards before adding abstractions.
+
 Compose global providers in AppRoot. Components read useAppEnvironment from ~/managers/environment/hooks; never infer host identity from user agents, query parameters or data-shell. Do not call the bridge during rendering. Root loader data seeds hydration; confirmed preload identity survives revalidation.
 
 Pages compose BasicShell or NavigationShell with ModuleLayout. Modules do not handle OS branches, native control geometry or window IPC. Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness. CHROME_SAFETY_CSS remains inline and unlayered; the global stylesheet entry rule does not move it into styles/. Environment runtime/context/hooks/dom-props live in managers/environment. AppRoot creates the environment runtime directly; it is not a ManagersRegistry member. The reusable appearance panel lives in components/appearance-settings.tsx.
@@ -74,7 +78,9 @@ Choose APP_ID in @repo/shared and productName in apps/desktop/package.json when 
 
 apps/desktop uses Vite bundles and electron-builder. Main/preload are CommonJS; utility is ESM and runs createWebApp via port-fetch. Main must not import @repo/server or top-level await app.whenReady. Capture uncaught exceptions through logging, not blocking Electron default dialogs. Validate each IPC with isTrustedSender. Keep dependencies empty except required external native modules; bundle other dependencies.
 
-Main maps app://app to the internal HTTP origin, injects trustworthy non-GET Origin and desktop state, and maps redirects back. Host identity comes only from entry configuration, never requests. Strip untrusted desktop headers; only a desktop entry trusts main-supplied values. Server redirects stay relative; request.url is not a public URL. Static files belong solely to the web host. Utility compile cache is in userData.
+Install the default-deny permission policy immediately after creating the application session. Keep request/check decisions aligned; only verified application main frames receive explicitly allowed capabilities, and device access is denied. External sub-frame navigation and redirects must not launch the system browser. Production build commands normalize Web and desktop build environments; non-watch desktop bundles and the utility use production NODE_ENV. Preserve watch development and runtime logging/diagnostic settings.
+
+Keep the stable application scheme/host/origin and URL check in apps/desktop/src/main/app-url.ts. Do not derive this storage origin from a product rename or APP_ID. Main maps app://app to the internal HTTP origin, injects trustworthy non-GET Origin and desktop state, and maps redirects back. Host identity comes only from entry configuration, never requests. Strip untrusted desktop headers; only a desktop entry trusts main-supplied values. Server redirects stay relative; request.url is not a public URL. Static files belong solely to the web host. Utility compile cache is in userData.
 
 Port-fetch and channel must remain Electron-independent. Test with worker_threads MessageChannel and local ws. Port-fetch sends standalone Uint8Array chunks via structured cloning; do not use ArrayBuffer transfer lists with Electron MessagePortMain or assume zero-copy. Propagate cancellation through request.signal. Channel producers await whenDrained; send neither blocks nor drops. Relay preserves ordering/backpressure/close semantics; use shared CLOSE_CODES.
 
@@ -97,6 +103,10 @@ Mantine adapters derive both palettes from Core semantic tokens in managers/visu
 Use CSS Modules for Core components; do not convert inherited modules just to use Sass. Mantine-specific SCSS may use the injected mantine namespace: mantine.rem() preserves --mantine-scale, breakpoint mixins use config/breakpoints.ts, hover handles pointer capabilities, and rtl is only for cases logical properties cannot express. Colors use semantic variables, never color-scheme mixins or light-dark(). The _mantine.scss tool module emits no CSS and is injected once per compilation by the shared Vite/Vitest CSS configuration; do not @use or @forward it again. Global styles remain CSS. Build integration tests compile temporary fixtures through the actual Sass and PostCSS pipeline and clean them up.
 
 ## Desktop diagnostic organization
+
+Inject failures at a narrow external boundary in isolated tests, preserve the real component/provider path, and assert recovery after removing the fault as well as the failure state. Restore injections in finally; use deterministic gates instead of fixed sleeps for races. The demo storage-failure E2E illustrates this without adding production test switches. See apps/desktop/README.md.
+
+Keep host E2E independent of demo text and controls. Tag demo-specific tests with @demo; test:e2e includes them for template acceptance, while test:e2e:host remains usable after replacing the demo. Preserve IndexedDB transaction-completion and restart coverage.
 
 Keep diagnostic runners/routes under apps/desktop/src/diagnostics/{smoke,bench,e2e}; main/ contains application runtime services. DESKTOP_SMOKE selects the application suite; DESKTOP_SMOKE_LAYOUT explicitly adds the demo fixture matrix and is mandatory for template acceptance. Do not silently skip a requested fixture. Derive utility cache paths only after configuring the selected userData directory.
 

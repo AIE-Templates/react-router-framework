@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 
 import {
   type BenchOptions,
@@ -121,7 +122,12 @@ function runOne(config: RunConfig, repeat: number): Promise<RunResult> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(
       process.execPath,
-      [...RUN_EXEC_ARGV, new URL("./run-one.ts", import.meta.url).pathname, JSON.stringify(config), String(repeat)],
+      [
+        ...RUN_EXEC_ARGV,
+        fileURLToPath(new URL("./run-one.ts", import.meta.url)),
+        JSON.stringify(config),
+        String(repeat),
+      ],
       {
         stdio: ["ignore", "pipe", "inherit"],
       },

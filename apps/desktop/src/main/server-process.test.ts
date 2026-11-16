@@ -4,6 +4,7 @@ import type { PortFetch } from "@repo/port-fetch";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Logger } from "./log.ts";
+import { createWindowRecovery, type RecoveryChoice } from "./recovery.ts";
 import {
   type ChildLike,
   type PortMainLike,
@@ -67,7 +68,10 @@ class FakePort implements PortMainLike {
   }
 }
 
-function harness({ autoSpawn = true, autoReady = true, forkThrowsOnAttempt = new Set<number>() } = {}) {
+function harness(
+  { autoSpawn = true, autoReady = true, forkThrowsOnAttempt = new Set<number>() } = {},
+  onLifecycle?: ServerProcessOptions["onLifecycle"],
+) {
   const children: FakeChild[] = [];
   const ports: FakePort[] = [];
   const logs: string[] = [];
@@ -102,7 +106,10 @@ function harness({ autoSpawn = true, autoReady = true, forkThrowsOnAttempt = new
       clientDir: "client",
       log,
       onRestart: () => restarts.push(Date.now()),
-      onLifecycle: (event) => lifecycle.push(event),
+      onLifecycle: (event) => {
+        lifecycle.push(event);
+        onLifecycle?.(event);
+      },
     },
     deps,
   );
@@ -131,6 +138,7 @@ describe("startServerProcess", () => {
     expect(h.lifecycle.at(-1)).toEqual({ generation: 2, state: "starting", restarted: true });
     await vi.advanceTimersByTimeAsync(RESTART_MAX_MS);
     expect(h.lifecycle.at(-1)).toEqual({ generation: 2, state: "ready", restarted: true });
+    expect(h.lifecycle.some((event) => event.state === "failed")).toBe(false);
     await h.server.shutdown();
     const count = h.lifecycle.length;
     await vi.advanceTimersByTimeAsync(RESTART_MAX_MS);
@@ -143,6 +151,67 @@ describe("startServerProcess", () => {
     expect(h.lifecycle).toContainEqual({ generation: 1, state: "failed", restarted: false });
     expect(h.lifecycle.at(-1)).toEqual({ generation: 2, state: "starting", restarted: true });
     await h.server.shutdown();
+  });
+
+  it.each([false, true])("reports an exit before readiness as a failed startup (spawned: %s)", async (autoSpawn) => {
+    const h = harness({ autoSpawn, autoReady: false });
+    await flush();
+    const ready = h.server.ready();
+    h.children[0].exit(1);
+    await expect(ready).rejects.toThrow("The server exited (code 1)");
+    expect(h.lifecycle.slice(-2)).toEqual([
+      { generation: 1, state: "failed", restarted: false },
+      { generation: 2, state: "starting", restarted: true },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+    h.children[1].exit(1);
+    expect(h.lifecycle.slice(-2)).toEqual([
+      { generation: 2, state: "failed", restarted: true },
+      { generation: 3, state: "starting", restarted: true },
+    ]);
+    await h.server.shutdown();
+  });
+
+  it("preserves the native recovery choice after a failed utility startup and replacement readiness", async () => {
+    const window = { isDestroyed: () => false };
+    const reload = vi.fn<(_window: typeof window, url: string) => void>();
+    let choose!: (choice: RecoveryChoice) => void;
+    const showDialog = vi.fn<() => Promise<RecoveryChoice>>(
+      () => new Promise<RecoveryChoice>((resolve) => (choose = resolve)),
+    );
+    const recovery = createWindowRecovery({
+      current: () => window,
+      isAppUrl: (url) => url.startsWith("app://app/"),
+      reload,
+      cancelReload: vi.fn<() => void>(),
+      close: vi.fn<() => void>(),
+      showDialog,
+    });
+    recovery.track(window, "app://app/");
+    const h = harness({ autoReady: false }, ({ generation, state, restarted }) => {
+      if (state === "starting") recovery.utilityStarting(generation);
+      else if (state === "ready") recovery.utilityReady(generation, { restarted });
+      else recovery.utilityFailed(generation);
+    });
+    try {
+      await flush();
+      h.children[0].exit(1);
+      await flush();
+      expect(showDialog).toHaveBeenCalledExactlyOnceWith(window, "failure");
+      await vi.advanceTimersByTimeAsync(500);
+      h.children[1].ready();
+      await flush();
+      expect(reload).not.toHaveBeenCalled();
+      expect(showDialog).toHaveBeenCalledTimes(1);
+
+      choose("reload");
+      await flush();
+      expect(reload).toHaveBeenCalledExactlyOnceWith(window, "app://app/");
+    } finally {
+      recovery.shutdown();
+      await h.server.shutdown();
+    }
   });
 
   it("starts one process, becomes ready and serves", async () => {
@@ -199,6 +268,7 @@ describe("startServerProcess", () => {
     expect(h.live()).toBe(0);
     expect(h.children[0].posted).toEqual([]);
     expect(h.server.state).toBe("stopped");
+    expect(h.lifecycle.some((event) => event.state === "failed")).toBe(false);
   });
 
   it("kills and retries a child that never becomes ready, and ignores a late ready from it", async () => {

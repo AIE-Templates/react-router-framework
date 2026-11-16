@@ -89,13 +89,23 @@ export async function writePreference(
     return;
   }
   if (!doc) throw new PreferenceError("no-document");
-  // The same limits as the desktop shell, over the preferences this browser already holds.
-  const applied = applyPreference(preferencesFromCookies(doc.cookie), key, value);
-  if (!applied.ok) throw new PreferenceError(applied.reason);
-  const attributes = ["Path=/", "SameSite=Lax", `Max-Age=${value === null ? 0 : COOKIE_MAX_AGE_S}`];
-  if (doc.location?.protocol === "https:") attributes.push("Secure");
-  const cookieValue = value === null ? "" : preferenceCookieValue(value);
-  doc.cookie = [`${PREFERENCE_COOKIE_PREFIX}${key}=${cookieValue}`, ...attributes].join("; ");
+  try {
+    // The same limits as the desktop shell, over the preferences this browser already holds.
+    const applied = applyPreference(preferencesFromCookies(doc.cookie), key, value);
+    if (!applied.ok) throw new PreferenceError(applied.reason);
+    const attributes = ["Path=/", "SameSite=Lax", `Max-Age=${value === null ? 0 : COOKIE_MAX_AGE_S}`];
+    if (doc.location?.protocol === "https:") attributes.push("Secure");
+    const cookieValue = value === null ? "" : preferenceCookieValue(value);
+    doc.cookie = [`${PREFERENCE_COOKIE_PREFIX}${key}=${cookieValue}`, ...attributes].join("; ");
+    // Cookie writes can fail silently or be shadowed by a more specific Path.
+    const stored = preferencesFromCookies(doc.cookie);
+    if (value === null ? Object.hasOwn(stored, key) : stored[key] !== value) {
+      throw new PreferenceError("cookie-not-saved");
+    }
+  } catch (error) {
+    if (error instanceof PreferenceError) throw error;
+    throw new PreferenceError("cookie-unavailable");
+  }
 }
 
 /**

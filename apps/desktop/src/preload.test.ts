@@ -29,7 +29,9 @@ async function load() {
   return wire.expose.mock.calls[0][1];
 }
 
+const isMainFrameDescriptor = Object.getOwnPropertyDescriptor(process, "isMainFrame");
 beforeEach(() => {
+  Object.defineProperty(process, "isMainFrame", { configurable: true, value: true });
   vi.resetModules();
   vi.clearAllMocks();
   vi.stubGlobal("window", { addEventListener: vi.fn<(event: string, callback: () => void) => void>() });
@@ -38,7 +40,11 @@ beforeEach(() => {
     return 1;
   });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (isMainFrameDescriptor) Object.defineProperty(process, "isMainFrame", isMainFrameDescriptor);
+  else Reflect.deleteProperty(process, "isMainFrame");
+});
 
 describe("sandbox preload chrome bridge", () => {
   it("listens before the snapshot handshake, ignores older snapshots and cleans up", async () => {
@@ -125,4 +131,15 @@ describe("sandbox preload preference bridge", () => {
     wire.invoke.mockRejectedValueOnce(new Error("no handler"));
     expect(await bridge.setPref("width", 280)).toEqual({ status: "rejected", reason: "bridge-unavailable" });
   });
+});
+
+it("does not expose the bridge, register teardown or announce paint in a sub-frame", async () => {
+  Object.defineProperty(process, "isMainFrame", { configurable: true, value: false });
+  const paint = vi.fn<() => void>();
+  vi.stubGlobal("requestAnimationFrame", paint);
+  await import("./preload.ts");
+  expect(wire.expose).not.toHaveBeenCalled();
+  expect(window.addEventListener).not.toHaveBeenCalled();
+  expect(paint).not.toHaveBeenCalled();
+  expect(wire.send).not.toHaveBeenCalled();
 });

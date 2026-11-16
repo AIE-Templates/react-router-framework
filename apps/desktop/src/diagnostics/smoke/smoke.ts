@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { storageKey } from "@repo/shared";
 import type { BrowserWindow } from "electron";
 
+import { APP_ORIGIN, isAppUrl } from "~/main/app-url.ts";
 import type { BootProfile } from "~/main/boot-profile.ts";
 import type { Logger } from "~/main/log.ts";
 
@@ -90,7 +91,7 @@ export async function runSmoke(
     `const d = document.documentElement; const until = Date.now() + 5000; while ((d.dataset.hydrated !== "true" || d.dataset.shell !== "desktop") && Date.now() < until) await new Promise((r) => setTimeout(r, 50)); return { href: location.href, origin: location.origin, shell: d.dataset.shell, platform: d.dataset.platform, titlebar: d.dataset.titlebar, chromeMode: d.dataset.chromeMode, fullscreen: d.dataset.fullscreen, hydrated: d.dataset.hydrated === "true" }`,
     (v) =>
       isRecord(v) &&
-      v.origin === "app://app" &&
+      v.origin === APP_ORIGIN &&
       v.shell === "desktop" &&
       typeof v.platform === "string" &&
       (v.chromeMode === "system-decorated" || v.chromeMode === "native-overlay") &&
@@ -296,7 +297,7 @@ export async function runSmoke(
         v.shell === "desktop" &&
         (v.mode === "system-decorated" || v.mode === "native-overlay") &&
         typeof v.href === "string" &&
-        v.href.startsWith("app://app/"),
+        isAppUrl(v.href),
     );
     await checkChrome("AfterReload");
   } catch (error) {
@@ -306,7 +307,7 @@ export async function runSmoke(
   // A missing route replaces the module; the persistent root must reclaim window safety.
   const returnUrl = win.webContents.getURL();
   try {
-    await win.loadURL("app://app/__layout_smoke_missing__");
+    await win.loadURL(`${APP_ORIGIN}/__layout_smoke_missing__`);
     await check(
       "routeErrorSafety",
       `const until = Date.now() + 5000; while ((document.documentElement.dataset.hydrated !== "true" || !document.querySelector("main")?.textContent.includes("404")) && Date.now() < until) await new Promise((r) => setTimeout(r, 25)); const fallback = document.querySelector(".root-chrome-fallback"); const main = document.querySelector("main"); const native = navigator.windowControlsOverlay; const safe = native?.getTitlebarAreaRect(); const top = native?.visible ? safe.y + safe.height : 0; return { error: main?.textContent.includes("404"), shell: document.documentElement.dataset.shell, fallback: !!fallback, height: fallback?.getBoundingClientRect().height, contentTop: main?.getBoundingClientRect().top, safeTop: top };`,

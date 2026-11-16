@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     name: "desktop",
     environment: "node",
-    include: ["src/**/*.test.ts", "e2e/packaged-path.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/**/*.test.ts", "vite.base.config.test.ts", "e2e/packaged-path.test.ts"],
     globalSetup: ["./vitest.global-setup.ts"],
   },
 });

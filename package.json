@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "bench:transport": "pnpm --filter @repo/bench-transport bench --",
-    "build": "pnpm -r build",
-    "build:desktop": "pnpm --filter web build && pnpm --filter desktop build",
+    "build": "node apps/desktop/scripts/build.ts --workspace",
+    "build:desktop": "pnpm --filter desktop build --with-web",
     "dev": "pnpm --filter web dev",
     "dev:desktop": "pnpm --filter desktop dev",
     "dev:server": "pnpm --filter @repo/server dev",

@@ -475,6 +475,35 @@ describe("relay: connection setup", () => {
 });
 
 describe("relay: WebSocket source to a slow port consumer", () => {
+  it("closes a paused socket without waiting for its message handlers, including buffered messages", async () => {
+    const { a, b } = await webSocketPair({ maxPendingBytes: 1 }, { ws: true });
+    let release: (() => void) | undefined;
+    let receivedFirst: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const firstMessage = new Promise<void>((resolve) => (receivedFirst = resolve));
+    b.onMessage(() => {
+      receivedFirst?.();
+      return gate;
+    });
+
+    a.send("first");
+    await firstMessage;
+    a.send("buffered while paused");
+    await tick(20);
+    expect(b.stats().framesReceived).toBe(1);
+
+    const senderClosed = closeInfo(a);
+    const receiverClosed = closeInfo(b);
+    b.close(1000, "cancel stalled work");
+    try {
+      expect(await receiverClosed).toMatchObject({ code: 1000, reason: "cancel stalled work" });
+      expect(await senderClosed).toMatchObject({ code: 1000, reason: "cancel stalled work" });
+      expect(b.stats()).toMatchObject({ framesReceived: 1, heldFrames: 1 });
+    } finally {
+      release?.();
+    }
+  }, 2000);
+
   it("pauses a ws socket so pending bytes stay bounded, and resumes when the consumer catches up", async () => {
     const maxPendingBytes = 64 * 1024;
     const windowBytes = 4096;
