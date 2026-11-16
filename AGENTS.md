@@ -42,6 +42,8 @@ Keep default root revalidation. Optimize only after checking loader dependencies
 
 ## Application infrastructure
 
+Async results belong to the resource, identity and operation that started them. Propagate cancellation and recheck ownership after awaits before publishing state, writing a cache or navigating. Invalidate old owners before clearing caches; checking only whether a component is mounted is insufficient. Do not suppress errors from the current owner. See the async ownership example in apps/web/README.md; reuse existing lifecycle guards before adding abstractions.
+
 Compose global providers in AppRoot. Components read useAppEnvironment from ~/managers/environment/hooks; never infer host identity from user agents, query parameters or data-shell. Do not call the bridge during rendering. Root loader data seeds hydration; confirmed preload identity survives revalidation.
 
 Pages compose BasicShell or NavigationShell with ModuleLayout. Modules do not handle OS branches, native control geometry or window IPC. Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness. CHROME_SAFETY_CSS remains inline and unlayered; the global stylesheet entry rule does not move it into styles/. Environment runtime/context/hooks/dom-props live in managers/environment. AppRoot creates the environment runtime directly; it is not a ManagersRegistry member. The reusable appearance panel lives in components/appearance-settings.tsx.

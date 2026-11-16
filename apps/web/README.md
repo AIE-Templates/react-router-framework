@@ -45,6 +45,46 @@ Core removes starter system-color and background rules from `styles/base.css`: m
 
 ## Core development
 
+### Async result ownership
+
+Cancellation stops unnecessary work where supported. A result also needs an owner check before it can change state, write persistent data or navigate. The owner includes the active account/workspace/resource and a sequence for operations within it. Advancing the sequence on replacement, logout or disposal invalidates old completions; an unmount check alone does not cover a still-mounted component switching resources.
+
+For example, a lifecycle-owned reader can combine cancellation with a sequence:
+
+```ts
+let generation = 0;
+let active: AbortController | undefined;
+
+function invalidate() {
+  ++generation;
+  active?.abort();
+  active = undefined;
+}
+
+async function refresh(resourceId: string) {
+  invalidate();
+  const mine = generation;
+  const controller = new AbortController();
+  active = controller;
+  try {
+    const value = await readResource(resourceId, controller.signal);
+    if (mine !== generation || controller.signal.aborted) return;
+    publish(value);
+  } catch (error) {
+    if (mine !== generation || controller.signal.aborted) return;
+    publishError(error);
+  } finally {
+    if (mine === generation) active = undefined;
+  }
+}
+```
+
+Here `readResource`, `publish` and `publishError` belong to the consumer. Keep these variables inside its lifecycle/controller, not an SSR module singleton. Call `invalidate()` on owner changes and disposal, before clearing owned caches. Recheck after each later await; a check before an asynchronous database open is not sufficient to guard the eventual write. Persistent writes already started need ordering/transaction handling, and aborting a request does not undo a server mutation. Before navigating after a mutation, also check the initiating resource/path and whether a newer navigation is pending.
+
+Extend existing owners when adding data features; no generic cache or account manager is required. Test old-success/new-success and old-failure/new-success ordering with deferred promises, plus disposal or identity replacement while work is pending.
+
+### Shared components
+
 Read environment through `~/managers/environment/hooks`; interactive and drag DOM props come from `~/managers/environment/dom-props`. The runtime is still created by AppRoot. Reuse `~/components/appearance-settings` for appearance UI. Ordinary component tests may use `renderWithProviders` from `~/testing/render`; route-dependent components still need an explicit Router context, and provider lifecycle tests can mount providers directly.
 
 Colors use Core semantic variables; viewport media widths come from `~/config/breakpoints`. CSS Modules use the components layer. `tests/architecture/styles.test.ts` checks real CSS/SCSS and TS/TSX source, including inline CSS strings. The window safety stylesheet stays inline and unlayered in `layouts/app-shell/chrome-safety.ts`.
