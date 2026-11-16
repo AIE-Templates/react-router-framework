@@ -20,6 +20,8 @@
     "package:release": "electron-builder --dir --config electron-builder.release.yml",
     "start": "electron .",
     "test:e2e": "playwright test",
+    "test:e2e:demo": "playwright test --grep @demo",
+    "test:e2e:host": "playwright test --grep-invert @demo",
     "typecheck": "tsc"
   },
   "dependencies": {},

@@ -156,13 +156,16 @@ const bridge: DesktopBridge = {
     value === null ? { status: "rejected", reason: "invalid-value" } : updatePref(key, value),
   removePref: (key) => updatePref(key, null),
 };
-contextBridge.exposeInMainWorld("desktop", bridge);
-window.addEventListener("unload", () => {
-  listeners.clear();
-  stop();
-});
+// A future sub-frame preload configuration must not expose capabilities or signal a main-frame paint.
+if (process.isMainFrame) {
+  contextBridge.exposeInMainWorld("desktop", bridge);
+  window.addEventListener("unload", () => {
+    listeners.clear();
+    stop();
+  });
 
-// The first frame remains independent of bootstrap and the optional state enhancement.
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => ipcRenderer.send("desktop:first-paint"));
-});
+  // The first frame remains independent of bootstrap and the optional state enhancement.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => ipcRenderer.send("desktop:first-paint"));
+  });
+}

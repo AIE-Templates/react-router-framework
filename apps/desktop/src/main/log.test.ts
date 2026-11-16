@@ -1,0 +1,27 @@
+import { afterEach, expect, it, vi } from "vitest";
+
+import { createLogger } from "./log.ts";
+
+afterEach(() => vi.restoreAllMocks());
+
+it("retains error diagnostics without leaking URL credentials or queries through message and stack", () => {
+  const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  const error = new TypeError("fetch failed: https://user:password@example.test/api?token=secret#private");
+  error.stack = `${error.name}: ${error.message}\n    at fetch (app://app/api.js?session=secret:1:2)\n    at retry`;
+  createLogger().error({ err: error, status: 502 }, "request failed");
+  const serialized = String(write.mock.calls[0][0]);
+  const output = JSON.parse(serialized);
+  expect(output).toMatchObject({
+    level: "error",
+    status: 502,
+    msg: "request failed",
+    err: {
+      name: "TypeError",
+      message: "fetch failed: https://example.test/api",
+      stack: expect.stringContaining("at retry"),
+    },
+  });
+  for (const privateValue of ["password", "token=", "session=", "secret", "#private"])
+    expect(serialized).not.toContain(privateValue);
+  expect(error.message).toContain("token=secret");
+});

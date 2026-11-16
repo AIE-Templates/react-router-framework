@@ -39,6 +39,12 @@ test("application iframes load but external redirects never open the system brow
     // This fixture's CSP permits the one external target so Electron, rather than CSP, blocks it.
     await page.goto("app://app/__e2e/navigation/page");
     await expect(page.frameLocator("#navigation-fixture").getByText("Application frame")).toBeVisible();
+    expect(
+      await page
+        .frameLocator("#navigation-fixture")
+        .locator("html")
+        .evaluate(() => typeof window.desktop),
+    ).toBe("undefined");
     await page.locator("#navigation-fixture").evaluate((frame) => {
       if (frame instanceof HTMLIFrameElement) frame.src = "/__e2e/navigation/redirect";
     });

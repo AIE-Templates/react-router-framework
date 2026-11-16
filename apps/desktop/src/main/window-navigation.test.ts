@@ -4,13 +4,13 @@ import { session } from "electron";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const native = vi.hoisted(() => ({
-  createWindow: vi.fn<() => object>(),
+  createWindow: vi.fn<(...args: unknown[]) => object>(),
   openExternal: vi.fn<(_url: string) => Promise<void>>(() => Promise.resolve()),
   ipc: { on: vi.fn<(...args: unknown[]) => void>(), off: vi.fn<(...args: unknown[]) => void>() },
 }));
 vi.mock("electron", () => ({
-  BrowserWindow: function BrowserWindow() {
-    return native.createWindow();
+  BrowserWindow: function BrowserWindow(options: unknown) {
+    return native.createWindow(options);
   },
   session: { defaultSession: {} },
   shell: { openExternal: native.openExternal },
@@ -20,8 +20,11 @@ vi.mock("electron", () => ({
 import { createBootProfile } from "./boot-profile.ts";
 import { createMainWindow } from "./window.ts";
 
-function setup() {
-  const contents = Object.assign(new EventEmitter(), { setWindowOpenHandler: vi.fn<(...args: unknown[]) => void>() });
+function setup(logRendererConsole = false) {
+  const contents = Object.assign(new EventEmitter(), {
+    mainFrame: {},
+    setWindowOpenHandler: vi.fn<(...args: unknown[]) => void>(),
+  });
   const win = Object.assign(new EventEmitter(), { webContents: contents });
   native.createWindow.mockReturnValue(win);
   const log = {
@@ -36,6 +39,7 @@ function setup() {
     preloadPath: "preload.cjs",
     appVersion: "1",
     log,
+    logRendererConsole,
     profile: createBootProfile(false),
   });
   return { contents, log };
@@ -98,4 +102,29 @@ describe("window navigation confinement", () => {
     expect(details.preventDefault).toHaveBeenCalledOnce();
     expect(native.openExternal).not.toHaveBeenCalled();
   });
+});
+
+it("explicitly disables sub-frame Node integration and webviews", () => {
+  setup();
+  expect(native.createWindow).toHaveBeenCalledWith(
+    expect.objectContaining({
+      webPreferences: expect.objectContaining({ nodeIntegrationInSubFrames: false, webviewTag: false }),
+    }),
+  );
+});
+
+it("logs only main-frame console messages and redacts source and message URLs", () => {
+  const { contents, log } = setup(true);
+  const event = {
+    frame: contents.mainFrame,
+    level: "error",
+    sourceId: "app://app/entry.js?token=secret#private",
+    message: "Failed https://user:password@example.test/api?token=secret",
+  };
+  contents.emit("console-message", event);
+  contents.emit("console-message", { ...event, frame: {} });
+  expect(log.info).toHaveBeenCalledExactlyOnceWith(
+    { level: "error", source: "app://app/entry.js" },
+    "renderer: Failed https://example.test/api",
+  );
 });

@@ -1,8 +1,7 @@
 import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError } from "@repo/port-fetch";
 import { DESKTOP_HEADERS, type DesktopRequest, isDesktopHeader } from "@repo/shared";
 
-/** The origin pages run under. `standard` scheme, so `location.origin` is exactly this. */
-export const APP_ORIGIN = "app://app";
+import { APP_ORIGIN, isAppUrl } from "./app-url.ts";
 
 /**
  * The origin the server sees instead. `app://` is not a special scheme for the URL parser, so its
@@ -14,7 +13,7 @@ export const INTERNAL_ORIGIN = "http://app.desktop";
 /** `app://app/path?query` → `<internalOrigin>/path?query`; `null` for any other host. */
 export function toInternalUrl(appUrl: string, internalOrigin = INTERNAL_ORIGIN): string | null {
   const url = new URL(appUrl);
-  if (url.protocol !== "app:" || url.host !== "app") return null;
+  if (!isAppUrl(appUrl)) return null;
   return internalOrigin + url.pathname + url.search;
 }
 

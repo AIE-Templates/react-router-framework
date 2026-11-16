@@ -1,9 +1,11 @@
 import { DESKTOP_BOOTSTRAP_ARGUMENT, type DesktopBootstrap } from "@repo/shared";
 import { BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, ipcMain, type Session, shell } from "electron";
 
+import { isAppUrl } from "./app-url.ts";
 import type { BootProfile } from "./boot-profile.ts";
 import { chromeWindowOptions, type ChromePolicy } from "./chrome-policy.ts";
 import { installWindowChrome } from "./chrome.ts";
+import { redactLogUrls, safeUrl } from "./log-url.ts";
 import type { Logger } from "./log.ts";
 import type { VisualThemeStore } from "./visual-theme.ts";
 
@@ -61,31 +63,12 @@ export function createWindowKeeper<W extends KeptWindow>(create: () => W): Windo
   };
 }
 
-export function isAppUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "app:" && parsed.host === "app";
-  } catch {
-    return false;
-  }
-}
-
 /** URL schemes that may be handed to an external application. */
 export function isExternalUrl(url: string): boolean {
   try {
     return EXTERNAL_SCHEMES.has(new URL(url).protocol);
   } catch {
     return false;
-  }
-}
-
-/** The scheme, host and path of `url` for logs; never the query string (AGENTS: it can carry tokens). */
-export function safePath(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
-  } catch {
-    return "(invalid URL)";
   }
 }
 
@@ -98,7 +81,7 @@ export function openExternal(url: string, log: Logger): void {
     return;
   }
   if (!EXTERNAL_SCHEMES.has(protocol)) {
-    log.warn({ path: safePath(url) }, "blocked external URL with a disallowed scheme");
+    log.warn({ path: safeUrl(url) }, "blocked external URL with a disallowed scheme");
     return;
   }
   void shell.openExternal(url);
@@ -139,6 +122,8 @@ export function createMainWindow({
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      webviewTag: false,
       additionalArguments: [
         `--desktop-app-version=${appVersion}`,
         ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify(chrome.bootstrap)}`] : []),
@@ -186,7 +171,7 @@ export function createMainWindow({
   const confineSubframe = (details: { preventDefault(): void; url: string; isMainFrame: boolean }) => {
     if (!details.isMainFrame && !isAppUrl(details.url)) {
       details.preventDefault();
-      log.warn({ path: safePath(details.url) }, "blocked sub-frame navigation");
+      log.warn({ path: safeUrl(details.url) }, "blocked sub-frame navigation");
     }
   };
   win.webContents.on("will-navigate", confine);
@@ -203,9 +188,10 @@ export function createMainWindow({
     if (details.reason !== "clean-exit" && details.reason !== "killed") log.error({ details }, "renderer process gone");
   });
   if (logRendererConsole) {
-    win.webContents.on("console-message", (event) =>
-      log.info({ level: event.level, source: event.sourceId }, `renderer: ${event.message}`),
-    );
+    win.webContents.on("console-message", (event) => {
+      if (event.frame !== win.webContents.mainFrame) return;
+      log.info({ level: event.level, source: safeUrl(event.sourceId) }, `renderer: ${redactLogUrls(event.message)}`);
+    });
   }
   return win;
 }

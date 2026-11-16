@@ -76,7 +76,7 @@ apps/desktop uses Vite bundles and electron-builder. Main/preload are CommonJS; 
 
 Install the default-deny permission policy immediately after creating the application session. Keep request/check decisions aligned; only verified application main frames receive explicitly allowed capabilities, and device access is denied. External sub-frame navigation and redirects must not launch the system browser. Production build commands normalize Web and desktop build environments; non-watch desktop bundles and the utility use production NODE_ENV. Preserve watch development and runtime logging/diagnostic settings.
 
-Main maps app://app to the internal HTTP origin, injects trustworthy non-GET Origin and desktop state, and maps redirects back. Host identity comes only from entry configuration, never requests. Strip untrusted desktop headers; only a desktop entry trusts main-supplied values. Server redirects stay relative; request.url is not a public URL. Static files belong solely to the web host. Utility compile cache is in userData.
+Keep the stable application scheme/host/origin and URL check in apps/desktop/src/main/app-url.ts. Do not derive this storage origin from a product rename or APP_ID. Main maps app://app to the internal HTTP origin, injects trustworthy non-GET Origin and desktop state, and maps redirects back. Host identity comes only from entry configuration, never requests. Strip untrusted desktop headers; only a desktop entry trusts main-supplied values. Server redirects stay relative; request.url is not a public URL. Static files belong solely to the web host. Utility compile cache is in userData.
 
 Port-fetch and channel must remain Electron-independent. Test with worker_threads MessageChannel and local ws. Port-fetch sends standalone Uint8Array chunks via structured cloning; do not use ArrayBuffer transfer lists with Electron MessagePortMain or assume zero-copy. Propagate cancellation through request.signal. Channel producers await whenDrained; send neither blocks nor drops. Relay preserves ordering/backpressure/close semantics; use shared CLOSE_CODES.
 
@@ -93,6 +93,8 @@ VisualManager owns preferences, storage and system resolution. Use useVisualStat
 Application identity is defined once in @repo/shared app-identity.ts. Choose APP_ID when creating a project; config/storage.ts derives keys through storageKey(). Color tokens use --app-color-* and are the source for Tailwind aliases and UI-library adapters. BREAKPOINTS in config/breakpoints.ts owns viewport media-query widths in em. CSS naming and media-query source guards run with the Web tests; reviewed exceptions require a same-line naming-allow: reason comment.
 
 ## Desktop diagnostic organization
+
+Keep host E2E independent of demo text and controls. Tag demo-specific tests with @demo; test:e2e includes them for template acceptance, while test:e2e:host remains usable after replacing the demo. Preserve IndexedDB transaction-completion and restart coverage.
 
 Keep diagnostic runners/routes under apps/desktop/src/diagnostics/{smoke,bench,e2e}; main/ contains application runtime services. DESKTOP_SMOKE selects the application suite; DESKTOP_SMOKE_LAYOUT explicitly adds the demo fixture matrix and is mandatory for template acceptance. Do not silently skip a requested fixture. Derive utility cache paths only after configuring the selected userData directory.
 

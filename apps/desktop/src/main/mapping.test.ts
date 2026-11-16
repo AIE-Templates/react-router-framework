@@ -1,8 +1,8 @@
 import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError } from "@repo/port-fetch";
 import { describe, expect, it } from "vitest";
 
+import { APP_ORIGIN } from "./app-url.ts";
 import {
-  APP_ORIGIN,
   failureStatus,
   INTERNAL_ORIGIN,
   shapeRequestHeaders,

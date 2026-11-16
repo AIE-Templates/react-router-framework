@@ -1,3 +1,5 @@
+import { redactLogUrls } from "./log-url.ts";
+
 /**
  * The main process log: JSON lines on stdout, like the server's pino output, without pino itself
  * (the main entry is a CommonJS bundle and must stay small). The utility process logs through
@@ -32,7 +34,10 @@ export function createLogger(minimum: LogLevel = "info"): Logger {
 function serializable(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(data)) {
-    out[key] = value instanceof Error ? { name: value.name, message: value.message, stack: value.stack } : value;
+    out[key] =
+      value instanceof Error
+        ? { name: value.name, message: redactLogUrls(value.message), stack: value.stack && redactLogUrls(value.stack) }
+        : value;
   }
   return out;
 }

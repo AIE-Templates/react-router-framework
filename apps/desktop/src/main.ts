@@ -6,6 +6,7 @@ import { app, type BrowserWindow, dialog, nativeTheme, protocol, session } from 
 
 import { benchConfigFromEnv, runBench } from "./diagnostics/bench/bench.ts";
 import { runSmoke } from "./diagnostics/smoke/smoke.ts";
+import { APP_ORIGIN, APP_SCHEME, isAppUrl } from "./main/app-url.ts";
 import { createBootProfile } from "./main/boot-profile.ts";
 import { resolveChromePolicy } from "./main/chrome-policy.ts";
 import { COOKIE_JAR_ORIGIN, createCookieJar, flushForQuit } from "./main/cookie-jar.ts";
@@ -14,13 +15,13 @@ import { createLogger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
 import { createPrefsStore, installPrefsIpc } from "./main/prefs.ts";
-import { APP_SCHEME, registerAppProtocol } from "./main/protocol.ts";
+import { registerAppProtocol } from "./main/protocol.ts";
 import { createWindowRecovery } from "./main/recovery.ts";
 import { resolveRunModes } from "./main/run-modes.ts";
 import { startServerProcess } from "./main/server-process.ts";
 import { configureUserData } from "./main/user-data.ts";
 import { createVisualThemeStore } from "./main/visual-theme.ts";
-import { createMainWindow, createWindowKeeper, isAppUrl, isTrustedSender } from "./main/window.ts";
+import { createMainWindow, createWindowKeeper, isTrustedSender } from "./main/window.ts";
 import { portAckCoalesce } from "./port-options.ts";
 
 // The main process must never die of an uncaught exception: Electron shows a blocking dialog for
@@ -244,7 +245,7 @@ async function main(): Promise<void> {
     const opened = windows!.open();
     if (opened.created) {
       const win = opened.window;
-      recovery.track(win, `${APP_SCHEME}://app/`);
+      recovery.track(win, `${APP_ORIGIN}/`);
       win.webContents.on("did-finish-load", () => recovery.documentLoaded(win, win.webContents.getURL()));
       win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) =>
         recovery.sameDocumentNavigated(win, url, isMainFrame),
@@ -259,7 +260,7 @@ async function main(): Promise<void> {
     }
     return {
       window: opened.window,
-      loaded: opened.created ? opened.window.loadURL(`${APP_SCHEME}://app/`) : undefined,
+      loaded: opened.created ? opened.window.loadURL(`${APP_ORIGIN}/`) : undefined,
     };
   };
   profile.mark("navigation-start");

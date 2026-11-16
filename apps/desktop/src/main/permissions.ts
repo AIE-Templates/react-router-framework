@@ -1,7 +1,8 @@
 import type { Session, WebContents } from "electron";
 
+import { isAppUrl } from "./app-url.ts";
 import type { Logger } from "./log.ts";
-import { isAppUrl, isExternalUrl } from "./window.ts";
+import { isExternalUrl } from "./window.ts";
 
 interface PermissionSource {
   isMainFrame: boolean;
