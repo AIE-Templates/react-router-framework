@@ -42,6 +42,18 @@ External sub-frame navigation and redirects are blocked without opening the syst
 
 ## Tests and measurement
 
+### Controlled failures
+
+`e2e/demo-visual.spec.ts` includes a storage-failure recovery example, tagged `@demo`. It fails only the appearance key's `Storage.setItem` after startup, drives the real controls, checks the warning and continued editing, then restores storage and verifies the next command saves the unsaved preferences across a reload. The original method is restored in `finally`; each test has isolated user data. Run it against both targets after building/packaging:
+
+```sh
+pnpm --filter desktop test:e2e demo-visual.spec.ts --grep 'failed appearance save'
+```
+
+Use the same approach for derived application failures: intercept a specific request or storage/bridge boundary while keeping production components and providers intact. Assert the user-visible failure, absence of incorrect state changes, successful recovery and unexpected page errors. Use deferred gates for delayed/out-of-order responses; arbitrary sleeps are not evidence of correct ordering. Do not add production fault switches or make host tests depend on disposable demo UI. Network interception validates the client's response to a constructed failure, not the real service's reasons for returning it. This storage test covers localStorage persistence, not native mirror failures or disk durability.
+
+### Running checks
+
 Build/package the test profile before running both Playwright targets. `pnpm --filter desktop test:e2e --project unpackaged` needs only build:desktop. Each test uses separate user data and closes its processes. Test endpoints require DESKTOP_E2E=1 and are unavailable in release-profile. These E2E tests are separate from workspace unit tests.
 
 DESKTOP_SMOKE emits SMOKE_RESULT and exits with a status. DESKTOP_SMOKE_SCREENSHOT writes a PNG. Its SSE test verifies the transport path, not a business streaming API. DESKTOP_BOOT_PROFILE emits stage timings; compare repeated same-environment medians. Utility uses NODE_COMPILE_CACHE in userData. Release cookie encryption may prompt macOS for access to the application's Safe Storage keychain item.

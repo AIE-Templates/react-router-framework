@@ -38,6 +38,10 @@ SPA builds reject non-root server loaders, server actions/middleware/headers and
 
 ## Application infrastructure
 
+Keep default root revalidation. Optimize only after checking loader dependencies and explicit invalidation; an in-flight navigation can have different current/next URLs even during revalidate(). Preference writes must still refresh loaders, including during navigation. See apps/web/README.md for dependency optimization, route discovery and the preference integration test.
+
+Async results belong to the resource, identity and operation that started them. Propagate cancellation and recheck ownership after awaits before publishing state, writing a cache or navigating. Invalidate old owners before clearing caches; checking only whether a component is mounted is insufficient. Do not suppress errors from the current owner. See the async ownership example in apps/web/README.md; reuse existing lifecycle guards before adding abstractions.
+
 Compose global providers in AppRoot. Components read useAppEnvironment from ~/managers/environment/hooks; never infer host identity from user agents, query parameters or data-shell. Do not call the bridge during rendering. Root loader data seeds hydration; confirmed preload identity survives revalidation.
 
 Pages compose BasicShell or NavigationShell with ModuleLayout. Modules do not handle OS branches, native control geometry or window IPC. Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness. CHROME_SAFETY_CSS remains inline and unlayered; the global stylesheet entry rule does not move it into styles/. Environment runtime/context/hooks/dom-props live in managers/environment. AppRoot creates the environment runtime directly; it is not a ManagersRegistry member. The reusable appearance panel lives in components/appearance-settings.tsx.
@@ -93,6 +97,8 @@ VisualManager owns preferences, storage and system resolution. Use useVisualStat
 Application identity is defined once in @repo/shared app-identity.ts. Choose APP_ID when creating a project; config/storage.ts derives keys through storageKey(). Color tokens use --app-color-* and are the source for Tailwind aliases and UI-library adapters. BREAKPOINTS in config/breakpoints.ts owns viewport media-query widths in em. CSS naming and media-query source guards run with the Web tests; reviewed exceptions require a same-line naming-allow: reason comment.
 
 ## Desktop diagnostic organization
+
+Inject failures at a narrow external boundary in isolated tests, preserve the real component/provider path, and assert recovery after removing the fault as well as the failure state. Restore injections in finally; use deterministic gates instead of fixed sleeps for races. The demo storage-failure E2E illustrates this without adding production test switches. See apps/desktop/README.md.
 
 Keep host E2E independent of demo text and controls. Tag demo-specific tests with @demo; test:e2e includes them for template acceptance, while test:e2e:host remains usable after replacing the demo. Preserve IndexedDB transaction-completion and restart coverage.
 

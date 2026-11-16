@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Page } from "@playwright/test";
+import { storageKey } from "@repo/shared";
 
 import { expect, test, waitForApp } from "./desktop.ts";
 
@@ -16,6 +17,60 @@ async function choose(page: Page, label: string, value: string, option: string) 
 
 // These controls and layout expectations belong to the disposable demo.
 test.describe("demo appearance", { tag: "@demo" }, () => {
+  test("a failed appearance save leaves controls usable and the next command recovers persistence", async ({
+    desktop: { page },
+  }) => {
+    const errors: string[] = [];
+    const onError = (error: Error) => errors.push(error.message);
+    page.on("pageerror", onError);
+    const preferenceKey = storageKey("visual-preferences");
+    const original = await page.evaluateHandle(() => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Retained only for restoration on the same prototype.
+      return Storage.prototype.setItem;
+    });
+    const notice = page.getByText("Appearance is available for this session; settings could not be saved.");
+    try {
+      await choose(page, "Color scheme", "light", "Light");
+      const saved = await page.evaluate((key) => localStorage.getItem(key), preferenceKey);
+      expect(saved).not.toBeNull();
+      // Fail only this persistence boundary, after startup; use the real controls and manager.
+      await page.evaluate((key) => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- Called below with the original Storage receiver.
+        const setItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (name, value) {
+          if (this === localStorage && name === key)
+            throw new DOMException("Injected quota failure", "QuotaExceededError");
+          setItem.call(this, name, value);
+        };
+      }, preferenceKey);
+      try {
+        await choose(page, "Color scheme", "dark", "Dark");
+        await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+        await expect(notice).toBeVisible();
+        expect(await page.evaluate((key) => localStorage.getItem(key), preferenceKey)).toBe(saved);
+        const draft = page.getByRole("textbox", { name: "Module draft" });
+        await draft.fill("Still usable after a failed save");
+        await expect(draft).toHaveValue("Still usable after a failed save");
+      } finally {
+        await page.evaluate((setItem) => {
+          Storage.prototype.setItem = setItem;
+        }, original);
+      }
+      // A new command must save both the unsaved color scheme and the new direction.
+      await choose(page, "Direction", "rtl", "RTL");
+      await expect(notice).toBeHidden();
+      await page.reload();
+      await waitForApp(page);
+      await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+      await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+      await expect(notice).toBeHidden();
+      expect(errors).toEqual([]);
+    } finally {
+      await original.dispose();
+      page.off("pageerror", onError);
+    }
+  });
+
   for (const scenario of [
     { system: "dark", preference: "light", option: "Light", background: "rgb(250, 250, 250)" },
     { system: "light", preference: "dark", option: "Dark", background: "rgb(23, 25, 29)" },
