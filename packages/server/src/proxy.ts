@@ -14,6 +14,14 @@ export function withForwardedOrigin(request: Request): Request {
     url.port = "";
     url.host = host;
   }
-  // Passing the request as init keeps its method, headers, streamed body and abort signal.
-  return new Request(url, request);
+  // The Node adapter's request is not a native Request: passing it as init invokes native
+  // getters (such as duplex) with an incompatible receiver. Copy only the fields we need.
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  return new Request(url, {
+    method: request.method,
+    headers: request.headers,
+    body: hasBody ? request.body : null,
+    signal: request.signal,
+    ...(hasBody ? { duplex: "half" } : {}),
+  });
 }

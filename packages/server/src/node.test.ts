@@ -42,6 +42,38 @@ describe("startServer", () => {
     expect((await post({ "x-forwarded-proto": "https", "x-forwarded-host": "public.example" })).status).toBe(404);
   });
 
+  it.each(["GET", "POST"])("preserves a proxied %s through the Node adapter", async (method) => {
+    server = await startServer(
+      {
+        fetch: async (request) =>
+          Response.json({
+            url: request.url,
+            method: request.method,
+            cookie: request.headers.get("cookie"),
+            body: await request.text(),
+          }),
+      },
+      { ...options, trustProxy: true },
+    );
+    const response = await fetch(`${server.url}/form?step=2`, {
+      method,
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "public.example",
+        cookie: "session=test",
+      },
+      ...(method === "POST" ? { body: "form payload" } : {}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      url: "https://public.example/form?step=2",
+      method,
+      cookie: "session=test",
+      body: method === "POST" ? "form payload" : "",
+    });
+  });
+
   it("rejects an invalid port", async () => {
     await expect(startServer(app, { ...options, port: "abc" })).rejects.toThrow('Invalid PORT "abc"');
   });
