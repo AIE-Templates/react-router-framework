@@ -24,9 +24,26 @@ const COOKIE_PATH = /^\/(?:__e2e\/[\w/-]{0,64})?$/;
  *   path. HttpOnly, so the tests can tell header cookies from script cookies.
  * - `GET /__e2e/cookies` and `GET /__e2e/cookies/<anything>`: the `e2e-*` cookies the request
  *   carried, as the server received them (the second for path-scoped cookies).
+ * - `GET /__e2e/navigation/page`: a parent document whose CSP lets the fixed redirect reach the native guard.
+ * - `GET /__e2e/navigation/frame`: an application-owned iframe document.
+ * - `GET /__e2e/navigation/redirect`: a redirect to a fixed external test URL for navigation confinement.
  */
 export function e2eRoutes() {
   return new Hono()
+    .get("/navigation/page", (c) =>
+      c.html(
+        '<!doctype html><title>Navigation confinement</title><iframe id="navigation-fixture" src="/__e2e/navigation/frame" title="Application frame"></iframe>',
+        200,
+        {
+          // The app's ordinary CSP blocks external frames before Electron sees a redirect.
+          // Only this test document permits the fixture target, so the native guard is exercised.
+          "Content-Security-Policy":
+            "default-src 'none'; frame-src 'self' https://example.test; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        },
+      ),
+    )
+    .get("/navigation/frame", (c) => c.html("<!doctype html><title>Navigation fixture</title><p>Application frame</p>"))
+    .get("/navigation/redirect", (c) => c.redirect("https://example.test/e2e-redirect"))
     .get("/cookies", (c) => c.json({ cookies: parseCookies(c.req.header("cookie")) }))
     .get("/cookies/*", (c) => c.json({ cookies: parseCookies(c.req.header("cookie")) }))
     .post("/cookies", async (c) => {

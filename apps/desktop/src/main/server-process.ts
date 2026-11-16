@@ -33,7 +33,7 @@ export interface ServerProcessOptions {
    * caller sets to match.
    */
   ackCoalesce?: AckCoalesceOptions | false;
-  /** Extra variables for the utility's environment, over the inherited ones. */
+  /** Extra variables over the inherited ones. NODE_ENV stays production for the built web host. */
   env?: Record<string, string>;
   /** Lifecycle facts for the window recovery coordinator; includes the restart backoff period. */
   onLifecycle?: (event: { generation: number; state: "starting" | "ready" | "failed"; restarted: boolean }) => void;
@@ -88,7 +88,6 @@ export const RESTART_MAX_MS = 5_000;
 function electronDeps(options: ServerProcessOptions): ServerProcessDeps {
   const env = (): Record<string, string> => ({
     ...stringEnv(process.env),
-    NODE_ENV: process.env.NODE_ENV ?? "production",
     ...(options.compileCacheDir ? { NODE_COMPILE_CACHE: options.compileCacheDir } : {}),
     CLIENT_DIR: options.clientDir,
     WEB_SHELL: "desktop",
@@ -101,6 +100,9 @@ function electronDeps(options: ServerProcessOptions): ServerProcessDeps {
         }
       : {}),
     ...options.env,
+    // This process hosts the built web app, including when Electron itself is unpackaged.
+    // Runtime reads such as the server logger's environment destructuring also need production.
+    NODE_ENV: "production",
   });
   const ackCoalesce = options.ackCoalesce ?? PORT_ACK_COALESCE;
   return {

@@ -81,10 +81,12 @@ export async function launch(target: Target, userDataSuffix: string): Promise<La
     env[name] = value;
   }
   Object.assign(env, { DESKTOP_E2E: "1", DESKTOP_USER_DATA_SUFFIX: userDataSuffix, NODE_ENV: "production" });
+  // Exercise the real permission policy without accessing the user's camera or microphone.
+  const mediaArgs = ["--use-fake-device-for-media-stream"];
   const app = await electron.launch(
     target === "unpackaged"
-      ? { executablePath: electronBinary(), args: ["."], cwd: desktopDir, env }
-      : { executablePath: packagedBinary(), args: [], env },
+      ? { executablePath: electronBinary(), args: [".", ...mediaArgs], cwd: desktopDir, env }
+      : { executablePath: packagedBinary(), args: mediaArgs, env },
   );
   const pid = app.process().pid!;
   const page = await app.firstWindow();

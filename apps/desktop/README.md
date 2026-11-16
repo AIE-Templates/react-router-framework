@@ -18,6 +18,8 @@ pnpm --filter desktop test:e2e
 
 Development uses a separate Router server on port 5174 (DESKTOP_DEV_PORT overrides it), preserves app:// mapping, watches bundles, restarts after main/utility changes and reloads after preload changes. Development user data is isolated. Root packaging commands build first; package-local scripts package existing artifacts. Test-profile permits the Playwright Electron driver. Release-profile disables inspector-related Fuses and must be checked with its built-in smoke path.
 
+Root `build` and `build:desktop` normalize the build environment to production and clear inherited desktop development flags before building Web and desktop code. Non-watch desktop bundles contain production dependencies and no development server URL; the utility also runs with `NODE_ENV=production`. Use `dev:desktop` for watch mode. `LOG_LEVEL`, storage options and permitted diagnostic flags remain runtime settings. Package-local `build` consumes the existing Web build; use root `build:desktop` before distribution.
+
 Before distributing a derived application, replace its name, app ID, product name, protocol identity, icons, installer metadata and signing/distribution settings in package/build configuration. Configured targets are dmg/zip, NSIS and deb/rpm; rpmbuild is needed for rpm. Automatic updates, signing and notarization are not implied by these targets. Native dependencies require Electron ABI/rebuild validation.
 
 ## Window chrome and recovery
@@ -35,6 +37,8 @@ Server cookies round-trip through main's session cookie jar at the internal HTTP
 Small display preferences use `~/platform/electron/preferences`: server getPreference; component useSetPreference; non-React writePreference. Desktop writes persist atomically in prefs.json and reach SSR in x-desktop-prefs. Web uses names derived from `PREFERENCE_COOKIE_PREFIX = cookieName("pref_")` in `@repo/shared` (default `framework-app_pref_`). Old `pref-*` cookies are intentionally ignored; visual preference storage and visual cookie names retain their existing derived values. Shared limits apply to both transports. Preferences are user-controlled display settings, never authorization or credentials.
 
 Every IPC validates the registered window, current main frame and app URL. Navigation stays on app://app; allowed external links open in the system browser. No Node integration is available to pages. Logs exclude secrets and complete cookie/preference payloads.
+
+External sub-frame navigation and redirects are blocked without opening the system browser; same-origin sub-frames remain allowed. The application session denies permissions by default. Only verified application main frames may use sanitized clipboard writes and fullscreen; external-opening permission also validates an explicit http/https/mailto target. Device, notification and media permissions are denied. Extend `src/main/permissions.ts` with permission-specific checks when a product needs more capabilities; macOS media access also requires usage descriptions and OS consent. See HOST-10 in the host specification.
 
 ## Tests and measurement
 

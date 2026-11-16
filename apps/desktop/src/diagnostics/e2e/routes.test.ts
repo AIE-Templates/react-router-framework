@@ -21,6 +21,21 @@ function post(body: unknown, headers: Record<string, string> = {}) {
 }
 
 describe("e2eRoutes", () => {
+  it("allows only the navigation fixture target through its parent CSP", async () => {
+    const app = createApp();
+    const page = await app.request(`${origin}/__e2e/navigation/page`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; frame-src 'self' https://example.test; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    );
+    expect(await page.text()).toContain('src="/__e2e/navigation/frame"');
+    const redirect = await app.request(`${origin}/__e2e/navigation/redirect`);
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("location")).toBe("https://example.test/e2e-redirect");
+    const frame = await app.request(`${origin}/__e2e/navigation/frame`);
+    expect(frame.headers.has("content-security-policy")).toBe(false);
+  });
+
   it("sets a persistent cookie with Max-Age and a session cookie without", async () => {
     const app = createApp();
     const persistent = await app.fetch(post({ name: "e2e-header-persistent", value: "p1", maxAge: 3600 }));

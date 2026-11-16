@@ -19,15 +19,18 @@ export interface EntryOptions {
 /**
  * One Vite lib build per entry, the way the Electron Forge Vite template does it: output in
  * `.vite/build`, minified for a real build, in watch mode while `scripts/dev.ts` runs
- * (`DESKTOP_WATCH=1`). The development server address is baked in as `DESKTOP_DEV_SERVER_URL`;
- * it is `undefined` in a production build.
+ * (`DESKTOP_WATCH=1`). Only watch builds embed the development server address; ordinary library
+ * builds also replace NODE_ENV so dependencies such as React select their production branches.
  */
 export function entryConfig({ entry, fileName, format }: EntryOptions): UserConfig {
   const watch = process.env.DESKTOP_WATCH === "1";
-  const devServerUrl = process.env.DESKTOP_DEV_SERVER_URL;
+  const devServerUrl = watch ? process.env.DESKTOP_DEV_SERVER_URL : undefined;
   return {
     publicDir: false,
-    define: { DESKTOP_DEV_SERVER_URL: devServerUrl ? JSON.stringify(devServerUrl) : "undefined" },
+    define: {
+      DESKTOP_DEV_SERVER_URL: devServerUrl ? JSON.stringify(devServerUrl) : "undefined",
+      ...(!watch ? { "process.env.NODE_ENV": JSON.stringify("production") } : {}),
+    },
     resolve: {
       // Workspace packages from source; Node's own export conditions, not the browser's, so
       // packages such as react-dom/server resolve to their Node builds.

@@ -26,7 +26,7 @@ Adapt MessagePortMain event shapes and start semantics, transferring ports only 
 
 Host identity comes from `createWebApp({ shell })`; development uses WEB_SHELL configuration. Stable shell facts and trusted per-request window/preferences data are distinct. SSR supplies root seeds; SPA reconnects through preload according to the layout lifecycle.
 
-The renderer uses contextIsolation, sandbox and no nodeIntegration. The application has a dedicated persistent session. Navigation and redirects stay on app://app. New windows are denied; external http/https/mailto links go to the system browser. IPC verifies the registered BrowserWindow, its current webContents, current main frame, and frame protocol/host; comparing opaque origin alone is insufficient.
+The renderer uses contextIsolation, sandbox and no nodeIntegration. The application has a dedicated persistent session. Navigation and redirects stay on app://app. Main-frame external http/https/mailto links go to the system browser; external sub-frame navigation and redirects are blocked without opening another application. Same-origin sub-frame navigation remains allowed. New windows are denied. IPC verifies the registered BrowserWindow, its current webContents, current main frame, and frame protocol/host; comparing opaque origin alone is insufficient.
 
 Capture main exceptions in logs instead of blocking default dialogs. Protocol/port failures are explicit. Logs omit credentials, full bootstrap/preferences and sensitive queries. Single-instance locking, utility shutdown and listener cleanup are required. macOS activation can create/register a new window after closure. Desktop identity is not business authorization and never grants arbitrary proxy destinations.
 
@@ -41,6 +41,8 @@ After registering the protocol, ready prepares the hidden window and utility con
 ## Build and packaging (HOST-06)
 
 Build web first, then the three desktop entries, then electron-builder. Root package:desktop/release:desktop/dist:desktop include builds; package-local packaging scripts consume existing builds. ASAR contains entry bundles and package metadata. Client resources are copied to resources/client and served by utility. Bundled web/server dependencies are not duplicated as runtime node_modules. Only required external native modules belong in dependencies; native modules require Electron ABI and rebuild-policy verification.
+
+Root build and build:desktop run their child builds with NODE_ENV=production and without inherited desktop development flags. Non-watch desktop bundles replace process.env.NODE_ENV with production and never embed a development server URL. Watch builds retain development behavior. The utility always hosts a built application and receives NODE_ENV=production, regardless of its parent's environment; LOG_LEVEL and profile-controlled diagnostics remain runtime settings. Building only the desktop entries consumes the existing web build, so use build:desktop when preparing a distributable application.
 
 `apps/desktop/package.json` supplies `productName`, checked against `electron-builder.yml`. It determines the default Electron app name and hence userData; builder `appId` is separate. Choose these values together with shared `APP_ID` for each derived project. Preference files, visual mirror and compile cache retain their filenames within userData.
 
@@ -89,6 +91,14 @@ Any mutation flushes before response delivery, including replacing persistent co
 Cookies attach only to app:// handler upstream requests, never arbitrary targets. Code must not request the storage origin in the application session. The .desktop suffix is not a reserved TLD; future delegation would create a risk if such network requests were allowed. The renderer remains restricted to app://app and CSP does not allow that storage origin. Logs omit Cookie/Set-Cookie contents.
 
 E2E routes mount only with DESKTOP_E2E=1 in unpackaged/test-profile applications. Release ignores that flag with a warning; release self-checks remain available. Page document.cookie stays empty. All app requests are same-origin and attach cookies regardless of fetch credentials mode. Nameless cookies are unsupported. Development and release userData/cookies are isolated.
+
+## Session permissions (HOST-10)
+
+Install permission request, permission check and device handlers immediately after creating the application session, before loading any page. Permissions default to denied. Only a live application main frame may request clipboard-sanitized-write or fullscreen; unknown origins, sub-frames and requests without a verifiable document are denied. Permission checks also validate the requesting origin. The adapters preserve the different Electron API shapes rather than inferring a sub-frame's identity from the top-level URL.
+
+An openExternal permission additionally requires an explicit http, https or mailto target, using the same URL predicate as main-process external navigation. Main-process shell.openExternal calls retain their own validation. Device access (including HID, serial and USB), notifications, media and other permissions are denied. Log only the rejected permission name, never the requesting URL or device details.
+
+Derived applications can extend this policy deliberately, keeping request/check decisions consistent and adding permission-specific verification. Allowing media in this policy does not bypass operating-system consent; macOS camera and microphone access also needs the matching Info.plist usage descriptions.
 
 ## Verification requirements
 

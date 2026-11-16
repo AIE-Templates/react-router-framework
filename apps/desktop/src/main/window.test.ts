@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 
 import { describe, expect, it } from "vitest";
 
-import { createWindowKeeper, isAppUrl, safePath } from "./window.ts";
+import { createWindowKeeper, isAppUrl, isExternalUrl, safePath } from "./window.ts";
 
 class FakeWindow extends EventEmitter {
   destroyed = false;
@@ -49,6 +49,15 @@ describe("createWindowKeeper", () => {
 });
 
 describe("url helpers", () => {
+  it("only permits web and mail links to external applications", () => {
+    for (const url of ["http://example.test", "https://example.test", "mailto:person@example.test"]) {
+      expect(isExternalUrl(url)).toBe(true);
+    }
+    for (const url of ["file:///private/example", "javascript:alert(1)", "app://app/", "invalid"]) {
+      expect(isExternalUrl(url)).toBe(false);
+    }
+  });
+
   it("accepts only app://app", () => {
     expect(isAppUrl("app://app/chat/1?x=1")).toBe(true);
     expect(isAppUrl("app://evil/")).toBe(false);

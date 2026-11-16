@@ -12,6 +12,7 @@ import { COOKIE_JAR_ORIGIN, createCookieJar, flushForQuit } from "./main/cookie-
 import { createDevProxyFetch } from "./main/dev-proxy.ts";
 import { createLogger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
+import { installPermissionPolicy } from "./main/permissions.ts";
 import { createPrefsStore, installPrefsIpc } from "./main/prefs.ts";
 import { APP_SCHEME, registerAppProtocol } from "./main/protocol.ts";
 import { createWindowRecovery } from "./main/recovery.ts";
@@ -94,6 +95,7 @@ function packagedProfile(): string | undefined {
 async function main(): Promise<void> {
   profile.mark("ready");
   const appSession = session.fromPartition("persist:app");
+  installPermissionPolicy(appSession, log);
   // Preferences the page writes through the preload; every request carries the current ones.
   const visualThemeStore = createVisualThemeStore(app.getPath("userData"), { log });
   const prefsStore = createPrefsStore(app.getPath("userData"), { log });

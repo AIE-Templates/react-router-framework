@@ -70,6 +70,15 @@ export function isAppUrl(url: string): boolean {
   }
 }
 
+/** URL schemes that may be handed to an external application. */
+export function isExternalUrl(url: string): boolean {
+  try {
+    return EXTERNAL_SCHEMES.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 /** The scheme, host and path of `url` for logs; never the query string (AGENTS: it can carry tokens). */
 export function safePath(url: string): string {
   try {
@@ -167,21 +176,25 @@ export function createMainWindow({
   win.webContents.once("dom-ready", () => profile.mark("dom-content-loaded"));
   win.once("closed", () => ipcMain.off(IPC.firstPaint, onFirstPaint));
 
-  const confine = (event: { preventDefault(): void }, url: string) => {
-    if (isAppUrl(url)) return;
-    event.preventDefault();
-    openExternal(url, log);
+  const confine = (details: { preventDefault(): void; url: string }) => {
+    if (isAppUrl(details.url)) return;
+    details.preventDefault();
+    openExternal(details.url, log);
   };
-  win.webContents.on("will-navigate", confine);
-  win.webContents.on("will-redirect", confine);
   // Sub-frames too: an <iframe> must not load anything but app://app either (CSP's default-src
-  // already blocks other origins; this is the second line).
-  win.webContents.on("will-frame-navigate", (details) => {
+  // already blocks other origins; this is the second line). A sub-frame never opens an external app.
+  const confineSubframe = (details: { preventDefault(): void; url: string; isMainFrame: boolean }) => {
     if (!details.isMainFrame && !isAppUrl(details.url)) {
       details.preventDefault();
       log.warn({ path: safePath(details.url) }, "blocked sub-frame navigation");
     }
+  };
+  win.webContents.on("will-navigate", confine);
+  win.webContents.on("will-redirect", (details) => {
+    if (details.isMainFrame) confine(details);
+    else confineSubframe(details);
   });
+  win.webContents.on("will-frame-navigate", confineSubframe);
   win.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url, log);
     return { action: "deny" };

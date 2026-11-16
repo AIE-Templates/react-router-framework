@@ -21,8 +21,8 @@ Run from the workspace root.
 | Command                | Implementation                                                |
 | ---------------------- | ------------------------------------------------------------- |
 | `pnpm bench:transport` | `pnpm --filter @repo/bench-transport bench --`                |
-| `pnpm build`           | `pnpm -r build`                                               |
-| `pnpm build:desktop`   | `pnpm --filter web build && pnpm --filter desktop build`      |
+| `pnpm build`           | `node apps/desktop/scripts/build.ts --workspace`              |
+| `pnpm build:desktop`   | `pnpm --filter desktop build --with-web`                      |
 | `pnpm dev`             | `pnpm --filter web dev`                                       |
 | `pnpm dev:desktop`     | `pnpm --filter desktop dev`                                   |
 | `pnpm dev:server`      | `pnpm --filter @repo/server dev`                              |
@@ -39,6 +39,8 @@ Run from the workspace root.
 | `pnpm typegen`         | `pnpm --filter web exec react-router typegen`                 |
 
 Vitest runs in watch mode by default; use pnpm exec vitest run for a finite run. Build Docker images from the workspace root so workspace dependencies are available. Package READMEs describe deployment and environment configuration. Keep secrets in local/environment configuration, never in the repository.
+
+The production build runner sets `NODE_ENV=production` and removes inherited desktop development flags before running either the recursive workspace build or the Web and desktop builds. Development commands keep their own watch environment. Package-local desktop builds consume the existing Web build; root desktop packaging commands rebuild both first.
 
 ## Design
 
