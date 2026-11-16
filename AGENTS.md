@@ -12,6 +12,8 @@ After changes run `pnpm lint:fix`, then `pnpm fmt`. Before completion run `pnpm 
 
 Unit tests use Vitest and Testing Library, colocated as *.test.ts(x). Each package has a Vitest project. Use createRoutesStub when components need Router context; invoke loaders/actions directly. Keep environment examples synchronized with new variables, document purpose/defaults and never commit .env files.
 
+Inject failures at a narrow external boundary in isolated tests, preserve the real component/provider path, and assert recovery after removing the fault as well as the failure state. Restore injections in finally; use deterministic gates instead of fixed sleeps for races.
+
 ## Commits
 
 Use Conventional Commits, checked by @commitlint/config-conventional. Lefthook runs Oxlint/Oxfmt on staged files. Do not bypass hooks with --no-verify.
@@ -35,6 +37,8 @@ Use kebab-case file and directory names, PascalCase component exports and useXxx
 This branch builds a static SPA with ssr: false.
 
 SPA builds reject non-root server loaders, server actions/middleware/headers and non-root HydrateFallback. The root loader runs at build time. Components, meta, links, ErrorBoundary and client data APIs can support both modes. Select rendering requirements deliberately rather than assuming every application can switch unchanged.
+
+Keep default root revalidation. Optimize only after checking loader dependencies and explicit invalidation; an in-flight navigation can have different current/next URLs even during revalidate(). See apps/web/README.md for dependency optimization, route discovery and revalidation guidance.
 
 ## Architecture checks
 
