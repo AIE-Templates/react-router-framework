@@ -17,7 +17,9 @@ export function createStaticApp(clientDir: string) {
       setHeaders(res, _path, stat) {
         const req = res.req;
         const validator = req.headers["if-range"];
-        if (validator && validator !== stat.mtime.toUTCString()) delete req.headers.range;
+        // send captures Range before this hook but evaluates If-Range afterwards. Its date
+        // comparison accepts newer dates. With ETags disabled, a tag always selects the full file.
+        if (validator !== undefined && validator !== stat.mtime.toUTCString()) req.headers["if-range"] = '""';
         res.setHeader(
           "Cache-Control",
           req.url?.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache",
