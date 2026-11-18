@@ -41,6 +41,7 @@ export default function handleRequest(
   routerContext: EntryContext,
   loadContext: RouterContextProvider,
 ) {
+  responseHeaders.set("Content-Type", "text/html");
   // https://httpwg.org/specs/rfc9110.html#HEAD
   if (request.method.toUpperCase() === "HEAD") {
     return new Response(null, {
@@ -92,8 +93,6 @@ export default function handleRequest(
             },
           });
           const stream = createReadableStreamFromReadable(body);
-
-          responseHeaders.set("Content-Type", "text/html");
 
           pipe(body);
 
