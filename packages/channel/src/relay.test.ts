@@ -161,7 +161,8 @@ describe("relay backpressure from the destination", () => {
     ["a package channel", (c: Channel) => c],
     ["a channel without the synchronous drain check", opaque],
   ])("stops forwarding while %s is not drained and resumes in order", async (_name, wrap) => {
-    const { left, right, link, received, frames, releaseAll } = await intoSmallWindow({}, wrap);
+    // Exercise the credit window independently of wall-clock scheduling under load.
+    const { left, right, link, received, frames, releaseAll } = await intoSmallWindow({ quantumMs: 60_000 }, wrap);
     // Low water is half the 4 KiB window: forwarding stops once a frame crosses it.
     expect(right.a.bufferedAmount).toBeLessThanOrEqual(2048 + 1024);
     expect(link.stats().aToB.frames).toBeLessThanOrEqual(3);
