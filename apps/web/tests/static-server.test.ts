@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -14,6 +14,8 @@ writeFileSync(join(root, "docs/index.html"), "docs");
 writeFileSync(join(root, "index.html"), "home");
 writeFileSync(join(root, "__spa-fallback.html"), "shell");
 writeFileSync(join(root, "sample.txt"), "abcdefgh");
+const modified = new Date("2025-01-01T00:00:00Z");
+utimesSync(join(root, "sample.txt"), modified, modified);
 writeFileSync(join(root, "sample.txt.gz"), gzipSync("abcdefgh"));
 const server = createStaticApp(root).listen(0, "127.0.0.1");
 let origin: string;
@@ -48,6 +50,9 @@ it.each([
   ["bytes=0-0", "", 206, "bytes 0-0/8", "a"],
   ["bytes=-3", "", 206, "bytes 5-7/8", "fgh"],
   ["bytes=2-4", '"old"', 200, null, "abcdefgh"],
+  ["bytes=2-4", modified.toUTCString(), 206, "bytes 2-4/8", "cde"],
+  ["bytes=2-4", "Tue, 31 Dec 2024 00:00:00 GMT", 200, null, "abcdefgh"],
+  ["bytes=2-4", "Thu, 02 Jan 2025 00:00:00 GMT", 200, null, "abcdefgh"],
 ] as const)(
   "serves the selected bytes for %s with validator %s",
   async (range, validator, status, contentRange, body) => {
