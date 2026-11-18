@@ -7,6 +7,7 @@ ENV PATH="$PNPM_HOME:$PATH"
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ patches/
 # Run pnpm once so Corepack downloads the version matching `devEngines`, including
 # its native binary, into this layer. `corepack install` alone skips the binary.
 RUN corepack enable pnpm && pnpm --version

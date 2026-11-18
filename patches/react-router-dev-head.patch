@@ -1,0 +1,40 @@
+diff --git a/dist/config/defaults/entry.server.node.tsx b/dist/config/defaults/entry.server.node.tsx
+--- a/dist/config/defaults/entry.server.node.tsx
++++ b/dist/config/defaults/entry.server.node.tsx
+@@ -16,6 +16,7 @@
+   routerContext: EntryContext,
+   loadContext: RouterContextProvider,
+ ) {
++  responseHeaders.set("Content-Type", "text/html");
+   // https://httpwg.org/specs/rfc9110.html#HEAD
+   if (request.method.toUpperCase() === "HEAD") {
+     return new Response(null, {
+@@ -57,8 +58,6 @@
+           });
+           const stream = createReadableStreamFromReadable(body);
+ 
+-          responseHeaders.set("Content-Type", "text/html");
+-
+           pipe(body);
+ 
+           resolve(
+diff --git a/dist/config/defaults/entry.server.node.jsx b/dist/config/defaults/entry.server.node.jsx
+--- a/dist/config/defaults/entry.server.node.jsx
++++ b/dist/config/defaults/entry.server.node.jsx
+@@ -15,6 +15,7 @@
+   routerContext,
+   loadContext,
+ ) {
++  responseHeaders.set("Content-Type", "text/html");
+   // https://httpwg.org/specs/rfc9110.html#HEAD
+   if (request.method.toUpperCase() === "HEAD") {
+     return new Response(null, {
+@@ -53,8 +54,6 @@
+           });
+           const stream = createReadableStreamFromReadable(body);
+ 
+-          responseHeaders.set("Content-Type", "text/html");
+-
+           pipe(body);
+ 
+           resolve(

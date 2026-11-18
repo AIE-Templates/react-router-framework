@@ -2,7 +2,7 @@
 
 A pnpm workspace with React Router framework mode. The web application is a static SPA.
 
-Use Node.js 24 or newer and the pnpm version declared in package.json. Install with pnpm install; other package managers are rejected.
+Use Node.js 24.15+ in the 24.x line, or Node.js 26 and newer and the pnpm version declared in package.json. Install with pnpm install; other package managers are rejected.
 
 ## Packages
 
