@@ -84,6 +84,8 @@ export function cspMiddleware(policy: ContentSecurityPolicy): MiddlewareHandler 
     await next();
     if (!c.res.headers.get("content-type")?.startsWith("text/html")) return;
     if (c.res.headers.has("content-security-policy")) return;
+    // A new nonce on HEAD must never update a cached GET with a different body nonce.
+    if (withNonce && c.req.method === "HEAD") c.header("Cache-Control", "no-store");
     c.header("Content-Security-Policy", serializePolicy(policy, withNonce ? [nonceSource(nonce)] : []));
   };
 }

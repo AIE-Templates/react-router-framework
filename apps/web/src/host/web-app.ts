@@ -82,7 +82,13 @@ function staticFiles(clientDir: string, cacheControl: string, csp?: HostAppOptio
     const file = await resolveStaticFile(clientDir, path);
     const isHtml = file !== undefined && /\.html?$/i.test(file);
     const isDocument = isHtml || !/\.\w+$/.test(path) || /\.(html|data)$/.test(path);
-    if (isHtml && c.req.raw.headers.has("range")) c.req.raw = withoutRange(c.req.raw);
+    if (file && c.req.raw.headers.has("range")) {
+      const validator = c.req.raw.headers.get("if-range");
+      // This host only emits Last-Modified. An entity tag cannot match that validator.
+      if (isHtml || (validator !== null && validator !== (await stat(file)).mtime.toUTCString())) {
+        c.req.raw = withoutRange(c.req.raw);
+      }
+    }
     let found = true;
     const response = await serve(c, async () => {
       found = false;
