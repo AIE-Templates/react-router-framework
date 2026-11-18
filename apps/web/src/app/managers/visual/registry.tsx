@@ -9,7 +9,7 @@ export function VisualManagerRegistry({
 }: PropsWithChildren<{ initialState?: VisualPreferences }>) {
   return (
     <VisualManagerProvider initialPreferences={initialState}>
-      <VisualCookieProvider>{children}</VisualCookieProvider>
+      <VisualCookieProvider requestSeed={initialState}>{children}</VisualCookieProvider>
     </VisualManagerProvider>
   );
 }
