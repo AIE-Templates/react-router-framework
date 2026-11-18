@@ -18,10 +18,6 @@ import "./styles/index.css";
 // unreachable host would hold up the document. Self-host fonts if needed.
 export const links: Route.LinksFunction = () => [];
 
-// The default entry skips rendering on HEAD. Declare document metadata before rendering;
-// React Router sets its own media type for data requests.
-export const headers: Route.HeadersFunction = () => ({ "Content-Type": "text/html" });
-
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <AppRoot>
