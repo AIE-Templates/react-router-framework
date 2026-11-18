@@ -506,30 +506,13 @@ describe("review regressions", () => {
     await tick();
     expect(signal?.aborted).toBe(true);
 
-    let ticks = 0;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const sse = connect(
-      () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start: (controller) => {
-              timer = setInterval(() => controller.enqueue(encoder.encode("data: tick\n\n")), 5);
-            },
-            cancel: () => clearInterval(timer),
-          }),
-        ),
-      { headersTimeoutMs: 30 },
-    );
+    const { stream, write } = manualStream();
+    const sse = connect(() => new Response(stream), { headersTimeoutMs: 250 });
     const response = await sse.fetch(new Request("http://app.desktop/sse"));
     const reader = response.body!.getReader();
-    const deadline = Date.now() + 120;
-    while (Date.now() < deadline) {
-      const { done } = await reader.read();
-      if (done) break;
-      ticks++;
-    }
-    clearInterval(timer);
-    expect(ticks).toBeGreaterThan(10);
+    await tick(300);
+    write("data: late\n\n");
+    expect(await reader.read()).toEqual({ done: false, value: encoder.encode("data: late\n\n") });
     await reader.cancel();
   });
 

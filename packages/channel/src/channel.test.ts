@@ -1,7 +1,8 @@
 // @vitest-environment node
+import { once } from "node:events";
 import { MessageChannel } from "node:worker_threads";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket as WsSocket, WebSocketServer } from "ws";
 
 import {
@@ -155,9 +156,8 @@ describe.each([
     for (let i = 0; i < 10; i++) a.send(new Uint8Array(64 * 1024));
 
     await a.whenDrained();
-    await tick(50);
-
-    expect(a.bufferedAmount).toBe(0);
+    // whenDrained resolves at low water. Wait for the last credit acknowledgement separately.
+    await vi.waitFor(() => expect(a.bufferedAmount).toBe(0));
   });
 
   it("closes the far side with the code and reason", async () => {
@@ -225,17 +225,27 @@ describe("Channel over MessagePort: flow control", () => {
     expect(info.code).toBe(CLOSE_CODES.idleTimeout);
     expect(info.error).toBeInstanceOf(Error);
 
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
     const live = new MessageChannel();
     const a = channelFromPort(fromNodePort(live.port1), { idleTimeoutMs: 60 });
     const b = channelFromPort(fromNodePort(live.port2), { idleTimeoutMs: 60 });
-    cleanups.push(() => {
+    try {
+      await Promise.all([opened(a), opened(b)]);
+      // Advance each heartbeat only after both real ports have received a frame.
+      for (let i = 0; i < 8; i++) {
+        const arrivals = Promise.all([once(live.port1, "message"), once(live.port2, "message")]);
+        vi.advanceTimersByTime(20);
+        await arrivals;
+      }
+      expect(a.state).toBe("open");
+      expect(b.state).toBe("open");
+    } finally {
       a.close();
       b.close();
-    });
-    await Promise.all([opened(a), opened(b)]);
-    await tick(200);
-    expect(a.state).toBe("open");
-    expect(b.state).toBe("open");
+      live.port1.close();
+      live.port2.close();
+      vi.useRealTimers();
+    }
   });
 });
 
