@@ -103,7 +103,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
   }
 
   test("Tailwind utilities override the demo CSS Module in the components layer", async ({ desktop: { page } }) => {
-    const card = page.locator("#scratchpad");
+    const card = page.locator("[data-demo-draft]");
     const originalPadding = await card.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingTop));
     expect(originalPadding).toBeGreaterThan(0);
     expect(originalPadding).toBeLessThan(64);
