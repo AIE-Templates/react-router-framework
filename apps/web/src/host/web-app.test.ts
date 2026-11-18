@@ -88,6 +88,13 @@ describe("static files", () => {
 describe("without server rendering", () => {
   const web = createWebApp({ clientDir, ssr: false });
 
+  it("returns 404 for missing build assets instead of the SPA shell", async () => {
+    for (const method of ["GET", "HEAD"]) {
+      const response = await web.request("/assets/missing.js", { method });
+      expect(response.status).toBe(404);
+    }
+  });
+
   it("serves the SPA shell for every page, with a request ID", async () => {
     for (const path of ["/", "/some/deep/route", "/about/team"]) {
       const response = await web.request(path, { headers: { "x-request-id": "req-1" } });
