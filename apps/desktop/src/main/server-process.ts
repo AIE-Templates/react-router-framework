@@ -3,6 +3,7 @@ import {
   createPortFetch,
   type ElectronPortLike,
   fromElectronPort,
+  PortClosedError,
   type PortFetch,
   type PortStats,
 } from "@repo/port-fetch";
@@ -276,6 +277,7 @@ export function startServerProcess(
   const start = (): Promise<void> => {
     if (isStopping()) return Promise.reject(new Error("The server is shutting down"));
     if (instance) return instance.ready;
+    if (restartTimer !== undefined) return Promise.reject(new PortClosedError("The server is restarting"));
     state = "starting";
     try {
       instance = spawn();
@@ -290,8 +292,12 @@ export function startServerProcess(
   };
 
   const current = async (): Promise<Instance> => {
-    await start();
-    if (!instance?.fetch || !instance.readySettled) throw new Error("The server is not available");
+    try {
+      await start();
+    } catch (error) {
+      throw new PortClosedError(error instanceof Error ? error.message : "The server is not available");
+    }
+    if (!instance?.fetch || !instance.readySettled) throw new PortClosedError("The server is not available");
     return instance;
   };
 
