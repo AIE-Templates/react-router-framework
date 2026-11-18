@@ -50,6 +50,7 @@ function kill(child: ChildProcess): void {
 function shutdown(code: number): void {
   if (shuttingDown) return;
   shuttingDown = true;
+  process.exitCode = code;
   for (const child of children) kill(child);
   setTimeout(() => process.exit(code), 500).unref();
 }
