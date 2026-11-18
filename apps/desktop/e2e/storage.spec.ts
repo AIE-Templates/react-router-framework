@@ -1,6 +1,6 @@
 import type { ElectronApplication, Page } from "@playwright/test";
 
-import { expect, pgrep, processRoot, quit, test, waitForApp } from "./desktop.ts";
+import { expect, targetProcesses, quit, test, waitForApp } from "./desktop.ts";
 
 // Browser storage under app://app: cookies set by script and by a Set-Cookie response header, each
 // persistent and session-only, plus localStorage and sessionStorage, observed right away, across a
@@ -302,8 +302,8 @@ test("a persistent cookie survives a hard kill right after its response", async 
   process.kill(first.pid, "SIGKILL");
   // Every helper (renderer, GPU, utility) follows the main process before the relaunch.
   const until = Date.now() + 10_000;
-  while (pgrep(processRoot(target)).length > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
-  expect(pgrep(processRoot(target))).toEqual([]);
+  while (targetProcesses(target).length > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+  expect(targetProcesses(target)).toEqual([]);
   const second = await launchApp();
   expect(await serverCookies(second.page)).toEqual({ "e2e-killed": "k" });
 });
@@ -316,8 +316,8 @@ test("a session cookie replacing a persistent one stays replaced after a hard ki
   // The persistent record must be gone from the disk already: a relaunch must not bring "old" back.
   process.kill(first.pid, "SIGKILL");
   const until = Date.now() + 10_000;
-  while (pgrep(processRoot(target)).length > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
-  expect(pgrep(processRoot(target))).toEqual([]);
+  while (targetProcesses(target).length > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+  expect(targetProcesses(target)).toEqual([]);
   const second = await launchApp();
   expect(await serverCookies(second.page)).toEqual({});
 });

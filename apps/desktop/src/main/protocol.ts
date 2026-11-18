@@ -56,6 +56,7 @@ export function registerAppProtocol(
       if (cookie !== undefined) headers.set("cookie", cookie);
       const forwarded = new Request(internalUrl, {
         method: request.method,
+        signal: request.signal,
         headers,
         body: hasBody ? request.body : null,
         ...(hasBody ? { duplex: "half" } : {}),

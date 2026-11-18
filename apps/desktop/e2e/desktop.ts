@@ -1,12 +1,11 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
+import { appProcesses, electronBinary } from "../scripts/bench.ts";
 import { packagedExecutable } from "./packaged-path.ts";
 
 /**
@@ -19,11 +18,7 @@ export type Target = "unpackaged" | "packaged";
 
 export const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-export function electronBinary(): string {
-  const require = createRequire(import.meta.url);
-  const packageDir = dirname(require.resolve("electron/package.json"));
-  return join(packageDir, "dist", readFileSync(join(packageDir, "path.txt"), "utf8").trim());
-}
+export { electronBinary };
 
 /** The test-profile executable electron-builder's `--dir` writes for this machine. */
 export function packagedBinary(): string {
@@ -31,25 +26,11 @@ export function packagedBinary(): string {
   return packagedExecutable(join(desktopDir, "out"), metadata, process.platform, process.arch);
 }
 
-/** Every process of a launch (main, renderer, GPU, utility) has its executable under this directory. */
-export function processRoot(target: Target): string {
-  if (target === "unpackaged") return dirname(electronBinary());
-  const binary = packagedBinary();
-  return process.platform === "darwin" ? resolve(binary, "../../..") : dirname(binary);
-}
-
-/** PIDs of processes whose command line contains `needle` (pgrep -f); empty on Windows. */
-export function pgrep(needle: string): number[] {
-  if (process.platform === "win32") return [];
-  try {
-    return execFileSync("pgrep", ["-f", needle], { encoding: "utf8" })
-      .split("\n")
-      .filter(Boolean)
-      .map(Number)
-      .filter((pid) => pid !== process.pid);
-  } catch {
-    return []; // pgrep exits 1 when nothing matches
-  }
+/** Includes macOS helpers under Contents/Frameworks beside the main executable. */
+export function targetProcesses(target: Target): number[] {
+  const binary = target === "unpackaged" ? electronBinary() : packagedBinary();
+  const directory = process.platform === "darwin" ? resolve(binary, "../../..") : dirname(binary);
+  return appProcesses(binary, directory);
 }
 
 export interface Launched {

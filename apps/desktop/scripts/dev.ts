@@ -5,14 +5,17 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, watch } from "node:fs";
-import { createRequire } from "node:module";
 import { release } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
+import { stripVTControlCharacters } from "node:util";
+
+import { electronBinary } from "./bench.ts";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 const repoDir = resolve(desktopDir, "../..");
 const DEV_PORT = Number(process.env.DESKTOP_DEV_PORT ?? 5174);
-const devServerUrl = `http://localhost:${DEV_PORT}`;
+const devServerUrl = `http://127.0.0.1:${DEV_PORT}`;
 const buildDir = join(desktopDir, ".vite/build");
 
 const children = new Set<ChildProcess>();
@@ -26,12 +29,15 @@ function run(
   args: string[],
   options: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: boolean },
 ): ChildProcess {
-  const child = spawn(command, args, {
+  const manager = command === "pnpm" ? process.env.npm_execpath : undefined;
+  const nodeScript = manager && /\.(?:cjs|mjs|js)$/i.test(manager);
+  const child = spawn(nodeScript ? process.execPath : (manager ?? command), nodeScript ? [manager, ...args] : args, {
     cwd: options.cwd,
     env: { ...process.env, ...options.env },
     stdio: [options.stdin ? "pipe" : "ignore", "pipe", "inherit"],
     // Its own process group, so the whole tree (pnpm → react-router → vite) dies with it.
-    detached: true,
+    detached: process.platform !== "win32",
+    windowsHide: true,
   });
   children.add(child);
   child.once("exit", () => children.delete(child));
@@ -41,7 +47,9 @@ function run(
 function kill(child: ChildProcess): void {
   if (child.exitCode !== null || child.pid === undefined) return;
   try {
-    process.kill(-child.pid, "SIGTERM");
+    if (process.platform === "win32")
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    else process.kill(-child.pid, "SIGTERM");
   } catch {
     child.kill("SIGTERM");
   }
@@ -61,14 +69,15 @@ process.on("SIGTERM", () => shutdown(0));
 function waitForOutput(child: ChildProcess, marker: string, label: string): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     let done = false;
-    child.stdout?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      process.stdout.write(text.replace(/^/gm, `[${label}] `));
-      if (!done && text.includes(marker)) {
+    const lines = createInterface({ input: child.stdout! });
+    lines.on("line", (line: string) => {
+      process.stdout.write(`[${label}] ${line}\n`);
+      if (!done && stripVTControlCharacters(line).includes(marker)) {
         done = true;
         resolvePromise();
       }
     });
+    child.once("error", reject);
     child.once("exit", (code) => {
       if (!done) reject(new Error(`${label} exited with ${code} before it was ready`));
     });
@@ -87,24 +96,17 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
   throw new Error(`${url} did not answer within ${timeoutMs} ms`);
 }
 
-/** The Electron binary, the way `require("electron")` finds it, without importing the module. */
-function electronBinary(): string {
-  const require = createRequire(import.meta.url);
-  const packageDir = dirname(require.resolve("electron/package.json"));
-  return join(packageDir, "dist", readFileSync(join(packageDir, "path.txt"), "utf8").trim());
-}
-
 function startElectron(): ChildProcess {
   const child = run(electronBinary(), ["."], {
     cwd: desktopDir,
-    env: { DESKTOP_USER_DATA_SUFFIX: "dev", NODE_ENV: "development" },
+    env: { DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev", NODE_ENV: "development" },
     stdin: true,
   });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
-  child.once("exit", (code) => {
+  child.once("exit", (code, signal) => {
     if (shuttingDown || electron !== child) return;
-    log(`electron exited with ${code}`);
-    shutdown(code ?? 0);
+    log(`electron exited with ${signal ?? code}`);
+    shutdown(code ?? 1);
   });
   return child;
 }
@@ -130,7 +132,18 @@ async function main(): Promise<void> {
   log(`starting react-router dev on ${devServerUrl}`);
   const web = run(
     "pnpm",
-    ["--filter", "web", "exec", "react-router", "dev", "--port", String(DEV_PORT), "--strictPort"],
+    [
+      "--filter",
+      "web",
+      "exec",
+      "react-router",
+      "dev",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(DEV_PORT),
+      "--strictPort",
+    ],
     {
       cwd: repoDir,
       env: shellEnv,

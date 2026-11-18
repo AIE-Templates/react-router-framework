@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { parseArgs as parseFlags } from "node:util";
 
 import {
   type BenchOptions,
@@ -53,20 +54,41 @@ interface Args {
   out: string;
 }
 
-function parseArgs(argv: string[]): Args {
-  const get = (name: string): string | undefined => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  const suite = expect(get("suite") ?? "smoke", isSuite, `suite (known: ${Object.keys(SUITES).join(", ")})`);
-  const link = get("link");
+const usage = `Usage: pnpm bench:transport [--suite smoke|full] [--link names] [--case names]
+  [--variant raw|package] [--seed n] [--repeat n] [--window bytes] [--send-budget bytes,ms]
+  [--options json | --options-file path] [--ws-receiver pausable|standard] [--label text] [--out file]
+`;
+
+function parseArgs(argv: string[]): Args | undefined {
+  const { values } = parseFlags({
+    args: argv[0] === "--" ? argv.slice(1) : argv,
+    options: {
+      help: { type: "boolean", short: "h" },
+      suite: { type: "string" },
+      link: { type: "string" },
+      case: { type: "string" },
+      variant: { type: "string" },
+      seed: { type: "string" },
+      repeat: { type: "string" },
+      window: { type: "string" },
+      "send-budget": { type: "string" },
+      options: { type: "string" },
+      "options-file": { type: "string" },
+      "ws-receiver": { type: "string" },
+      label: { type: "string" },
+      out: { type: "string" },
+    },
+  });
+  if (values.help) return undefined;
+  const suite = expect(values.suite ?? "smoke", isSuite, `suite (known: ${Object.keys(SUITES).join(", ")})`);
+  const link = values.link;
   const links: LinkName[] = link
     ? link.split(",").map((l) => expect(l, isLinkName, `link (known: ${LINKS.join(", ")})`))
     : [...LINKS];
-  const caseArg = get("case");
+  const caseArg = values.case;
   const cases = caseArg ? caseArg.split(",").map((c) => findCase(c).name) : CASES.map((c) => c.name);
-  const wsReceiverArg = get("ws-receiver");
-  const variant = get("variant");
+  const wsReceiverArg = values["ws-receiver"];
+  const variant = values.variant;
   const variants: Variant[] = variant
     ? variant.split(",").map((v) => expect(v, isVariant, "variant (raw or package)"))
     : ["raw", "package"];
@@ -75,17 +97,17 @@ function parseArgs(argv: string[]): Args {
     links,
     cases,
     variants,
-    seed: Number(get("seed") ?? 20261027),
-    repeat: Number(get("repeat") ?? 1),
-    windowBytes: Number(get("window") ?? 1024 * 1024),
-    sendBudget: parseSendBudget(get("send-budget")),
-    options: parseOptions(get("options"), get("options-file")),
+    seed: Number(values.seed ?? 20261027),
+    repeat: Number(values.repeat ?? 1),
+    windowBytes: Number(values.window ?? 1024 * 1024),
+    sendBudget: parseSendBudget(values["send-budget"]),
+    options: parseOptions(values.options, values["options-file"]),
     wsReceiver:
       wsReceiverArg === undefined
         ? undefined
         : expect(wsReceiverArg, isWsReceiver, "ws receiver (pausable or standard)"),
-    label: get("label"),
-    out: get("out") ?? `results/${suite}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+    label: values.label,
+    out: values.out ?? `results/${suite}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
   };
 }
 
@@ -138,8 +160,10 @@ function runOne(config: RunConfig, repeat: number): Promise<RunResult> {
       if (line.startsWith("RESULT ")) result = expect(parseJson(line.slice(7)), isRunResult, "run result");
       else process.stderr.write(`${line}\n`);
     });
-    child.once("exit", (code) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
       if (!result) reject(new Error(`run exited with ${code} without a result`));
+      else if (code !== 0 && !result.error) resolvePromise({ ...result, error: `run exited with ${signal ?? code}` });
       else resolvePromise(result);
     });
   });
@@ -201,6 +225,10 @@ function mib(bytesPerSec: number): number {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (!args) {
+    process.stdout.write(usage);
+    return;
+  }
   const { warmupMs, measureMs } = SUITES[args.suite];
   const file: ResultFile = { environment: environment(), label: args.label, options: args.options, runs: [] };
   const out = resolve(process.cwd(), args.out);
@@ -228,6 +256,7 @@ async function main(): Promise<void> {
         }
         for (let repeat = 0; repeat < args.repeat; repeat++) {
           const result = await runOne(config, repeat);
+          if (result.error) process.exitCode = 1;
           file.runs.push(result);
           process.stdout.write(`${link}/${caseName}/${variant}#${repeat}: ${summarize(result)}\n`);
           writeFileSync(out, JSON.stringify(file, null, 2));

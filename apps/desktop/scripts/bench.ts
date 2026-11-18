@@ -50,10 +50,10 @@ function isRunRecord(value: unknown): value is RunRecord {
   );
 }
 
-function electronBinary(): string {
-  const require = createRequire(import.meta.url);
-  const packageDir = dirname(require.resolve("electron/package.json"));
-  return join(packageDir, "dist", readFileSync(join(packageDir, "path.txt"), "utf8").trim());
+export function electronBinary(): string {
+  const binary: unknown = createRequire(import.meta.url)("electron");
+  if (typeof binary !== "string") throw new Error("Electron did not provide an executable path");
+  return binary;
 }
 
 /**
@@ -96,23 +96,23 @@ const isWindows = process.platform === "win32";
  * sibling directory sharing its prefix can match. A failed process listing throws instead of
  * reporting none.
  */
-function runProcesses(): number[] {
-  if (!target) throw new Error("no target yet");
+export function appProcesses(executable: string, directory: string): number[] {
   let output: string;
-  if (isWindows) {
-    const exe = target.command.replaceAll("'", "''");
+  if (process.platform === "win32") {
     output = execFileSync(
       "powershell",
       [
         "-NoProfile",
         "-Command",
-        `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, '${exe}', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }`,
+        `Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $env:E2E_PROCESS_EXE, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }`,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: { ...process.env, E2E_PROCESS_EXE: executable } },
     );
   } else {
     try {
-      output = execFileSync("pgrep", ["-f", `${target.dist}/`], { encoding: "utf8" });
+      output = execFileSync("pgrep", ["-f", "^" + directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/"], {
+        encoding: "utf8",
+      });
     } catch (err) {
       // pgrep exits 1 when nothing matches; anything else is a failure to list.
       if (typeof err === "object" && err !== null && "status" in err && err.status === 1) return [];
@@ -123,6 +123,11 @@ function runProcesses(): number[] {
     .split(/\r?\n/)
     .map(Number)
     .filter((pid) => pid > 0 && pid !== process.pid);
+}
+
+function runProcesses(): number[] {
+  if (!target) throw new Error("no target yet");
+  return appProcesses(target.command, target.dist);
 }
 
 /**
@@ -188,8 +193,6 @@ function cleanupAndExit(code: number): never {
   for (const pgid of groups) killGroup(pgid, "SIGKILL");
   process.exit(code);
 }
-process.on("SIGINT", () => cleanupAndExit(130));
-process.on("SIGTERM", () => cleanupAndExit(143));
 
 async function runOnce(round: number, mode: Mode, env: Record<string, string>, timeoutMs: number): Promise<RunRecord> {
   const started = performance.now();
@@ -448,21 +451,27 @@ function compare(files: string[]): void {
   }
 }
 
-// Piped into `head` and the like: stop quietly when the reader goes away.
-process.stdout.on("error", (err: NodeJS.ErrnoException) => {
-  if (err.code === "EPIPE") cleanupAndExit(0);
-  throw err;
-});
+async function main() {
+  process.on("SIGINT", () => cleanupAndExit(130));
+  process.on("SIGTERM", () => cleanupAndExit(143));
+  // Piped into `head` and the like: stop quietly when the reader goes away.
+  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") cleanupAndExit(0);
+    throw err;
+  });
 
-const { command, options, positional } = parseArgs(process.argv.slice(2));
-try {
-  if (command === "run") await run(options);
-  else if (command === "compare") {
-    if (positional.length === 0) throw new Error("compare needs one or more .jsonl files");
-    compare(positional);
-  } else throw new Error(`unknown command "${command}": expected run or compare`);
-} catch (err) {
-  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  if (current?.pid) killGroup(current.pid, "SIGKILL");
-  process.exitCode = 1;
+  const { command, options, positional } = parseArgs(process.argv.slice(2));
+  try {
+    if (command === "run") await run(options);
+    else if (command === "compare") {
+      if (positional.length === 0) throw new Error("compare needs one or more .jsonl files");
+      compare(positional);
+    } else throw new Error(`unknown command "${command}": expected run or compare`);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    if (current?.pid) killGroup(current.pid, "SIGKILL");
+    process.exitCode = 1;
+  }
 }
+
+if (import.meta.main) void main();
