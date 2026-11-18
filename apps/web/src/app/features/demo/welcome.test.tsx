@@ -7,6 +7,7 @@ describe("Welcome", () => {
   it("links to the React Router docs", () => {
     render(<Welcome />);
 
+    expect(screen.getByRole("main")).toContainElement(screen.getByRole("heading", { level: 1, name: "React Router" }));
     expect(screen.getByRole("link", { name: "React Router Docs" })).toHaveAttribute(
       "href",
       "https://reactrouter.com/docs",
