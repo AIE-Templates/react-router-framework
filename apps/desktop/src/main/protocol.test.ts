@@ -63,6 +63,26 @@ describe("registerAppProtocol with the cookie jar", () => {
     vi.unstubAllGlobals();
   });
 
+  it("forwards cancellation to a pending upstream request", async () => {
+    let received: AbortSignal | undefined;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { handle } = setup(async (request) => {
+      received = request.signal;
+      await blocked;
+      return new Response(null, { status: 204 });
+    });
+    const controller = new AbortController();
+    const pending = handle("app://app/", { signal: controller.signal });
+    await vi.waitFor(() => expect(received).toBeDefined());
+    controller.abort();
+    release();
+    expect(received?.aborted).toBe(true);
+    expect((await pending).status).toBe(204);
+  });
+
   it("injects the jar's Cookie before the upstream call and drops the page's own", async () => {
     const seen: (string | null)[] = [];
     const { handle } = setup(async (request) => {
