@@ -6,7 +6,7 @@ Run `pnpm dev` at the workspace root for HMR at http://localhost:5173. Build wit
 
 ## Static deployment
 
-This branch builds a static SPA (ssr: false). Deploy build/client to static hosting; development still uses the Router dev server. Configure deep-link fallback to __spa-fallback.html when prerendering supplies it, otherwise index.html. Serve assets as files and let the client router resolve routes. Use the supplied Docker configuration for static hosting. Server loaders/actions are not available; the root loader runs only at build time.
+This branch builds a static SPA (ssr: false). Deploy build/client to static hosting; development still uses the Router dev server. Configure deep-link fallback to __spa-fallback.html when prerendering supplies it, otherwise index.html. Serve assets as files and let the client router resolve routes. Run `pnpm start` to serve the build with Hono on Node, or use the supplied nginx image. Both return 404 for missing files under `/assets/` and `/.well-known/`. Server loaders/actions are not available; the root loader runs only at build time.
 
 ### Development dependency optimization
 
