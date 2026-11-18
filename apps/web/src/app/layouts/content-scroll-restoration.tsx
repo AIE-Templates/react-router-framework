@@ -28,10 +28,25 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
       element.scrollLeft = left;
       element.scrollTop = top;
     }
+    let observer: MutationObserver | undefined;
     if (!saved && location.hash) {
       try {
-        const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
-        if (target && root.contains(target)) target.scrollIntoView();
+        const id = decodeURIComponent(location.hash.slice(1));
+        const scrollToTarget = () => {
+          const target = document.getElementById(id);
+          if (!target || !root.contains(target)) return false;
+          target.scrollIntoView();
+          return true;
+        };
+        if (!scrollToTarget()) {
+          const fallback = root.querySelector("[data-hydrate-fallback]");
+          if (fallback) {
+            observer = new MutationObserver(() => {
+              if (scrollToTarget() || !root.contains(fallback)) observer?.disconnect();
+            });
+            observer.observe(root, { childList: true, subtree: true });
+          }
+        }
       } catch {
         // A malformed URL fragment must not break navigation.
       }
@@ -44,7 +59,10 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
     };
     // Scroll does not bubble; capture records nested module panes as well as the root.
     root.addEventListener("scroll", record, true);
-    return () => root.removeEventListener("scroll", record, true);
+    return () => {
+      observer?.disconnect();
+      root.removeEventListener("scroll", record, true);
+    };
   }, [location.key, location.hash, navigationType]);
 
   return (
