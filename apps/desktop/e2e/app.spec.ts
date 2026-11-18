@@ -19,6 +19,35 @@ test("a reload serves and hydrates the document again", async ({ desktop: { page
   expect(await page.evaluate(() => typeof window.desktop?.subscribeWindowState)).toBe("function");
 });
 
+test("a request after reload gets its own response when the old request finishes first", async ({
+  desktop: { page },
+}) => {
+  const request = (owner: "old" | "new") =>
+    page.evaluateHandle(
+      (body) => ({
+        reply: fetch("/__e2e/reload/request", { method: "POST", body })
+          .then(async (response) => ({ status: response.status, body: await response.text() }))
+          .catch((error: Error) => ({ error: error.message })),
+      }),
+      owner,
+    );
+  const pending = () => page.evaluate(async () => (await fetch("/__e2e/reload/pending")).json());
+  const release = (owner: "old" | "new") =>
+    page.evaluate(async (url) => (await fetch(url, { method: "POST" })).status, `/__e2e/reload/release/${owner}`);
+
+  await request("old");
+  await expect.poll(pending).toEqual(["old"]);
+  await page.reload();
+  await waitForApp(page);
+  const current = await request("new");
+  await expect.poll(pending).toContain("new");
+
+  expect(await release("old")).toBe(204);
+  await expect.poll(pending).toEqual(["new"]);
+  expect(await release("new")).toBe(204);
+  expect(await current.evaluate(({ reply }) => reply)).toEqual({ status: 200, body: "new" });
+});
+
 test("an unknown path renders the 404 page, and the app recovers from it", async ({ desktop: { page } }) => {
   const response = await page.goto("app://app/no-such-page");
   expect(response?.status()).toBe(process.env.SSR === "false" ? 200 : 404);
