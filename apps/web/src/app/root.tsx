@@ -132,7 +132,7 @@ export default function App() {
 
 export function HydrateFallback() {
   return (
-    <main className="p-4" aria-busy="true">
+    <main className="p-4" aria-busy="true" data-hydrate-fallback="">
       Loading application…
     </main>
   );
