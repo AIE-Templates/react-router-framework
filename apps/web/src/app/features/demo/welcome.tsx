@@ -4,7 +4,7 @@ import classes from "./welcome.module.css";
 
 export function Welcome() {
   return (
-    <section id="resources" aria-label="Welcome resources" className={classes.demoResources}>
+    <section tabIndex={-1} id="resources" aria-label="Welcome resources" className={classes.demoResources}>
       <div className={classes.demoSectionHeading}>
         <h2>Keep building</h2>
         <span>A few useful places to go next.</span>
