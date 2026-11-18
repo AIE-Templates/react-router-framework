@@ -87,6 +87,19 @@ describe("static files", () => {
     expect(changed.status).toBe(200);
   });
 
+  it.each([
+    [{ "if-none-match": "*" }, 304],
+    [{ "if-none-match": "*", range: "bytes=99-" }, 304],
+    [{ "if-modified-since": lastModified.toUTCString(), range: "bytes=1-2" }, 304],
+    [{ "if-none-match": '"other"', "if-modified-since": lastModified.toUTCString(), range: "bytes=1-2" }, 206],
+  ] satisfies [Record<string, string>, number][])("evaluates %o before the byte range", async (headers, status) => {
+    const response = await web.request("/favicon.ico", { headers });
+    expect(response.status).toBe(status);
+    expect(response.headers.get("content-range")).toBe(status === 304 ? null : "bytes 1-2/4");
+    expect(response.headers.get("content-length")).toBe(status === 304 ? null : "2");
+    expect(await response.text()).toBe(status === 304 ? "" : "co");
+  });
+
   it("serves the API", async () => {
     const response = await web.request("/api/health");
 

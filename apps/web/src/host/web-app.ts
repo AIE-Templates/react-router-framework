@@ -94,17 +94,19 @@ function staticFiles(clientDir: string, cacheControl: string, csp?: HostAppOptio
       found = false;
       await next();
     });
-    if (found && response?.ok) {
-      response.headers.set("Cache-Control", isDocument ? "no-cache" : cacheControl);
-      // Answer revalidation of an unchanged file with 304 instead of sending it again.
-      if (response.status === 200 && isNotModified(c.req.raw.headers, response.headers.get("Last-Modified"))) {
+    if (found && response && (response.ok || response.status === 416)) {
+      // Range is evaluated only after cache preconditions, including for unsatisfiable ranges.
+      if (isNotModified(c.req.raw.headers, response.headers.get("Last-Modified"))) {
         await response.body?.cancel();
         const headers = new Headers(response.headers);
-        // The 200 may be gzip-compressed (/assets), so its length would differ.
+        headers.set("Cache-Control", isDocument ? "no-cache" : cacheControl);
         headers.delete("Content-Length");
+        headers.delete("Content-Range");
         c.res = new Response(null, { status: 304, headers });
         return c.res;
       }
+      if (!response.ok) return response;
+      response.headers.set("Cache-Control", isDocument ? "no-cache" : cacheControl);
       if (csp && response.status === 200 && response.headers.get("content-type")?.startsWith("text/html")) {
         // From the file when it was resolved; otherwise from the body, so no document goes without.
         const policy = file
@@ -169,8 +171,10 @@ function withoutRange(request: Request): Request {
 
 function isNotModified(requestHeaders: Headers, lastModified: string | null): boolean {
   const ifModifiedSince = requestHeaders.get("If-Modified-Since");
-  // If-None-Match takes precedence (RFC 9110 13.1.3); no ETags are sent, so it never matches.
-  if (!ifModifiedSince || !lastModified || requestHeaders.has("If-None-Match")) return false;
+  // Existing files match the wildcard. This host does not emit individual entity tags.
+  const etag = requestHeaders.get("If-None-Match");
+  if (etag !== null) return etag.trim() === "*";
+  if (!ifModifiedSince || !lastModified) return false;
   return Date.parse(lastModified) <= Date.parse(ifModifiedSince);
 }
 

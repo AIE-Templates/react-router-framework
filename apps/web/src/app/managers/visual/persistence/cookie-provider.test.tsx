@@ -49,6 +49,23 @@ it("seeds once through StrictMode, mirrors external deletion and never restores 
   expect(localStorage.getItem(STORAGE_KEYS.visualPreferences)).toBeNull();
   expect(readVisualCookie(document.cookie)).toMatchObject({ preferences: DEFAULT_VISUAL_PREFERENCES });
 });
+it("recovers a SPA session from its cookie when no request seed or stored preference exists", () => {
+  const preferences = { colorScheme: "dark", direction: "rtl", reducedMotion: "reduce" } as const;
+  document.cookie = `${visualCookie.name}=${encodeURIComponent(JSON.stringify({ version: 1, preferences }))}; Path=/`;
+  render(
+    <StrictMode>
+      <AppRoot>
+        <Consumer />
+      </AppRoot>
+    </StrictMode>,
+  );
+  expect(manager.getSnapshot().preferences).toEqual(preferences);
+  expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.visualPreferences)!)).toMatchObject({ preferences });
+  expect(readVisualCookie(document.cookie)).toMatchObject({ preferences });
+  act(() => manager.actions.resetVisualPreferences());
+  expect(readVisualCookie(document.cookie)).toMatchObject({ preferences: DEFAULT_VISUAL_PREFERENCES });
+});
+
 it("mirrors failed local saves without reverting session state and protects future cookie versions until reset", () => {
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("quota");
