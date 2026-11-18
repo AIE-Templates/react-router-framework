@@ -98,6 +98,7 @@ export function createVisualManager({
     setStatus({ ...status, persistence: next.persistence });
   }
   const actions = Object.freeze({
+    setPreferences: (preferences: VisualPreferences) => update(preferences),
     setColorSchemePreference: (colorScheme: VisualPreferences["colorScheme"]) => update({ colorScheme }),
     setDirection: (direction: VisualPreferences["direction"]) => update({ direction }),
     setReducedMotionPreference: (reducedMotion: VisualPreferences["reducedMotion"]) => update({ reducedMotion }),

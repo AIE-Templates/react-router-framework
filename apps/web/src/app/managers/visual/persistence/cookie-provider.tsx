@@ -5,11 +5,15 @@ import { visualCookie } from "~/config/visual-cookie";
 import { useAppEnvironment } from "~/managers/environment/hooks";
 import { visualCodec } from "~/managers/visual/bootstrap";
 import { useVisualManager } from "~/managers/visual/hooks";
+import type { VisualPreferences } from "~/managers/visual/types";
 
-import { writeVisualCookie } from "./cookie";
+import { readVisualCookie, writeVisualCookie } from "./cookie";
 import { VisualCookieContext, type VisualCookieStatus } from "./cookie-context";
 
-export function VisualCookieProvider({ children }: PropsWithChildren) {
+export function VisualCookieProvider({
+  children,
+  requestSeed,
+}: PropsWithChildren<{ requestSeed?: VisualPreferences }>) {
   const manager = useVisualManager();
   const seedAttempted = useRef(false);
   const environment = useAppEnvironment();
@@ -20,17 +24,27 @@ export function VisualCookieProvider({ children }: PropsWithChildren) {
     if (!seedAttempted.current) {
       // Initialization is one attempt, never a write echo for later storage events.
       seedAttempted.current = true;
+      let stored;
       try {
-        const stored = visualCodec.decode(localStorage.getItem(STORAGE_KEYS.visualPreferences));
-        if (stored.kind === "missing" || stored.kind === "invalid") {
-          manager.actions.setDirection(manager.getSnapshot().preferences.direction);
-        }
+        stored = visualCodec.decode(localStorage.getItem(STORAGE_KEYS.visualPreferences));
       } catch {
-        /* A cookie can still mirror an in-memory preference. */
+        /* A cookie can still seed an in-memory preference. */
+      }
+      if (!stored || stored.kind === "missing" || stored.kind === "invalid") {
+        let seed = requestSeed;
+        if (!seed) {
+          try {
+            const cookie = readVisualCookie(document.cookie);
+            if (cookie.kind === "valid") seed = cookie.preferences;
+          } catch {
+            /* Cookies may be unavailable in this browser. */
+          }
+        }
+        manager.actions.setPreferences(seed ?? manager.getSnapshot().preferences);
       }
     }
     setStatus(writeVisualCookie(manager.getSnapshot().preferences));
-  }, [enabled, manager]);
+  }, [enabled, manager, requestSeed]);
   useEffect(() => {
     if (!enabled) return () => {};
     // Synchronizing an external cookie reports its actual write result.
