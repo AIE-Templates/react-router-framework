@@ -69,6 +69,33 @@ describe("container scroll restoration", () => {
     expect(root.scrollTop).toBe(140);
   });
 
+  it("locates the initial fragment when hydration replaces the fallback", async () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <ContentScrollRestoration>
+              <main data-hydrate-fallback="" />
+            </ContentScrollRestoration>
+          ),
+        },
+      ],
+      { initialEntries: ["/#late"] },
+    );
+    const view = render(<RouterProvider router={router} />);
+    const target = document.createElement("h2");
+    target.id = "late";
+    const scrollIntoView = vi.fn<() => void>();
+    target.scrollIntoView = scrollIntoView;
+    const fallback = view.container.querySelector("main")!;
+    await act(async () => {
+      fallback.replaceWith(target);
+    });
+    expect(scrollIntoView).toHaveBeenCalledOnce();
+    target.replaceWith(fallback);
+  });
+
   it("honors fragments on new navigation and saved positions on history traversal", async () => {
     const scrollIntoView = vi.fn<() => void>();
     const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
