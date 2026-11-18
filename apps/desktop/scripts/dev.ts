@@ -103,10 +103,10 @@ function startElectron(): ChildProcess {
     stdin: true,
   });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
-  child.once("exit", (code) => {
+  child.once("exit", (code, signal) => {
     if (shuttingDown || electron !== child) return;
-    log(`electron exited with ${code}`);
-    shutdown(code ?? 0);
+    log(`electron exited with ${signal ?? code}`);
+    shutdown(code ?? 1);
   });
   return child;
 }
