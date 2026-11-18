@@ -38,10 +38,14 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
   afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
   function run(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
+    // Windows treats environment keys case-insensitively; pnpm can export NPM_EXECPATH.
+    const inherited = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "npm_execpath"),
+    );
     return spawnSync(process.execPath, [script, ...args], {
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...inherited,
         npm_execpath: packageManager,
         BUILD_INVOCATIONS: invocations,
         NODE_ENV: "development",

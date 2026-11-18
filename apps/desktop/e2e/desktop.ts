@@ -69,7 +69,8 @@ export async function launch(target: Target, userDataSuffix: string): Promise<La
       ? { executablePath: electronBinary(), args: [".", ...mediaArgs], cwd: desktopDir, env }
       : { executablePath: packagedBinary(), args: mediaArgs, env },
   );
-  const pid = app.process().pid!;
+  // On Windows Playwright may launch Electron through a separate launcher process.
+  const pid = await app.evaluate(() => process.pid);
   const page = await app.firstWindow();
   await waitForApp(page);
   return { app, page, pid };
