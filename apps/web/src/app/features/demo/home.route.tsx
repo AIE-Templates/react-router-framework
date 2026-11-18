@@ -1,5 +1,5 @@
 import { TextInput } from "@mantine/core";
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { VisualSettings } from "~/components/appearance-settings";
@@ -20,6 +20,12 @@ export const meta: Route.MetaFunction = () => [
 
 export default function Home() {
   const [params, setParams] = useSearchParams();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  function followSection(event: MouseEvent<HTMLAnchorElement>) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const panel = event.currentTarget.closest("aside");
+    if (panel && getComputedStyle(panel).position === "absolute") setSidebarOpen(false);
+  }
   const [note, setNote] = useState("");
   const environment = useAppEnvironment();
   const basic = params.get("shell") === "basic";
@@ -38,19 +44,21 @@ export default function Home() {
       moduleId="welcome"
       contentAs="main"
       title="Layout foundation"
+      sidebarOpen={sidebarOpen}
+      onSidebarOpenChange={setSidebarOpen}
       sidebarTitle="Module navigation"
       sidebar={
         <div className={classes.demoPanel}>
           <p className={classes.demoEyebrow}>On this page</p>
-          <a href="#layout-settings">
+          <a onClick={followSection} href="#layout-settings">
             <DemoIcon name="settings" />
             Layout settings
           </a>
-          <a href="#scratchpad">
+          <a onClick={followSection} href="#scratchpad">
             <DemoIcon name="file" />
             Scratchpad
           </a>
-          <a href="#resources">
+          <a onClick={followSection} href="#resources">
             <DemoIcon name="book" />
             Resources
           </a>
@@ -102,7 +110,12 @@ export default function Home() {
 
         <VisualSettings />
         <div className={classes.demoGrid}>
-          <section id="layout-settings" className={classes.demoCard} aria-labelledby="layout-settings-title">
+          <section
+            tabIndex={-1}
+            id="layout-settings"
+            className={classes.demoCard}
+            aria-labelledby="layout-settings-title"
+          >
             <div className={classes.demoCardHeading}>
               <div className={classes.demoIconBox}>
                 <DemoIcon name="settings" />
@@ -163,7 +176,7 @@ export default function Home() {
             <p className={classes.demoCardFootnote}>Resize the window. Your workspace adapts with you.</p>
           </section>
 
-          <section id="scratchpad" data-demo-draft className={classes.demoCard} aria-labelledby="scratchpad-title">
+          <section data-demo-draft className={classes.demoCard} aria-labelledby="scratchpad-title">
             <div className={classes.demoCardHeading}>
               <div className={classes.demoIconBox}>
                 <DemoIcon name="file" />
@@ -175,6 +188,7 @@ export default function Home() {
             </div>
             <div>
               <TextInput
+                id="scratchpad"
                 label="Module draft"
                 value={note}
                 onChange={(event) => setNote(event.target.value)}

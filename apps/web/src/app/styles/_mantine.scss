@@ -13,7 +13,16 @@ $mantine-breakpoint-xl: 88em !default;
 }
 
 @mixin smaller-than($breakpoint) {
-  @media (max-width: $breakpoint) {
+  // Match postcss-preset-mantine's exclusive upper bound (one tenth of a CSS pixel).
+  $upper: calc($breakpoint - 0.1px);
+  @if math.unit($breakpoint) == "em" {
+    $upper: $breakpoint - 0.00625em;
+  } @else if math.unit($breakpoint) == "rem" {
+    $upper: $breakpoint - 0.00625rem;
+  } @else if math.is-unitless($breakpoint) {
+    $upper: ($breakpoint - 0.1) * 1px;
+  }
+  @media (max-width: $upper) {
     @content;
   }
 }

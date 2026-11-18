@@ -26,14 +26,17 @@ it("compiles injected Sass modules through the project's PostCSS pipeline", asyn
     margin: mantine.rem(-2px);
     border-width: mantine.rem(0);
     @include mantine.smaller-than(mantine.$mantine-breakpoint-sm) { display: grid; }
-    @include mantine.larger-than(mantine.$mantine-breakpoint-lg) { display: flex; }
+    @include mantine.larger-than(mantine.$mantine-breakpoint-sm) { display: flex; }
     @include mantine.hover { opacity: 0.8; }
     @include mantine.rtl { float: right; }
     @include mantine.ltr { float: left; }
   }
 }`,
     );
-    await writeFile(join(fixture, "postcss.css"), ".postcss-proof { @mixin hover { opacity: 0.7; } }");
+    await writeFile(
+      join(fixture, "postcss.css"),
+      ".postcss-proof { @mixin hover { opacity: 0.7; } @mixin smaller-than 48em { display: grid; } @mixin larger-than 48em { display: flex; } }",
+    );
     const result = await build({
       configFile: false,
       root,
@@ -65,8 +68,8 @@ it("compiles injected Sass modules through the project's PostCSS pipeline", asyn
     expect(css).toContain("calc(1rem * var(--mantine-scale))");
     expect(css).toContain("calc(-0.125rem * var(--mantine-scale))");
     expect(css).toContain("calc(0rem * var(--mantine-scale))");
-    expect(css).toMatch(/max-width:\s*48em/);
-    expect(css).toMatch(/min-width:\s*75em/);
+    expect(css.match(/max-width:\s*47\.99375em/g)).toHaveLength(2);
+    expect(css.match(/min-width:\s*48em/g)).toHaveLength(2);
     expect(css).toMatch(/\[dir=["']?rtl/);
     expect(css).toMatch(/\[dir=["']?ltr/);
     expect(css).toContain(".postcss-proof:hover");
