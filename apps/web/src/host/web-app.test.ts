@@ -46,6 +46,17 @@ afterEach(() => {
 describe("static files", () => {
   const web = createWebApp({ clientDir, ssr: true });
 
+  it.each([
+    ['"old"', 200, "icon"],
+    ["Sun, 01 Jan 2023 00:00:00 GMT", 200, "icon"],
+    [lastModified.toUTCString(), 206, "ic"],
+  ] as const)("validates If-Range %s before sending bytes", async (validator, status, body) => {
+    const response = await web.request("/favicon.ico", { headers: { range: "bytes=0-1", "if-range": validator } });
+    expect(response.status).toBe(status);
+    expect(response.headers.get("content-range")).toBe(status === 206 ? "bytes 0-1/4" : null);
+    expect(await response.text()).toBe(body);
+  });
+
   it("serves assets immutable and compressed, through the server's middleware", async () => {
     const response = await web.request("/assets/app.js", { headers: { "accept-encoding": "gzip" } });
 

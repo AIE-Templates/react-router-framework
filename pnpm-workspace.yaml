@@ -6,3 +6,7 @@ packages:
 allowBuilds:
   electron-winstaller: false
   lefthook: true
+
+# The default Node entry in 8.5.0 returns HEAD before setting the document media type.
+patchedDependencies:
+  "@react-router/dev@8.5.0": patches/react-router-dev-head.patch
