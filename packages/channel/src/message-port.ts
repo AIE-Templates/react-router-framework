@@ -250,7 +250,15 @@ class PortChannelImpl implements PortChannel {
     this.#window.sent(bytes);
     this.#stats.framesSent++;
     this.#stats.bytesSent += bytes;
-    this.#post({ t: "data", d: data, bytes });
+    // Structured cloning includes the backing store. Give partial and shared views a frame-sized buffer.
+    const payload =
+      typeof data === "string" ||
+      (data.buffer instanceof ArrayBuffer &&
+        data.buffer.byteLength === bytes &&
+        !("resizable" in data.buffer && data.buffer.resizable))
+        ? data
+        : new Uint8Array(data);
+    this.#post({ t: "data", d: payload, bytes });
   }
 
   whenDrained(): Promise<void> {

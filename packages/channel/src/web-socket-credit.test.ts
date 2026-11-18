@@ -128,6 +128,21 @@ describe("WebSocket credit: negotiation", () => {
     expect(channel.stats().acksSent).toBe(0);
   });
 
+  it("acknowledges a frame after a throwing listener and delivers it to the next listener", () => {
+    const socket = new FakeSocket();
+    const channel = channelFromWebSocket(socket, { credit: { windowBytes: 1024, ackCoalesce: { frames: 1 } } });
+    socket.peerOpen(1024);
+    channel.onMessage(() => {
+      throw new Error("listener failed");
+    });
+    const received = vi.fn<() => void>();
+    channel.onMessage(received);
+    socket.receive("ok");
+    expect(received).toHaveBeenCalledWith("ok");
+    expect(socket.controls()).toContainEqual({ t: "ack", bytes: 2 });
+    channel.close();
+  });
+
   it("announces its window on an open socket and opens once the peer's open arrives", () => {
     const socket = new FakeSocket();
     const channel = channelFromWebSocket(socket, { credit: { windowBytes: 4096 } });

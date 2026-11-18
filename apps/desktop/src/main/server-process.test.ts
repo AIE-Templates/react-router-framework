@@ -4,6 +4,7 @@ import type { PortFetch } from "@repo/port-fetch";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Logger } from "./log.ts";
+import { failureStatus } from "./mapping.ts";
 import { createWindowRecovery, type RecoveryChoice } from "./recovery.ts";
 import {
   type ChildLike,
@@ -223,20 +224,18 @@ describe("startServerProcess", () => {
     expect((await h.server.fetch(new Request("http://app.desktop/"))).status).toBe(200);
   });
 
-  it("restarts once after a crash, even when a request already started a replacement", async () => {
+  it("restarts once after a crash even when requests arrive during backoff", async () => {
     const h = harness();
     await h.server.ready();
     h.children[0].exit(1);
     expect(h.server.state).toBe("idle");
 
-    // A request in the restart window starts the replacement on demand.
-    const pending = h.server.fetch(new Request("http://app.desktop/"));
-    await flush();
-    expect(h.children).toHaveLength(2);
-    expect((await pending).status).toBe(200);
-    // The restart timer then finds a running instance and starts nothing.
+    const request = new Request("http://app.desktop/");
+    await expect(h.server.fetch(request)).rejects.toThrow("restarting");
+    expect(h.children).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(h.children).toHaveLength(2);
+    expect((await h.server.fetch(request)).status).toBe(200);
     expect(h.live()).toBe(1);
     expect(h.ports[0].closed).toBe(true);
 
@@ -350,6 +349,20 @@ describe("startServerProcess", () => {
     await Promise.all([first, second]);
     expect([firstDone, secondDone, child.alive]).toEqual([true, true, false]);
     expect(h.server.state).toBe("stopped");
+  });
+
+  it("reports 503 during fork backoff and serves requests after the scheduled restart", async () => {
+    const h = harness({ forkThrowsOnAttempt: new Set([1]) });
+    const request = new Request("http://app.desktop/");
+    const results = await Promise.all([
+      h.server.fetch(request).catch(failureStatus),
+      h.server.fetch(request).catch(failureStatus),
+    ]);
+    expect(results).toEqual(Array.from({ length: 2 }, () => ({ status: 503, message: "Server Restarting" })));
+    expect(h.forkAttempts()).toBe(1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await h.server.fetch(request)).status).toBe(200);
+    expect(h.forkAttempts()).toBe(2);
   });
 
   it("retries with backoff when the automatic restart's fork throws synchronously", async () => {

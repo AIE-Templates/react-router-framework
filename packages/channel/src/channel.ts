@@ -207,7 +207,14 @@ export class Handlers<T extends unknown[]> {
   }
 
   emit(...args: T): unknown[] {
-    return [...this.#handlers].map((handler) => handler(...args));
+    return [...this.#handlers].map((handler) => {
+      try {
+        return handler(...args);
+      } catch {
+        // Like a rejected message callback, a failed listener has finished consuming this frame.
+        return undefined;
+      }
+    });
   }
 
   clear(): void {

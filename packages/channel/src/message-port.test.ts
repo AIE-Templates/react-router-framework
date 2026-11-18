@@ -354,6 +354,30 @@ describe("ack coalescing", () => {
 });
 
 describe("port channel stats", () => {
+  it("delivers a binary frame in a buffer sized to its view", async () => {
+    const { a, b } = await portPair({ windowBytes: 2 });
+    const received = new Promise<string | Uint8Array>((resolve) => b.onMessage(resolve));
+    const frame = Uint8Array.of(1, 2, 3).subarray(1);
+    a.send(frame);
+    const data = await received;
+    expect(data).toEqual(Uint8Array.of(2, 3));
+    expect(data).toHaveProperty("buffer.byteLength", 2);
+    await a.whenDrained();
+    expect(a.stats()).toMatchObject({ bytesSent: 2, acksReceived: 1 });
+  });
+
+  it("delivers to remaining listeners and releases credit after a listener throws", async () => {
+    const { a, b } = await portPair({ windowBytes: 2 });
+    b.onMessage(() => {
+      throw new Error("callback failed");
+    });
+    const received = new Promise<string | Uint8Array>((resolve) => b.onMessage(resolve));
+    a.send("ok");
+    expect(await received).toBe("ok");
+    await a.whenDrained();
+    expect(b.stats()).toMatchObject({ heldBytes: 0, acksSent: 1 });
+  });
+
   it("counts frames and bytes both ways", async () => {
     const { a, b } = await portPair();
     b.onMessage(() => {});
