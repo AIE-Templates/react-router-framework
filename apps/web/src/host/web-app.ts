@@ -203,6 +203,7 @@ function spaShell(clientDir: string, ssr: boolean | undefined, csp: HostAppOptio
     if (await serverRendered()) return next();
     const { method, path } = c.req;
     if ((method !== "GET" && method !== "HEAD") || path.endsWith(".data")) return next();
+    if (path.startsWith("/assets/")) return c.notFound();
     const { html, policy } = await shell();
     // The shell revalidates on every load, so it never points at assets from an old deploy.
     return c.html(html, 200, {
