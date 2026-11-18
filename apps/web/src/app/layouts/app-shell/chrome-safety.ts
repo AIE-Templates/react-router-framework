@@ -51,6 +51,12 @@ html,body{margin:0;height:100%;min-width:0}
 .app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.module-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) - 4.5rem))}
 
 
+/* Windows paints its separator below the native caption buttons. */
+html[data-platform="win32"][data-chrome-mode="native-overlay"]{--app-window-separator:1px;--app-window-band-height:calc(max(var(--app-window-header-height),var(--app-window-safe-top)) + var(--app-window-separator))}
+html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.module-layout[data-chrome-complete]>.module-columns>.module-panel>.module-header,
+html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="standalone"]>.shell-titlebar>.shell-titlebar-content{min-height:var(--app-window-band-height);border-block-end-width:var(--app-window-separator)}
+html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{height:var(--app-window-band-height);border-block-end:var(--app-window-separator) solid color-mix(in srgb,currentColor 15%,transparent)}
+
 @container (max-width:60rem){
  .module-columns{--app-layout-visible-auxiliary-span:0px}
  .module-auxiliary{position:absolute;inset-block:calc(var(--app-window-safe-top) + 3rem) 0;inset-inline-end:0;width:min(20rem,100%);z-index:4;background:Canvas}

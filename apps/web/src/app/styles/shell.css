@@ -120,36 +120,6 @@
     scrollbar-color: var(--app-color-input) transparent;
   }
 
-  /* Windows reserves a 48px body for native controls, then a separate separator row.
-   Keep this visual border out of the native overlay height and the safety fallback. */
-  html[data-platform="win32"][data-chrome-mode="native-overlay"] {
-    --app-window-separator: 1px;
-  }
-
-  html[data-platform="win32"][data-chrome-mode="native-overlay"]
-    .app-shell[data-chrome-ready][data-header-mode="fused"]
-    > .shell-body
-    > .module-layout[data-chrome-complete]
-    > .module-columns
-    > .module-panel
-    > .module-header,
-  html[data-platform="win32"][data-chrome-mode="native-overlay"]
-    .app-shell[data-chrome-ready][data-header-mode="standalone"]
-    > .shell-titlebar
-    > .shell-titlebar-content {
-    min-height: calc(max(var(--app-window-header-height), var(--app-window-safe-top)) + var(--app-window-separator));
-    border-block-end-width: var(--app-window-separator);
-  }
-
-  html[data-platform="win32"][data-chrome-mode="native-overlay"]
-    .app-shell[data-chrome-ready][data-header-mode="fused"]
-    > .shell-body
-    > .shell-nav
-    > .shell-nav-chrome {
-    height: calc(max(var(--app-window-header-height), var(--app-window-safe-top)) + var(--app-window-separator));
-    border-block-end: var(--app-window-separator) solid color-mix(in srgb, currentColor 15%, transparent);
-  }
-
   @media (max-width: 48em) {
     .shell-nav-content a {
       flex-direction: row;
