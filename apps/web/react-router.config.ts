@@ -6,8 +6,7 @@ export default {
   // without server rendering or server loaders (except the root route's, which runs at build time).
   // Deploy build/client to any static host that falls back to index.html for unknown paths.
   // Add `prerender` here to prerender selected paths; index.html is then the prerendered home page
-  // and the shell is __spa-fallback.html, which the host must fall back to instead (nginx/default.conf
-  // already does; `pnpm start` does not).
+  // and the shell is __spa-fallback.html. Both the Hono entry and nginx use that fallback.
   ssr: false,
   // Static SPA builds already use initial route discovery; do not force lazy discovery here.
   future: {
