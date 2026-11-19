@@ -86,7 +86,7 @@ Parse all Set-Cookie fields in order, complete writes/deletions and flushStore b
 | Limits        | Name plus value at most 4096 bytes; ignore attributes over 1024 bytes; process at most 50 cookies per response                                                                                                                          |
 | Invalid input | Ignore control characters and nameless cookies; log bounded rejection metadata without values                                                                                                                                           |
 
-Any mutation flushes before response delivery, including replacing persistent cookies with session cookies so stale disk values cannot reappear. Before quit, flush in parallel with utility shutdown with a two-second bound. Session cookies survive reload/window reopening but not process restart. Persistent cookies survive restart.
+Any mutation flushes before response delivery, including replacing persistent cookies with session cookies so stale disk values cannot reappear. After all windows accept quit, flush with a two-second bound in parallel with utility shutdown. A window that cancels quit retains its working host and recovery. Session cookies survive reload/window reopening but not process restart. Persistent cookies survive restart.
 
 Cookies attach only to app:// handler upstream requests, never arbitrary targets. Code must not request the storage origin in the application session. The .desktop suffix is not a reserved TLD; future delegation would create a risk if such network requests were allowed. The renderer remains restricted to app://app and CSP does not allow that storage origin. Logs omit Cookie/Set-Cookie contents.
 

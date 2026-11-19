@@ -28,7 +28,7 @@ Native-overlay is the default on macOS, Windows and Linux. DESKTOP_CHROME_MODE=s
 
 Run `pnpm --filter desktop exec electron scripts/wco-probe.cjs` (optionally `--system-decorated`) for WCO safety probes. CSS geometry must remain safe before hydration, after errors and without external styles. Native drag/menu/resize behavior requires real platform checks.
 
-Main-document failures use one automatic reload per bounded failure cycle, coordinated with utility generations; repeated failures show Reload/Close. Unresponsive offers Wait/Reload/Close. Reload may lose unsaved renderer state. Native dialogs do not introduce a new trusted page origin.
+Main-document failures use one automatic reload per bounded failure cycle, coordinated with utility generations; repeated failures show Reload/Close/Cancel. Escape keeps affected windows open. Unresponsive offers Wait/Reload/Close. Reload may lose unsaved renderer state. Native dialogs do not introduce a new trusted page origin.
 
 ## Storage and trust
 

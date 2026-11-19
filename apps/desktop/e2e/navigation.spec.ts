@@ -1,4 +1,4 @@
-import { expect, test, waitForApp } from "./desktop.ts";
+import { expect, quit, test, waitForApp } from "./desktop.ts";
 
 interface NavigationProbe {
   externalUrls: string[];
@@ -207,86 +207,185 @@ test("a replaced utility serves all windows without discarding live documents", 
   }
 });
 
-test("renderer recovery reloads affected documents and preserves unrelated windows", async ({
-  desktop: { page, app },
-}) => {
-  const shared = app.waitForEvent("window");
+test("a window can cancel quit, keep using the server and then quit normally", async ({ desktop }) => {
+  const { app, page } = desktop;
+  const opened = app.waitForEvent("window");
   await page.evaluate(() => {
-    window.open("/?opener");
+    window.open("/?draft", "_blank", "noopener");
   });
-  const child = await shared;
-  await waitForApp(child);
-  expect(await child.evaluate(() => window.opener?.location.href)).toBe("app://app/");
-  const independent = app.waitForEvent("window");
-  await page.evaluate(() => {
-    window.open("/?independent", "_blank", "noopener");
-  });
-  const other = await independent;
-  await waitForApp(other);
-  await other.evaluate(() => Reflect.set(window, "unrelatedDraft", "leave intact"));
-  const recovered = app.evaluate(({ BrowserWindow }) => {
-    const windows = BrowserWindow.getAllWindows();
-    const target = windows.find((win) => win.webContents.getURL().includes("?opener"))!;
-    const pid = target.webContents.getOSProcessId();
-    const affected = windows.filter((win) => win.webContents.getOSProcessId() === pid);
-    const loads = affected.map(
-      (win) => new Promise<void>((resolve) => win.webContents.once("did-finish-load", () => resolve())),
-    );
-    target.webContents.forcefullyCrashRenderer();
-    return Promise.all(loads);
-  });
-  await recovered;
-  // Playwright retains the crashed page targets. Inspect the replacement renderers through main.
-  await expect
-    .poll(() =>
-      app.evaluate(async ({ BrowserWindow }) => {
-        return Promise.all(
-          BrowserWindow.getAllWindows().map(async (win) => {
-            const hydrated: unknown = await win.webContents.executeJavaScript(
-              "document.documentElement.dataset.hydrated",
-            );
-            return hydrated === "true" ? win.webContents.getURL() : "";
-          }),
-        );
+  const peer = await opened;
+  await waitForApp(peer);
+  await peer.evaluate(() => Reflect.set(window, "recoveryDraft", "unsaved"));
+  await app.evaluate(
+    ({ app: host, BrowserWindow }) =>
+      new Promise<void>((resolve) => {
+        const draft = BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().endsWith("?draft"))!;
+        draft.once("close", (event) => {
+          event.preventDefault();
+          resolve();
+        });
+        host.quit();
       }),
-    )
-    .toEqual(expect.arrayContaining(["app://app/", "app://app/?opener", "app://app/?independent"]));
-  // The first crash consumed the automatic retry. The second needs a user decision.
-  const decisions = await app.evaluate(async ({ BrowserWindow, dialog }) => {
-    const windows = BrowserWindow.getAllWindows();
-    const target = windows.find((win) => win.webContents.getURL().includes("?opener"))!;
-    const affected = windows.filter((win) => win.webContents.getOSProcessId() === target.webContents.getOSProcessId());
-    const original = dialog.showMessageBox.bind(dialog);
-    const answers: (() => void)[] = [];
-    const buttons: string[][] = [];
-    dialog.showMessageBox = (
-      first: Electron.BaseWindow | Electron.MessageBoxOptions,
-      second?: Electron.MessageBoxOptions,
-    ) =>
-      new Promise((resolve) => {
-        const options = second ?? first;
-        if ("buttons" in options) buttons.push(options.buttons ?? []);
-        answers.push(() => resolve({ response: 0, checkboxChecked: false }));
-      });
-    try {
-      const gone = affected.map(
-        (win) => new Promise<void>((resolve) => win.webContents.once("render-process-gone", () => resolve())),
-      );
-      const loaded = affected.map(
+  );
+  expect(await peer.evaluate(() => Reflect.get(window, "recoveryDraft"))).toBe("unsaved");
+  expect(await peer.evaluate(async () => (await fetch("/api/health")).status)).toBe(200);
+  expect(await peer.evaluate(() => window.desktop!.setPref("quitDraft", "saved"))).toEqual({ status: "applied" });
+  await quit(desktop);
+});
+
+for (const decision of ["reload", "cancel"] as const) {
+  test(`renderer recovery honors ${decision} for affected documents and preserves unrelated windows`, async ({
+    desktop: { page, app },
+  }) => {
+    const shared = app.waitForEvent("window");
+    await page.evaluate(() => {
+      window.open("/?opener");
+    });
+    const child = await shared;
+    await waitForApp(child);
+    expect(await child.evaluate(() => window.opener?.location.href)).toBe("app://app/");
+    const independent = app.waitForEvent("window");
+    await page.evaluate(() => {
+      window.open("/?independent", "_blank", "noopener");
+    });
+    const other = await independent;
+    await waitForApp(other);
+    await other.evaluate(() => Reflect.set(window, "unrelatedDraft", "leave intact"));
+    const recovered = app.evaluate(({ BrowserWindow }) => {
+      const windows = BrowserWindow.getAllWindows();
+      const target = windows.find((win) => win.webContents.getURL().includes("?opener"))!;
+      const pid = target.webContents.getOSProcessId();
+      const affected = windows.filter((win) => win.webContents.getOSProcessId() === pid);
+      const loads = affected.map(
         (win) => new Promise<void>((resolve) => win.webContents.once("did-finish-load", () => resolve())),
       );
       target.webContents.forcefullyCrashRenderer();
-      await Promise.all(gone);
+      return Promise.all(loads);
+    });
+    await recovered;
+    // Playwright retains the crashed page targets. Inspect the replacement renderers through main.
+    await expect
+      .poll(() =>
+        app.evaluate(async ({ BrowserWindow }) => {
+          return Promise.all(
+            BrowserWindow.getAllWindows().map(async (win) => {
+              const hydrated: unknown = await win.webContents.executeJavaScript(
+                "document.documentElement.dataset.hydrated",
+              );
+              return hydrated === "true" ? win.webContents.getURL() : "";
+            }),
+          );
+        }),
+      )
+      .toEqual(expect.arrayContaining(["app://app/", "app://app/?opener", "app://app/?independent"]));
+    // The first crash consumed the automatic retry. The second needs a user decision.
+    const decisions = await app.evaluate(async ({ BrowserWindow, dialog }, answerKind) => {
+      const windows = BrowserWindow.getAllWindows();
+      const target = windows.find((win) => win.webContents.getURL().includes("?opener"))!;
+      const affected = windows.filter(
+        (win) => win.webContents.getOSProcessId() === target.webContents.getOSProcessId(),
+      );
+      const original = dialog.showMessageBox.bind(dialog);
+      const answers: (() => void)[] = [];
+      const buttons: string[][] = [];
+      const cancelLabels: (string | undefined)[] = [];
+      dialog.showMessageBox = (
+        first: Electron.BaseWindow | Electron.MessageBoxOptions,
+        second?: Electron.MessageBoxOptions,
+      ) =>
+        new Promise((resolve) => {
+          const options = second ?? first;
+          if (!("buttons" in options)) throw new Error("Missing recovery buttons");
+          buttons.push(options.buttons ?? []);
+          const cancelId = options.cancelId ?? 0;
+          cancelLabels.push(options.buttons?.[cancelId]);
+          answers.push(() => resolve({ response: answerKind === "cancel" ? cancelId : 0, checkboxChecked: false }));
+        });
+      try {
+        const gone = affected.map(
+          (win) => new Promise<void>((resolve) => win.webContents.once("render-process-gone", () => resolve())),
+        );
+        const loaded =
+          answerKind === "cancel"
+            ? []
+            : affected.map(
+                (win) => new Promise<void>((resolve) => win.webContents.once("did-finish-load", () => resolve())),
+              );
+        target.webContents.forcefullyCrashRenderer();
+        await Promise.all(gone);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        for (const answer of answers) answer();
+        await Promise.all(loaded);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        return {
+          buttons,
+          cancelLabels,
+          shared: affected.length > 1,
+          keptFailedDocuments: affected.every((win) => !win.isDestroyed() && win.webContents.isCrashed()),
+        };
+      } finally {
+        dialog.showMessageBox = original;
+      }
+    }, decision);
+    expect(decisions.keptFailedDocuments).toBe(decision === "cancel");
+    expect(decisions.cancelLabels).toEqual(["Cancel"]);
+    expect(decisions.buttons).toEqual(
+      decisions.shared
+        ? [["Reload affected windows", "Close affected windows", "Cancel"]]
+        : [["Reload", "Close", "Cancel"]],
+    );
+    expect(await other.evaluate(() => Reflect.get(window, "unrelatedDraft"))).toBe("leave intact");
+  });
+}
+
+test("a recovered owner releases the native sheet while an affected peer keeps its choice", async ({
+  desktop: { app, page },
+}) => {
+  const opened = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?peer");
+  });
+  await waitForApp(await opened);
+  const result = await app.evaluate(async ({ BrowserWindow, dialog }) => {
+    const [first, peer] = BrowserWindow.getAllWindows();
+    const shared = first.webContents.getOSProcessId() === peer.webContents.getOSProcessId();
+    const original = dialog.showMessageBox.bind(dialog);
+    const sheets: { owner: Electron.BaseWindow; signal: AbortSignal }[] = [];
+    dialog.showMessageBox = (
+      owner: Electron.BaseWindow | Electron.MessageBoxOptions,
+      options?: Electron.MessageBoxOptions,
+    ) =>
+      new Promise((resolve) => {
+        if (!(owner instanceof BrowserWindow) || !options?.signal)
+          throw new Error("Expected a cancellable window sheet");
+        sheets.push({ owner, signal: options.signal });
+        options.signal.addEventListener(
+          "abort",
+          () => resolve({ response: options.cancelId!, checkboxChecked: false }),
+          { once: true },
+        );
+      });
+    try {
+      first.emit("unresponsive");
+      peer.emit("unresponsive");
       await new Promise<void>((resolve) => setImmediate(resolve));
-      for (const answer of answers) answer();
-      await Promise.all(loaded);
-      return { buttons, shared: affected.length > 1 };
+      const initial = sheets.length;
+      first.emit("responsive");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const remaining = sheets.filter((sheet) => !sheet.signal.aborted);
+      peer.emit("responsive");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return {
+        shared,
+        initial,
+        peerOnly: remaining.length === 1 && remaining[0].owner === peer,
+        allRetired: sheets.every((sheet) => sheet.signal.aborted),
+      };
     } finally {
       dialog.showMessageBox = original;
     }
   });
-  expect(decisions.buttons).toEqual(
-    decisions.shared ? [["Reload affected windows", "Close affected windows"]] : [["Reload", "Close"]],
-  );
-  expect(await other.evaluate(() => Reflect.get(window, "unrelatedDraft"))).toBe("leave intact");
+  expect(result.initial).toBe(result.shared ? 1 : 2);
+  expect(result.peerOnly).toBe(true);
+  expect(result.allRetired).toBe(true);
 });
