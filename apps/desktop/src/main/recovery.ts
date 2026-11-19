@@ -14,8 +14,8 @@ export interface WindowRecoveryOptions<W extends RecoveryWindow> {
   /** Stop an in-flight load before an explicit retry supersedes it. */
   cancelReload(window: W): void;
   close(window: W): void;
-  /** Adapt to dialog.showMessageBox; failure has reload/close, unresponsive adds wait. */
-  showDialog(window: W, kind: RecoveryDialog): Promise<RecoveryChoice>;
+  /** The host dismisses the native sheet when its owning fault is retired. */
+  showDialog(window: W, kind: RecoveryDialog, signal: AbortSignal): Promise<RecoveryChoice>;
   onError?(error: unknown): void;
 }
 
@@ -42,7 +42,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     unresponsive: boolean;
     reloadInFlight: boolean;
     reloadGeneration: number;
-    dialogInFlight: boolean;
+    dialogController?: AbortController;
     dialog?: RecoveryDialog;
     utilityFailureChoice: boolean;
     pending?: "manual" | "auto";
@@ -62,10 +62,17 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
   const invalidate = (state: Episode) => {
     cancelStable(state);
     state.epoch++;
+    state.dialogController?.abort();
+    state.dialogController = undefined;
   };
   const beginFault = (state: Episode) => {
     invalidate(state);
     state.active = true;
+  };
+  const endUnresponsive = (state: Episode) => {
+    invalidate(state);
+    state.unresponsive = false;
+    state.dialog = state.utilityFailureChoice ? "failure" : undefined;
   };
   const report = (error: unknown) => options.onError?.(error);
   const awaitStability = (state: Episode) => {
@@ -81,7 +88,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
   };
 
   const pump = (state: Episode) => {
-    if (!live(state) || state.dialogInFlight) return;
+    if (!live(state) || state.dialogController) return;
     // A stalled load must not prevent the user from waiting, retrying or closing.
     const urgentDialog = state.dialog === "unresponsive";
     if (state.reloadInFlight && !urgentDialog) return;
@@ -125,11 +132,12 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     if (!state.dialog) return;
     const kind = state.dialog;
     state.dialog = undefined;
-    state.dialogInFlight = true;
+    const controller = new AbortController();
+    state.dialogController = controller;
     const epoch = state.epoch;
     void Promise.resolve()
       .then(() => {
-        if (live(state) && state.epoch === epoch) return options.showDialog(state.window, kind);
+        if (live(state) && state.epoch === epoch) return options.showDialog(state.window, kind, controller.signal);
         return undefined;
       })
       .then((choice) => {
@@ -150,12 +158,14 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
             options.cancelReload(state.window);
           }
           state.pending = "manual";
+        } else if (choice === "wait" && kind === "failure") {
+          state.utilityFailureChoice = false;
         }
         return undefined;
       })
       .catch(report)
       .finally(() => {
-        state.dialogInFlight = false;
+        if (state.dialogController === controller) state.dialogController = undefined;
         pump(state);
       });
   };
@@ -200,7 +210,6 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
         unresponsive: false,
         reloadInFlight: false,
         reloadGeneration: 0,
-        dialogInFlight: false,
         utilityFailureChoice: false,
       };
     },
@@ -232,12 +241,13 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     },
     rendererGone(window: W, reason: string) {
       if (reason === "clean-exit") return;
-      if (episode?.window === window) episode.unresponsive = false;
+      if (episode?.window === window && episode.unresponsive) endUnresponsive(episode);
       fault(window);
     },
     unresponsive(window: W) {
       const state = episode;
       if (!state || state.window !== window || !live(state)) return;
+      if (state.unresponsive && state.dialogController) return;
       beginFault(state);
       state.unresponsive = true;
       state.dialog = "unresponsive";
@@ -246,9 +256,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     responsive(window: W) {
       const state = episode;
       if (!state || state.window !== window || !live(state) || !state.unresponsive) return;
-      invalidate(state);
-      state.unresponsive = false;
-      if (state.dialog === "unresponsive") state.dialog = undefined;
+      endUnresponsive(state);
       awaitStability(state);
       pump(state);
     },
@@ -288,7 +296,9 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
       utility = { generation, state: "failed" };
       const state = episode;
       if (!state || !live(state) || state.loaded || state.unresponsive) return;
-      beginFault(state);
+      // Reconfirm against the latest failed generation without reopening the same sheet on every backoff.
+      if (state.utilityFailureChoice && state.dialogController) state.epoch++;
+      else beginFault(state);
       state.pending = undefined;
       state.utilityFailureChoice = true;
       state.dialog = "failure";

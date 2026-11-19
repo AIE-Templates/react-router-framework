@@ -199,7 +199,7 @@ describe("startServerProcess", () => {
       await flush();
       h.children[0].exit(1);
       await flush();
-      expect(showDialog).toHaveBeenCalledExactlyOnceWith(window, "failure");
+      expect(showDialog).toHaveBeenCalledExactlyOnceWith(window, "failure", expect.any(AbortSignal));
       await vi.advanceTimersByTimeAsync(500);
       h.children[1].ready();
       await flush();

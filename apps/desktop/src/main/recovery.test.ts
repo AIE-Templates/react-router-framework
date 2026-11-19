@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createWindowRecovery, RECOVERY_STABLE_MS, type RecoveryChoice } from "./recovery.ts";
+import { createWindowRecovery, RECOVERY_STABLE_MS, type RecoveryChoice, type RecoveryDialog } from "./recovery.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -15,11 +15,13 @@ function setup() {
   const reload = vi.fn<(_: typeof window, url: string) => void | Promise<unknown>>();
   const close = vi.fn<() => void>();
   const cancelReload = vi.fn<() => void>();
-  const showDialog = vi.fn<() => Promise<RecoveryChoice>>(() => {
-    const choice = deferred<RecoveryChoice>();
-    choices.push(choice);
-    return choice.promise;
-  });
+  const showDialog = vi.fn<(_win: typeof window, kind: RecoveryDialog, signal: AbortSignal) => Promise<RecoveryChoice>>(
+    () => {
+      const choice = deferred<RecoveryChoice>();
+      choices.push(choice);
+      return choice.promise;
+    },
+  );
   const onError = vi.fn<(error: unknown) => void>();
   const recovery = createWindowRecovery({
     current: () => current,
@@ -62,7 +64,7 @@ describe("window recovery", () => {
     s.fail();
     s.recovery.unresponsive(s.window);
     await flush();
-    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "unresponsive");
+    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "unresponsive", expect.any(AbortSignal));
     s.choices[0].resolve(choice);
     await flush();
     expect(s.close).toHaveBeenCalledTimes(choice === "close" ? 1 : 0);
@@ -111,6 +113,47 @@ describe("window recovery", () => {
     s.recovery.shutdown();
   });
 
+  it("releases a recovered window before its obsolete native dialog settles", async () => {
+    const s = setup();
+    s.recovery.unresponsive(s.window);
+    await flush();
+    s.recovery.responsive(s.window);
+    expect(s.showDialog.mock.calls[0][2].aborted).toBe(true);
+    s.recovery.rendererGone(s.window, "crashed");
+    await flush();
+    expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
+    s.choices[0].resolve("close");
+    await flush();
+    expect(s.close).not.toHaveBeenCalled();
+    s.recovery.shutdown();
+  });
+
+  it.each(["responsive", "crashed"] as const)(
+    "restores an outstanding startup failure choice after a hung renderer becomes %s",
+    async (outcome) => {
+      const s = setup();
+      s.recovery.utilityStarting(1);
+      s.recovery.utilityFailed(1);
+      await flush();
+      s.recovery.unresponsive(s.window);
+      await flush();
+      if (outcome === "responsive") s.recovery.responsive(s.window);
+      else s.recovery.rendererGone(s.window, "crashed");
+      await flush();
+      expect(s.showDialog.mock.calls.map(([, kind, signal]) => [kind, signal.aborted])).toEqual([
+        ["failure", true],
+        ["unresponsive", true],
+        ["failure", false],
+      ]);
+      s.choices[1].resolve("close");
+      s.choices[2].resolve("wait");
+      await flush();
+      expect(s.close).not.toHaveBeenCalled();
+      expect(s.reload).not.toHaveBeenCalled();
+      s.recovery.shutdown();
+    },
+  );
+
   it("ignores aborted navigation, subframes and clean renderer exits", async () => {
     const s = setup();
     s.recovery.didFailLoad(s.window, { errorCode: -3, isMainFrame: true });
@@ -128,7 +171,7 @@ describe("window recovery", () => {
     expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
     s.fail();
     await flush();
-    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "failure");
+    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "failure", expect.any(AbortSignal));
     s.choices[0].resolve("reload");
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(2);
@@ -151,8 +194,8 @@ describe("window recovery", () => {
     await vi.advanceTimersByTimeAsync(RECOVERY_STABLE_MS);
     s.recovery.rendererGone(s.window, "crashed");
     await flush();
-    expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
-    // The old native dialog must settle before another action can run.
+    expect(s.reload).toHaveBeenCalledTimes(2);
+    expect(s.showDialog.mock.calls[0][2].aborted).toBe(true);
     s.choices[0].resolve("reload");
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(2);
@@ -210,7 +253,7 @@ describe("window recovery", () => {
       expect(s.reload).toHaveBeenCalledTimes(phase === "ready" ? 1 : 0);
       s.recovery.utilityReady(2);
       expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/chat");
-      expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "unresponsive");
+      expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "unresponsive", expect.any(AbortSignal));
       s.recovery.shutdown();
     },
   );
@@ -271,7 +314,7 @@ describe("window recovery", () => {
     const s = setup();
     s.recovery.unresponsive(s.window);
     await flush();
-    expect(s.showDialog).toHaveBeenCalledWith(s.window, "unresponsive");
+    expect(s.showDialog).toHaveBeenCalledWith(s.window, "unresponsive", expect.any(AbortSignal));
     expect(s.reload).not.toHaveBeenCalled();
     s.recovery.responsive(s.window);
     s.choices[0].resolve("close");

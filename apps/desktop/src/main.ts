@@ -84,29 +84,35 @@ function packagedProfile(): string | undefined {
   }
 }
 
-async function askRecovery(win: BrowserWindow, kind: RecoveryDialog, shared: boolean): Promise<RecoveryChoice> {
+async function askRecovery(
+  win: BrowserWindow,
+  kind: RecoveryDialog,
+  shared: boolean,
+  signal: AbortSignal,
+): Promise<RecoveryChoice> {
   const waiting = kind === "unresponsive";
   if (!win.isVisible()) win.show();
-  const reload = shared ? "Reload affected windows" : "Reload";
-  const close = shared ? "Close affected windows" : "Close";
+  const choices = waiting ? (["wait", "reload", "close"] as const) : (["reload", "close", "wait"] as const);
+  const labels = {
+    wait: waiting ? "Wait" : "Cancel",
+    reload: shared ? "Reload affected windows" : "Reload",
+    close: shared ? "Close affected windows" : "Close",
+  };
   const options: Electron.MessageBoxOptions = {
     type: "warning",
     message: waiting ? "The window is not responding" : "The page failed to load",
     detail: shared
       ? "This choice applies to the affected windows sharing this renderer. Reloading or closing may discard unsaved changes."
       : "Reloading may discard unsaved changes.",
-    buttons: waiting ? ["Wait", reload, close] : [reload, close],
+    buttons: choices.map((choice) => labels[choice]),
+    signal,
     defaultId: 0,
-    cancelId: waiting ? 0 : 1,
+    cancelId: choices.indexOf("wait"),
   };
   const result = await dialog.showMessageBox(win, options);
-  // Closing the sheet's owner is not a decision to close the other windows.
-  if (shared && win.isDestroyed()) return "dismissed";
-  return waiting
-    ? ((["wait", "reload", "close"] as const)[result.response] ?? "wait")
-    : result.response === 0
-      ? "reload"
-      : "close";
+  // If the sheet lost its owner, peers that still need a decision can present their own.
+  if (signal.aborted || win.isDestroyed()) return "dismissed";
+  return choices[result.response] ?? "wait";
 }
 
 async function main(): Promise<void> {
@@ -149,7 +155,7 @@ async function main(): Promise<void> {
   if (chromePolicy.fallbackReason) log.info({ reason: chromePolicy.fallbackReason }, "using system window decoration");
   // After a crash getOSProcessId() no longer identifies the exited renderer.
   const rendererPids = new WeakMap<BrowserWindow, number>();
-  const dialogChoices = new Map<string, Promise<RecoveryChoice>>();
+  const dialogChoices = new Map<string, { owner: AbortSignal; choice: Promise<RecoveryChoice> }>();
   const makeRecovery = (owner: BrowserWindow) =>
     createWindowRecovery<BrowserWindow>({
       current: () => owner,
@@ -157,21 +163,21 @@ async function main(): Promise<void> {
       reload: (win, url) => win.loadURL(url),
       cancelReload: (win) => win.webContents.stop(),
       close: (win) => win.close(),
-      showDialog: (win, kind) => {
+      showDialog: (win, kind, signal) => {
         const pid =
           kind === "unresponsive"
             ? win.webContents.getOSProcessId()
             : win.webContents.isCrashed() && rendererPids.get(win);
-        if (!pid) return askRecovery(win, kind, false);
+        if (!pid) return askRecovery(win, kind, false, signal);
         const key = kind + ":" + pid;
         const pending = dialogChoices.get(key);
-        if (pending) return pending;
+        if (pending && !pending.owner.aborted) return pending.choice;
         const shared = [...ownedWindows.values()].some((other) => other !== win && rendererPids.get(other) === pid);
-        if (!shared) return askRecovery(win, kind, false);
-        const choice = askRecovery(win, kind, true).finally(() => {
-          dialogChoices.delete(key);
+        if (!shared) return askRecovery(win, kind, false, signal);
+        const choice = askRecovery(win, kind, true, signal).finally(() => {
+          if (dialogChoices.get(key)?.owner === signal) dialogChoices.delete(key);
         });
-        dialogChoices.set(key, choice);
+        dialogChoices.set(key, { owner: signal, choice });
         return choice;
       },
       onError: (err) => log.warn({ err }, "window recovery operation failed"),
@@ -311,7 +317,9 @@ async function main(): Promise<void> {
   const first = openMainWindow();
   const initialLoad = first.loaded ?? Promise.resolve();
 
+  let quitting = false;
   const reopenMainWindow = () => {
+    if (quitting) return;
     const { window, loaded } = openMainWindow();
     if (loaded) {
       void loaded.catch((err: unknown) => log.error({ err }, "reopened window failed to load"));
@@ -328,15 +336,15 @@ async function main(): Promise<void> {
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
-  let quitting = false;
-  app.on("before-quit", (event) => {
-    for (const recovery of recoveries) recovery.shutdown();
-    if (quitting) return;
+  // A window can veto quit while closing. Keep its recovery and shared server alive until all windows agree.
+  app.on("will-quit", function finishQuit(event) {
     event.preventDefault();
+    if (quitting) return;
     quitting = true;
-    // Cookies the jar wrote just before quitting reach the disk (HOST-09), alongside the utility's
-    // shutdown (itself bounded by its grace period); the flush is bounded too, so quitting cannot hang.
-    void Promise.allSettled([server?.shutdown(), flushForQuit(appSession.cookies, log)]).finally(() => app.quit());
+    void Promise.allSettled([server?.shutdown(), flushForQuit(appSession.cookies, log)]).finally(() => {
+      app.off("will-quit", finishQuit);
+      app.quit();
+    });
   });
 
   // did-fail-load is handled by recovery; startup failure must not bypass the native retry path.
