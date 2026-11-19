@@ -27,9 +27,13 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     const peer = await opened;
     await waitForApp(peer);
     const draft = peer.getByRole("textbox", { name: "Module draft" });
+    await peer.bringToFront();
     await draft.fill("unsaved in peer");
+    await expect(draft).toHaveValue("unsaved in peer");
+    await page.bringToFront();
     await choose(page, "Color scheme", "dark", "Dark");
     await expect(peer.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+    await peer.bringToFront();
     await choose(peer, "Direction", "rtl", "RTL");
     await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
     await expect(draft).toHaveValue("unsaved in peer");
