@@ -24,6 +24,15 @@ it("uses client navigation while preserving the basename, query settings and dra
   fireEvent.change(draft, { target: { value: "Unsaved draft" } });
   const home = screen.getByRole("link", { name: "Home" });
   expect(home).toHaveAttribute("href", "/workspace?header=standalone&keep=1&shell=navigation");
+  for (const [name, path] of [
+    ["Settings", "settings"],
+    ["Chat demo", "chat"],
+  ]) {
+    const link = screen.getByRole("link", { name });
+    expect(link).toHaveAttribute("href", "/workspace/" + path);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener");
+  }
   fireEvent.click(home);
   await waitFor(() => expect(router.state.location.search).toContain("shell=navigation"));
   expect(draft).toHaveValue("Unsaved draft");
