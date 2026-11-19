@@ -159,3 +159,18 @@ it("catches peer writes during hydration and ignores a snapshot returned after u
   await delayed.promise;
   expect(change).toHaveBeenCalledOnce();
 });
+
+it("ignores malformed preference subscriptions before registering native callbacks", async () => {
+  const bridge = await load();
+  wire.invoke.mockResolvedValue({});
+  const subscribe = bridge.subscribePreferences!;
+  for (const args of [
+    [{}, null],
+    [null, () => {}],
+    [[], () => {}],
+  ]) {
+    Reflect.apply(subscribe, bridge, args)();
+  }
+  expect(wire.on).not.toHaveBeenCalled();
+  expect(wire.invoke).not.toHaveBeenCalled();
+});

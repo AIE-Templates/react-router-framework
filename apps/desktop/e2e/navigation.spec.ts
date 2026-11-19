@@ -1,4 +1,4 @@
-import { expect, test } from "./desktop.ts";
+import { expect, test, waitForApp } from "./desktop.ts";
 
 interface NavigationProbe {
   externalUrls: string[];
@@ -68,6 +68,13 @@ test("application iframes load but external redirects never open the system brow
       .toContainEqual({ url: "https://example.test/e2e-redirect", isMainFrame: false, prevented: true });
     expect(await app.evaluate(() => globalThis.e2eNavigationProbe?.externalUrls)).toEqual([]);
     await expect(page).toHaveURL("app://app/__e2e/navigation/page");
+    await page.evaluate(() => {
+      window.open("https://example.test/external");
+    });
+    await expect
+      .poll(() => app.evaluate(() => globalThis.e2eNavigationProbe?.externalUrls))
+      .toEqual(["https://example.test/external"]);
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
   } finally {
     await app.evaluate(() => {
       globalThis.e2eNavigationProbe?.dispose();
@@ -119,4 +126,130 @@ test("an ordinary target=_blank link opens its route in a separate window", asyn
   await child.close();
   await expect(page).toHaveURL("app://app/");
   expect(await page.evaluate(() => window.desktop!.setPref("afterClose", "ok"))).toEqual({ status: "applied" });
+});
+
+test("the child uses the current native theme at creation and honors explicit geometry", async ({
+  desktop: { app, page },
+}) => {
+  const initial = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase(),
+  );
+  const dark = initial !== "#17191d";
+  expect(
+    await page.evaluate(async (useDark) => window.desktop!.syncVisualTheme!(useDark ? "dark" : "light"), dark),
+  ).toMatchObject({ persistence: "saved" });
+  const created = app.evaluate(
+    ({ BrowserWindow }) =>
+      new Promise<{ color: string; x?: number; width?: number }>((resolve) => {
+        BrowserWindow.getAllWindows()[0].webContents.once("did-create-window", (child, { options }) => {
+          resolve({ color: child.getBackgroundColor().toLowerCase(), x: options.x, width: options.width });
+        });
+      }),
+  );
+  await page.evaluate(() => {
+    window.open("/?sized", "_blank", "left=80,width=650");
+  });
+  expect(await created).toEqual({ color: dark ? "#17191d" : "#ffffff", x: 80, width: 650 });
+});
+
+test("a fullscreen child receives its own SSR window state on reload", async ({ desktop: { app, page } }) => {
+  const opened = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?fullscreen", "_blank", "noopener");
+  });
+  const peer = await opened;
+  await waitForApp(peer);
+  await app.evaluate(
+    ({ BrowserWindow }) =>
+      new Promise<void>((resolve) => {
+        const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("?fullscreen"))!;
+        win.once("enter-full-screen", () => resolve());
+        win.setFullScreen(true);
+      }),
+  );
+  const html = await (await peer.reload())!.text();
+  expect(html).toContain('data-fullscreen="true"');
+  expect(await (await page.reload())!.text()).toContain('data-fullscreen="false"');
+});
+
+test("a replaced utility serves all windows without discarding live documents", async ({ desktop: { app, page } }) => {
+  const opened = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?peer", "_blank", "noopener");
+  });
+  const peer = await opened;
+  await waitForApp(peer);
+  for (const document of [page, peer]) await document.evaluate(() => Reflect.set(window, "recoveryDraft", "unsaved"));
+  const pid = await app.evaluate(({ app: host }) => {
+    const previous = host.getAppMetrics().find((metric) => metric.name === "web-server")!.pid;
+    process.kill(previous, "SIGKILL");
+    return previous;
+  });
+  const later = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?during-restart", "_blank", "noopener");
+  });
+  const duringRestart = await later;
+  await waitForApp(duringRestart);
+  await expect(duringRestart).toHaveURL("app://app/?during-restart");
+  await expect
+    .poll(() =>
+      app.evaluate(
+        ({ app: host }, previous) =>
+          host.getAppMetrics().some((metric) => metric.name === "web-server" && metric.pid !== previous),
+        pid,
+      ),
+    )
+    .toBe(true);
+  for (const document of [page, peer]) {
+    await expect.poll(() => document.evaluate(async () => (await fetch("/api/health")).ok)).toBe(true);
+    expect(await document.evaluate(() => Reflect.get(window, "recoveryDraft"))).toBe("unsaved");
+  }
+});
+
+test("renderer recovery reloads affected documents and preserves unrelated windows", async ({
+  desktop: { page, app },
+}) => {
+  const shared = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?opener");
+  });
+  const child = await shared;
+  await waitForApp(child);
+  expect(await child.evaluate(() => window.opener?.location.href)).toBe("app://app/");
+  const independent = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?independent", "_blank", "noopener");
+  });
+  const other = await independent;
+  await waitForApp(other);
+  await other.evaluate(() => Reflect.set(window, "unrelatedDraft", "leave intact"));
+  const recovered = app.evaluate(({ BrowserWindow }) => {
+    const windows = BrowserWindow.getAllWindows();
+    const target = windows.find((win) => win.webContents.getURL().includes("?opener"))!;
+    const pid = target.webContents.getOSProcessId();
+    const affected = windows.filter((win) => win.webContents.getOSProcessId() === pid);
+    const loads = affected.map(
+      (win) => new Promise<void>((resolve) => win.webContents.once("did-finish-load", () => resolve())),
+    );
+    target.webContents.forcefullyCrashRenderer();
+    return Promise.all(loads);
+  });
+  await recovered;
+  // Playwright retains the crashed page targets. Inspect the replacement renderers through main.
+  await expect
+    .poll(() =>
+      app.evaluate(async ({ BrowserWindow }) => {
+        return Promise.all(
+          BrowserWindow.getAllWindows().map(async (win) => {
+            const hydrated: unknown = await win.webContents.executeJavaScript(
+              "document.documentElement.dataset.hydrated",
+            );
+            return hydrated === "true" ? win.webContents.getURL() : "";
+          }),
+        );
+      }),
+    )
+    .toEqual(expect.arrayContaining(["app://app/", "app://app/?opener", "app://app/?independent"]));
+  expect(await other.evaluate(() => Reflect.get(window, "unrelatedDraft"))).toBe("leave intact");
 });

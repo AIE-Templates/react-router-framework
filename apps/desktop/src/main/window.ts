@@ -1,5 +1,5 @@
 import { DESKTOP_BOOTSTRAP_ARGUMENT, type DesktopBootstrap } from "@repo/shared";
-import { BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, type Session, shell } from "electron";
+import { BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, type Session, screen, shell } from "electron";
 
 import { isAppUrl } from "./app-url.ts";
 import type { BootProfile } from "./boot-profile.ts";
@@ -23,7 +23,7 @@ export interface MainWindowOptions {
   profile: BootProfile;
   /** Development: forward the page's console to the main log, so Vite's HMR messages show up. */
   logRendererConsole?: boolean;
-  chrome?: { bootstrap: DesktopBootstrap; policy: ChromePolicy; visualThemeStore?: VisualThemeStore };
+  chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualThemeStore?: VisualThemeStore };
 }
 
 const EXTERNAL_SCHEMES = new Set(["http:", "https:", "mailto:"]);
@@ -104,17 +104,16 @@ export function isTrustedSender(event: IpcMainEvent | IpcMainInvokeEvent, win: B
  * `app://app` (external web links go to the system browser).
  */
 export function createMainWindow(options: MainWindowOptions): BrowserWindow {
-  const win = new BrowserWindow(nativeOptions(options));
-  configureWindow(win, options);
+  const policy = options.chrome?.currentPolicy();
+  const win = new BrowserWindow({ width: 1200, height: 800, ...nativeOptions(options, policy) });
+  configureWindow(win, options, policy);
   return win;
 }
 
-function nativeOptions({ session, preloadPath, chrome, appVersion }: MainWindowOptions) {
+function nativeOptions({ session, preloadPath, chrome, appVersion }: MainWindowOptions, policy?: ChromePolicy) {
   return {
-    width: 1200,
-    height: 800,
     show: false,
-    ...(chrome ? chromeWindowOptions(chrome.policy) : { backgroundColor: "#ffffff" }),
+    ...(policy ? chromeWindowOptions(policy) : { backgroundColor: "#ffffff" }),
     webPreferences: {
       session,
       preload: preloadPath,
@@ -131,15 +130,15 @@ function nativeOptions({ session, preloadPath, chrome, appVersion }: MainWindowO
   };
 }
 
-function configureWindow(win: BrowserWindow, options: MainWindowOptions) {
+function configureWindow(win: BrowserWindow, options: MainWindowOptions, policy?: ChromePolicy) {
   const { chrome, profile, log, logRendererConsole, onChildWindow } = options;
-  if (chrome) {
-    installWindowChrome(win, chrome.policy, (event) => isTrustedSender(event, win), log, chrome.visualThemeStore);
+  if (chrome && policy) {
+    installWindowChrome(win, policy, (event) => isTrustedSender(event, win), log, chrome.visualThemeStore);
     log.info(
       {
-        requestedMode: chrome.policy.requestedMode,
-        resolvedMode: chrome.policy.resolvedMode,
-        fallbackReason: chrome.policy.fallbackReason,
+        requestedMode: policy.requestedMode,
+        resolvedMode: policy.resolvedMode,
+        fallbackReason: policy.fallbackReason,
       },
       "window chrome policy",
     );
@@ -181,15 +180,34 @@ function configureWindow(win: BrowserWindow, options: MainWindowOptions) {
     else confineSubframe(details);
   });
   win.webContents.on("will-frame-navigate", confineSubframe);
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url, features }) => {
     if (isAppUrl(url)) {
-      return { action: "allow", outlivesOpener: true, overrideBrowserWindowOptions: nativeOptions(options) };
+      const childPolicy = chrome?.currentPolicy();
+      const bounds = win.getBounds();
+      const area = screen.getDisplayMatching(bounds).workArea;
+      const named = new Set(
+        features
+          .toLowerCase()
+          .split(",")
+          .map((part) => part.split("=")[0].trim()),
+      );
+      return {
+        action: "allow",
+        outlivesOpener: true,
+        overrideBrowserWindowOptions: {
+          ...nativeOptions(options, childPolicy),
+          ...(!named.has("width") && { width: bounds.width }),
+          ...(!named.has("height") && { height: bounds.height }),
+          ...(!named.has("left") && !named.has("x") && { x: cascade(bounds.x, bounds.width, area.x, area.width) }),
+          ...(!named.has("top") && !named.has("y") && { y: cascade(bounds.y, bounds.height, area.y, area.height) }),
+        },
+      };
     }
     openExternal(url, log);
     return { action: "deny" };
   });
   win.webContents.on("did-create-window", (child, details) => {
-    configureWindow(child, options);
+    configureWindow(child, options, chrome?.currentPolicy());
     onChildWindow?.(child, details.url);
   });
   win.webContents.on("render-process-gone", (_event, details) => {
@@ -201,4 +219,10 @@ function configureWindow(win: BrowserWindow, options: MainWindowOptions) {
       log.info({ level: event.level, source: safeUrl(event.sourceId) }, `renderer: ${redactLogUrls(event.message)}`);
     });
   }
+}
+
+// Keep the new title bar visible even when its opener is at the edge of a display.
+function cascade(position: number, size: number, start: number, extent: number): number {
+  const end = start + extent - size;
+  return Math.max(start, Math.min(end, position + 24 <= end ? position + 24 : position - 24));
 }

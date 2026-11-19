@@ -121,12 +121,14 @@ async function main(): Promise<void> {
   });
   if (shell.kind !== "desktop") throw new Error("Unsupported desktop platform");
   const requested = process.env.DESKTOP_CHROME_MODE;
-  const chromePolicy = resolveChromePolicy({
-    platform: shell.platform,
-    requestedMode: requested === "system-decorated" || requested === "custom-controls" ? requested : "native-overlay",
-    themePreference: visualThemeStore.current(),
-    darkColors: nativeTheme.shouldUseDarkColors,
-  });
+  const currentChromePolicy = () =>
+    resolveChromePolicy({
+      platform: shell.platform,
+      requestedMode: requested === "system-decorated" || requested === "custom-controls" ? requested : "native-overlay",
+      themePreference: visualThemeStore.current(),
+      darkColors: nativeTheme.shouldUseDarkColors,
+    });
+  const chromePolicy = currentChromePolicy();
   const bootstrap: DesktopBootstrap = { protocolVersion: 1, shell, mode: chromePolicy.resolvedMode };
   if (chromePolicy.fallbackReason) log.info({ reason: chromePolicy.fallbackReason }, "using system window decoration");
   const makeRecovery = (owner: BrowserWindow) =>
@@ -203,11 +205,12 @@ async function main(): Promise<void> {
           DESKTOP_SMOKE: smoke ? "1" : "",
           DESKTOP_E2E: e2e ? "1" : "",
         },
-        onLifecycle: ({ generation, state, restarted }) => {
-          lifecycle = { generation, state, restarted };
+        onLifecycle: (event) => {
+          lifecycle = event;
+          const { generation, state } = event;
           for (const recovery of recoveries) {
             if (state === "starting") recovery.utilityStarting(generation);
-            else if (state === "ready") recovery.utilityReady(generation, { restarted });
+            else if (state === "ready") recovery.utilityReady(generation);
             else recovery.utilityFailed(generation);
           }
         },
@@ -236,7 +239,7 @@ async function main(): Promise<void> {
   const windowOptions = {
     onChildWindow: trackWindow,
     session: appSession,
-    chrome: { bootstrap, policy: chromePolicy, visualThemeStore },
+    chrome: { bootstrap, currentPolicy: currentChromePolicy, visualThemeStore },
     preloadPath: join(__dirname, "preload.cjs"),
     appVersion: app.getVersion(),
     log,
@@ -245,20 +248,7 @@ async function main(): Promise<void> {
   };
   // Every window, the first or one made on `activate`, goes through the keeper and gets the same
   // `closed` bookkeeping; a second close followed by a Dock click reopens like the first did.
-  windows = createWindowKeeper(() =>
-    createMainWindow({
-      ...windowOptions,
-      chrome: {
-        ...windowOptions.chrome,
-        policy: resolveChromePolicy({
-          platform: shell.platform,
-          requestedMode: chromePolicy.requestedMode,
-          themePreference: visualThemeStore.current(),
-          darkColors: nativeTheme.shouldUseDarkColors,
-        }),
-      },
-    }),
-  );
+  windows = createWindowKeeper(() => createMainWindow(windowOptions));
   function trackWindow(win: BrowserWindow, initialUrl: string) {
     const id = win.webContents.id;
     ownedWindows.set(id, win);
@@ -267,13 +257,22 @@ async function main(): Promise<void> {
     recovery.track(win, initialUrl);
     if (lifecycle?.state === "starting") recovery.utilityStarting(lifecycle.generation);
     if (lifecycle?.state === "failed") recovery.utilityFailed(lifecycle.generation);
-    win.webContents.on("did-finish-load", () => recovery.documentLoaded(win, win.webContents.getURL()));
+    // Chromium also finishes an internal error document after did-fail-load,
+    // and getURL() still returns the failed app URL. Only a committed navigation can recover.
+    let committed = false;
+    win.webContents.on("did-navigate", () => {
+      committed = true;
+    });
+    win.webContents.on("did-finish-load", () => {
+      if (committed) recovery.documentLoaded(win, win.webContents.getURL());
+    });
     win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) =>
       recovery.sameDocumentNavigated(win, url, isMainFrame),
     );
-    win.webContents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) =>
-      recovery.didFailLoad(win, { errorCode, isMainFrame }),
-    );
+    win.webContents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) => {
+      if (isMainFrame && errorCode !== -3) committed = false;
+      recovery.didFailLoad(win, { errorCode, isMainFrame });
+    });
     win.webContents.on("render-process-gone", (_event, details) => recovery.rendererGone(win, details.reason));
     win.on("unresponsive", () => recovery.unresponsive(win));
     win.on("responsive", () => recovery.responsive(win));

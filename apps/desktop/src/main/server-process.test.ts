@@ -190,9 +190,9 @@ describe("startServerProcess", () => {
       showDialog,
     });
     recovery.track(window, "app://app/");
-    const h = harness({ autoReady: false }, ({ generation, state, restarted }) => {
+    const h = harness({ autoReady: false }, ({ generation, state }) => {
       if (state === "starting") recovery.utilityStarting(generation);
-      else if (state === "ready") recovery.utilityReady(generation, { restarted });
+      else if (state === "ready") recovery.utilityReady(generation);
       else recovery.utilityFailed(generation);
     });
     try {

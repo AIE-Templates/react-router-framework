@@ -128,14 +128,34 @@ export function useSetPreference(): (key: string, value: PreferenceValue | null)
 /** Refresh active loaders when another desktop window commits a preference. */
 export function DesktopPreferenceSync({ prefs }: { prefs: Preferences }) {
   const { revalidate } = useRevalidator();
-  const refresh = useEffectEvent(() => {
-    void revalidate();
-  });
+  const refresh = useEffectEvent(() => revalidate());
   const rendered = useEffectEvent(() => prefs);
   useEffect(() => {
     const bridge = window.desktop;
-    if (hasPreferences(bridge)) return bridge.subscribePreferences?.(rendered(), refresh);
-    return undefined;
+    if (!hasPreferences(bridge) || !bridge.subscribePreferences) return undefined;
+    let dirty = false;
+    let active = true;
+    let running = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      dirty = true;
+      if (running || !active) return;
+      running = true;
+      // Batch a burst and keep at most one loader refresh in flight per peer.
+      timer = setTimeout(() => {
+        dirty = false;
+        void refresh().finally(() => {
+          running = false;
+          if (dirty && active) schedule();
+        });
+      }, 32);
+    };
+    const release = bridge.subscribePreferences(rendered(), schedule);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      release();
+    };
   }, []);
   return null;
 }

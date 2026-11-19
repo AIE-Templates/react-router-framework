@@ -165,8 +165,8 @@ describe("window recovery", () => {
     s.fail();
     await flush();
     expect(s.reload).not.toHaveBeenCalled();
-    s.recovery.utilityReady(2, { restarted: true });
-    s.recovery.utilityReady(2, { restarted: true });
+    s.recovery.utilityReady(2);
+    s.recovery.utilityReady(2);
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(1);
     s.fail();
@@ -175,7 +175,7 @@ describe("window recovery", () => {
     s.recovery.utilityStarting(3);
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(1);
-    s.recovery.utilityReady(3, { restarted: true });
+    s.recovery.utilityReady(3);
     await flush();
     // The stale dialog result cannot create a manual retry; auto quota is already used.
     expect(s.reload).toHaveBeenCalledTimes(1);
@@ -191,7 +191,7 @@ describe("window recovery", () => {
     await flush();
     expect(s.reload).not.toHaveBeenCalled();
     s.recovery.utilityStarting(2);
-    s.recovery.utilityReady(2, { restarted: true });
+    s.recovery.utilityReady(2);
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(1);
   });
@@ -232,10 +232,9 @@ describe("window recovery", () => {
     if (action === "shutdown") s.recovery.shutdown();
     s.choices[0].resolve("reload");
     await flush();
-    s.recovery.utilityReady(2, { restarted: true });
+    s.recovery.utilityReady(2);
     await flush();
-    expect(s.reload).toHaveBeenCalledTimes(action === "replace" ? 1 : 0);
-    expect(s.reload.mock.calls.every(([window]) => window !== s.window)).toBe(true);
+    expect(s.reload).not.toHaveBeenCalled();
   });
 
   it("handles reload rejection and dialog rejection without an automatic loop", async () => {
@@ -274,19 +273,21 @@ describe("window recovery", () => {
     await flush();
     expect(s.reload).not.toHaveBeenCalled();
     s.recovery.utilityStarting(3);
-    s.recovery.utilityReady(3, { restarted: true });
+    s.recovery.utilityReady(3);
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(1);
   });
 
-  it("shares one automatic quota across consecutive utility restarts", async () => {
+  it("shares one automatic quota across document failures in consecutive utility restarts", async () => {
     const s = setup();
     s.recovery.utilityStarting(2);
-    s.recovery.utilityReady(2, { restarted: true });
+    s.fail();
+    s.recovery.utilityReady(2);
     await flush();
     s.recovery.utilityStarting(3);
-    s.recovery.utilityReady(3, { restarted: true });
-    s.recovery.utilityReady(3, { restarted: true });
+    s.fail();
+    s.recovery.utilityReady(3);
+    s.recovery.utilityReady(3);
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(1);
     expect(s.showDialog).toHaveBeenCalledTimes(1);
@@ -321,7 +322,7 @@ describe("window recovery", () => {
     s.choices[0].resolve("reload");
     await flush();
     expect(s.reload).not.toHaveBeenCalled();
-    s.recovery.utilityReady(2, { restarted: true });
+    s.recovery.utilityReady(2);
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(1);
   });
@@ -331,7 +332,7 @@ describe("window recovery", () => {
     s.recovery.utilityStarting(1);
     s.recovery.utilityFailed(1);
     s.recovery.utilityStarting(2);
-    s.recovery.utilityReady(2, { restarted: true });
+    s.recovery.utilityReady(2);
     await flush();
     expect(s.showDialog).toHaveBeenCalledTimes(1);
     expect(s.reload).not.toHaveBeenCalled();
@@ -387,4 +388,15 @@ describe("window recovery", () => {
     await flush();
     expect(s.showDialog).toHaveBeenCalledTimes(1);
   });
+});
+
+it("reserves automatic recovery for a failed document when opened during a utility restart", async () => {
+  const s = setup();
+  s.recovery.utilityStarting(2);
+  s.recovery.utilityReady(2);
+  expect(s.reload).not.toHaveBeenCalled();
+  s.fail();
+  await flush();
+  expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
+  expect(s.showDialog).not.toHaveBeenCalled();
 });

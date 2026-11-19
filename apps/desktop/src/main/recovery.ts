@@ -27,7 +27,7 @@ export const RECOVERY_STABLE_MS = 30_000;
  * Forward did-navigate-in-page to sameDocumentNavigated with its isMainFrame flag.
  * Utility generations must increase monotonically. Starting includes the restart backoff interval
  * (report the upcoming generation there); ready can be reported by both ready and onRestart, with
- * restarted=true for replacement processes. Failure ends the readiness wait with a native choice.
+ * the same generation. Readiness releases pending retries; healthy documents keep their renderer state.
  * Before quit call shutdown. Neither user retry nor this coordinator starts a utility process.
  */
 export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRecoveryOptions<W>) {
@@ -251,11 +251,13 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
         if (episode.utilityFailureChoice) cancelStable(episode);
         else {
           invalidate(episode);
+          // Preserve the recovery need when a generation change retires a native dialog.
+          if (episode.active && !episode.loaded && !episode.unresponsive) episode.pending ??= "auto";
           episode.dialog = undefined;
         }
       }
     },
-    utilityReady(generation: number, { restarted }: { restarted: boolean }) {
+    utilityReady(generation: number) {
       if (stopped || (utility && generation < utility.generation)) return;
       utility = { generation, state: "ready" };
       const state = episode;
@@ -265,17 +267,18 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
         pump(state);
         return;
       }
-      if (restarted || state.pending) {
+      if (state.pending) {
         beginFault(state);
-        state.pending ??= "auto";
         pump(state);
+      } else {
+        awaitStability(state);
       }
     },
     utilityFailed(generation: number) {
       if (stopped || (utility && generation < utility.generation)) return;
       utility = { generation, state: "failed" };
       const state = episode;
-      if (!state || !live(state)) return;
+      if (!state || !live(state) || state.loaded) return;
       beginFault(state);
       state.pending = undefined;
       state.utilityFailureChoice = true;

@@ -152,6 +152,8 @@ const bridge: DesktopBridge = {
     }
   },
   subscribePreferences(rendered, listener) {
+    if (!rendered || typeof rendered !== "object" || Array.isArray(rendered) || typeof listener !== "function")
+      return () => {};
     let active = true;
     const changed = () => {
       if (active) listener();
