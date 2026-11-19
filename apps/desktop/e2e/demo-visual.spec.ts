@@ -17,27 +17,50 @@ async function choose(page: Page, label: string, value: string, option: string) 
 
 // These controls and layout expectations belong to the disposable demo.
 test.describe("demo appearance", { tag: "@demo" }, () => {
-  test("appearance changes reach other open windows without losing their drafts", async ({
-    desktop: { app, page },
+  test("settings update Home and Chat while all three windows keep their state", async ({
+    desktop: { app, page: home },
   }) => {
-    const opened = app.waitForEvent("window");
-    await page.evaluate(() => {
-      window.open("/");
-    });
-    const peer = await opened;
-    await waitForApp(peer);
-    const draft = peer.getByRole("textbox", { name: "Module draft" });
-    await peer.bringToFront();
-    await draft.fill("unsaved in peer");
-    await expect(draft).toHaveValue("unsaved in peer");
-    await page.bringToFront();
-    await choose(page, "Color scheme", "dark", "Dark");
-    await expect(peer.locator("html")).toHaveAttribute("data-color-scheme", "dark");
-    await expect(peer.locator("html")).toHaveAttribute("data-mantine-color-scheme", "dark");
-    await peer.bringToFront();
-    await choose(peer, "Direction", "rtl", "RTL");
-    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
-    await expect(draft).toHaveValue("unsaved in peer");
+    const openFromHome = async (name: string) => {
+      await home.bringToFront();
+      const link = home.getByRole("link", { name, exact: true });
+      await expect(link).toHaveAttribute("target", "_blank");
+      const opened = app.waitForEvent("window");
+      await link.click();
+      const page = await opened;
+      await waitForApp(page);
+      expect(await page.evaluate(() => window.opener === null)).toBe(true);
+      return page;
+    };
+    const note = home.getByRole("textbox", { name: "Module draft" });
+    await note.fill("Home draft");
+    const chat = await openFromHome("Chat demo");
+    await expect(chat).toHaveURL("app://app/chat");
+    await chat.bringToFront();
+    const message = chat.getByRole("textbox", { name: "Message" });
+    await message.fill("Review the new settings");
+    await chat.getByRole("button", { name: "Send", exact: true }).click();
+    const sent = chat.getByRole("log").getByText("Review the new settings", { exact: true });
+    await expect(sent).toBeVisible();
+    await message.fill("Unsent chat draft");
+
+    const settings = await openFromHome("Settings");
+    await expect(settings).toHaveURL("app://app/settings");
+    await expect(home).toHaveURL("app://app/");
+    expect(app.windows()).toHaveLength(3);
+    await settings.bringToFront();
+    await choose(settings, "Color scheme", "dark", "Dark");
+    await choose(settings, "Direction", "rtl", "RTL");
+    await choose(settings, "Motion", "reduce", "Reduced");
+    for (const page of [settings, home, chat]) {
+      await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+      await expect(page.locator("html")).toHaveAttribute("data-mantine-color-scheme", "dark");
+      await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+      await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
+    }
+    await settings.close();
+    await expect(note).toHaveValue("Home draft");
+    await expect(sent).toBeVisible();
+    await expect(message).toHaveValue("Unsent chat draft");
   });
 
   test("a failed appearance save leaves controls usable and the next command recovers persistence", async ({
