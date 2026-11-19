@@ -102,3 +102,31 @@ test("open peer windows revalidate on preference writes and removals", async ({ 
     expect((await response.text()).includes(VALUE)).toBe(value !== null);
   }
 });
+
+test("a burst of preference changes reaches the peer's loaders with the final value", async ({
+  desktop: { app, page },
+}) => {
+  const opened = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?burst", "_blank", "noopener");
+  });
+  const peer = await opened;
+  await waitForApp(peer);
+  let requests = 0;
+  peer.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith(".data")) requests++;
+  });
+  const final = "final-peer-value";
+  const result = peer.waitForResponse(
+    async (response) =>
+      new URL(response.url()).pathname.endsWith(".data") && response.ok() && (await response.text()).includes(final),
+  );
+  await page.evaluate(async (last) => {
+    for (let i = 0; i < 60; i++) {
+      const update = await window.desktop!.setPref("burst", i === 59 ? last : i);
+      if (update.status !== "applied") throw new Error("Preference rejected");
+    }
+  }, final);
+  await result;
+  expect(requests).toBeLessThan(60);
+});

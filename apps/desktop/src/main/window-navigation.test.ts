@@ -24,7 +24,7 @@ function setup(logRendererConsole = false) {
   const contents = Object.assign(new EventEmitter(), {
     mainFrame: {},
     ipc: native.ipc,
-    setWindowOpenHandler: vi.fn<(...args: unknown[]) => void>(),
+    setWindowOpenHandler: vi.fn<Electron.WebContents["setWindowOpenHandler"]>(),
   });
   const win = Object.assign(new EventEmitter(), { webContents: contents });
   native.createWindow.mockReturnValue(win);
@@ -128,4 +128,19 @@ it("logs only main-frame console messages and redacts source and message URLs", 
     { level: "error", source: "app://app/entry.js" },
     "renderer: Failed https://example.test/api",
   );
+});
+
+it.each([
+  ["https://example.test/path", true],
+  ["mailto:test@example.test", true],
+  ["app://other/path", false],
+  ["about:blank", false],
+  ["file:///tmp/example", false],
+] as const)("handles a popup targeting %s", (url, external) => {
+  const { contents } = setup();
+  const handler = contents.setWindowOpenHandler.mock.calls[0][0];
+  expect(
+    handler({ url, frameName: "", features: "", disposition: "new-window", referrer: { url: "", policy: "default" } }),
+  ).toEqual({ action: "deny" });
+  expect(native.openExternal.mock.calls).toEqual(external ? [[url]] : []);
 });

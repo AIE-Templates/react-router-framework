@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { PortFetch } from "@repo/port-fetch";
+import { type PortFetch, PortClosedError } from "@repo/port-fetch";
 import type { DesktopRequest } from "@repo/shared";
 import type { WebRequestFilter } from "electron";
 
@@ -21,7 +21,7 @@ export interface ProtocolSession {
     onBeforeSendHeaders(
       filter: WebRequestFilter,
       listener: (
-        details: { id: number; webContentsId?: number; requestHeaders: Record<string, string> },
+        details: { id: number; webContentsId?: number; resourceType?: string; requestHeaders: Record<string, string> },
         next: (response: { requestHeaders: Record<string, string> }) => void,
       ) => void,
     ): void;
@@ -62,12 +62,17 @@ export function registerAppProtocol(
   // shapeRequestHeaders strips it upstream. Electron allows one listener per webRequest event.
   const header = "x-desktop-protocol-request";
   const prefix = randomUUID() + ":";
-  const pending = new Map<string, { controller: AbortController; contentsId?: number }>();
+  const pending = new Map<string, { controller: AbortController; contentsId?: number; mainDocument: boolean }>();
   session.webRequest.onBeforeSendHeaders(
     { urls: [APP_ORIGIN + "/*"] },
-    ({ id, webContentsId, requestHeaders }, next) => {
+    ({ id, webContentsId, resourceType, requestHeaders }, next) => {
       const key = prefix + id;
-      if (!pending.has(key)) pending.set(key, { controller: new AbortController(), contentsId: webContentsId });
+      if (!pending.has(key))
+        pending.set(key, {
+          controller: new AbortController(),
+          contentsId: webContentsId,
+          mainDocument: resourceType === "mainFrame",
+        });
       for (const name of Object.keys(requestHeaders)) {
         if (name.toLowerCase() === header) delete requestHeaders[name];
       }
@@ -129,6 +134,9 @@ export function registerAppProtocol(
       const { status, message } = failureStatus(err);
       // Never the full URL: query strings can carry tokens.
       log.error({ err, method: request.method, path: safeUrl(request.url, "path"), status }, "app:// request failed");
+      // Let Electron report a failed main-document transport to the owning window's recovery.
+      // An ordinary HTTP error from the host is still returned intact above.
+      if (entry?.mainDocument && err instanceof PortClosedError) return Response.error();
       return new Response(message, { status, headers: { "content-type": "text/plain", "retry-after": "1" } });
     } finally {
       // Once Electron has the response, abandoning it cancels the body directly.
