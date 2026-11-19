@@ -16,7 +16,7 @@ import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
 import { createPrefsStore, installPrefsIpc } from "./main/prefs.ts";
 import { registerAppProtocol } from "./main/protocol.ts";
-import { createWindowRecovery } from "./main/recovery.ts";
+import { createWindowRecovery, type RecoveryChoice, type RecoveryDialog } from "./main/recovery.ts";
 import { resolveRunModes } from "./main/run-modes.ts";
 import { startServerProcess, type UtilityLifecycle } from "./main/server-process.ts";
 import { configureUserData } from "./main/user-data.ts";
@@ -94,6 +94,31 @@ function packagedProfile(): string | undefined {
   }
 }
 
+async function askRecovery(win: BrowserWindow, kind: RecoveryDialog, shared: boolean): Promise<RecoveryChoice> {
+  const waiting = kind === "unresponsive";
+  if (!win.isVisible()) win.show();
+  const reload = shared ? "Reload affected windows" : "Reload";
+  const close = shared ? "Close affected windows" : "Close";
+  const options: Electron.MessageBoxOptions = {
+    type: "warning",
+    message: waiting ? "The window is not responding" : "The page failed to load",
+    detail: shared
+      ? "This choice applies to the affected windows sharing this renderer. Reloading or closing may discard unsaved changes."
+      : "Reloading may discard unsaved changes.",
+    buttons: waiting ? ["Wait", reload, close] : [reload, close],
+    defaultId: 0,
+    cancelId: waiting ? 0 : 1,
+  };
+  const result = await dialog.showMessageBox(win, options);
+  // Closing the sheet's owner is not a decision to close the other windows.
+  if (shared && win.isDestroyed()) return "dismissed";
+  return waiting
+    ? ((["wait", "reload", "close"] as const)[result.response] ?? "wait")
+    : result.response === 0
+      ? "reload"
+      : "close";
+}
+
 async function main(): Promise<void> {
   profile.mark("ready");
   const appSession = session.fromPartition("persist:app");
@@ -131,6 +156,9 @@ async function main(): Promise<void> {
   const chromePolicy = currentChromePolicy();
   const bootstrap: DesktopBootstrap = { protocolVersion: 1, shell, mode: chromePolicy.resolvedMode };
   if (chromePolicy.fallbackReason) log.info({ reason: chromePolicy.fallbackReason }, "using system window decoration");
+  // After a crash getOSProcessId() no longer identifies the exited renderer.
+  const rendererPids = new WeakMap<BrowserWindow, number>();
+  const dialogChoices = new Map<string, Promise<RecoveryChoice>>();
   const makeRecovery = (owner: BrowserWindow) =>
     createWindowRecovery<BrowserWindow>({
       current: () => owner,
@@ -138,23 +166,22 @@ async function main(): Promise<void> {
       reload: (win, url) => win.loadURL(url),
       cancelReload: (win) => win.webContents.stop(),
       close: (win) => win.close(),
-      showDialog: async (win, kind) => {
-        const waiting = kind === "unresponsive";
-        // Initial document failures can happen before the normal first-paint show path.
-        if (!win.isVisible()) win.show();
-        const result = await dialog.showMessageBox(win, {
-          type: "warning",
-          message: waiting ? "The window is not responding" : "The page failed to load",
-          detail: "Reloading may discard unsaved changes.",
-          buttons: waiting ? ["Wait", "Reload", "Close"] : ["Reload", "Close"],
-          defaultId: 0,
-          cancelId: waiting ? 0 : 1,
+      showDialog: (win, kind) => {
+        const pid =
+          kind === "unresponsive"
+            ? win.webContents.getOSProcessId()
+            : win.webContents.isCrashed() && rendererPids.get(win);
+        if (!pid) return askRecovery(win, kind, false);
+        const key = kind + ":" + pid;
+        const pending = dialogChoices.get(key);
+        if (pending) return pending;
+        const shared = [...ownedWindows.values()].some((other) => other !== win && rendererPids.get(other) === pid);
+        if (!shared) return askRecovery(win, kind, false);
+        const choice = askRecovery(win, kind, true).finally(() => {
+          dialogChoices.delete(key);
         });
-        return waiting
-          ? ((["wait", "reload", "close"] as const)[result.response] ?? "wait")
-          : result.response === 0
-            ? "reload"
-            : "close";
+        dialogChoices.set(key, choice);
+        return choice;
       },
       onError: (err) => log.warn({ err }, "window recovery operation failed"),
     });
@@ -262,6 +289,7 @@ async function main(): Promise<void> {
     let committed = false;
     win.webContents.on("did-navigate", () => {
       committed = true;
+      rendererPids.set(win, win.webContents.getOSProcessId());
     });
     win.webContents.on("did-finish-load", () => {
       if (committed) recovery.documentLoaded(win, win.webContents.getURL());

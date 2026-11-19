@@ -3,7 +3,7 @@ export interface RecoveryWindow {
   isDestroyed(): boolean;
 }
 
-export type RecoveryChoice = "reload" | "close" | "wait";
+export type RecoveryChoice = "reload" | "close" | "wait" | "dismissed";
 export type RecoveryDialog = "failure" | "unresponsive";
 
 export interface WindowRecoveryOptions<W extends RecoveryWindow> {
@@ -132,7 +132,9 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
       })
       .then((choice) => {
         if (!live(state) || state.epoch !== epoch || (kind === "unresponsive" && !state.unresponsive)) return undefined;
-        if (choice === "close") {
+        if (choice === "dismissed") {
+          state.dialog = kind;
+        } else if (choice === "close") {
           state.utilityFailureChoice = false;
           options.close(state.window);
         } else if (choice === "reload") {
