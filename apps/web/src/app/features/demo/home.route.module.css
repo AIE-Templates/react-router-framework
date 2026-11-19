@@ -96,6 +96,31 @@
     white-space: nowrap;
   }
 
+  .demoLaunch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-block-start: 1rem;
+  }
+
+  .demoLaunch a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.9rem;
+    border-radius: var(--app-radius);
+    background: var(--app-color-foreground);
+    color: var(--app-color-background);
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .demoLaunch svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
   .demoStatusDot {
     width: 0.375rem;
     height: 0.375rem;

@@ -105,6 +105,16 @@ export default function Home() {
             <span className={classes.demoStatusDot} aria-hidden="true" />
             Host: {environment.shell.kind}.
           </span>
+          <div className={classes.demoLaunch}>
+            <Link to="/chat" target="_blank" rel="noopener">
+              Chat demo <DemoIcon name="arrow" />
+            </Link>
+            {basic && (
+              <Link to="/settings" target="_blank" rel="noopener">
+                Settings <DemoIcon name="arrow" />
+              </Link>
+            )}
+          </div>
         </header>
 
         <VisualSettings />
@@ -246,6 +256,10 @@ export default function Home() {
           <span className={classes.demoRailFooter} aria-hidden="true">
             LF
           </span>
+          <Link to="/settings" target="_blank" rel="noopener" title="Open settings in a new window">
+            <DemoIcon name="settings" />
+            <span>Settings</span>
+          </Link>
         </>
       }
     >
