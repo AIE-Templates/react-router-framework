@@ -30,21 +30,29 @@ const COOKIE_PATH = /^\/(?:__e2e\/[\w/-]{0,64})?$/;
  */
 export function e2eRoutes() {
   // One app per test. Hold both replies until the driver chooses their delivery order.
-  const pending = new Map<string, () => void>();
+  const pending = new Map<string, { release: () => void; signal: AbortSignal }>();
   return new Hono()
     .post("/reload/request", async (c) => {
       const owner = await c.req.text();
       if (owner !== "old" && owner !== "new") return c.text("Unknown document", 400);
       if (pending.has(owner)) return c.text("Already pending", 409);
-      await new Promise<void>((resolve) => pending.set(owner, resolve));
+      await new Promise<void>((release) => pending.set(owner, { release, signal: c.req.raw.signal }));
       pending.delete(owner);
       return c.text(owner);
     })
-    .get("/reload/pending", (c) => c.json([...pending.keys()], 200, { "Cache-Control": "no-store" }))
+    .get("/reload/pending", (c) =>
+      c.json(
+        Object.fromEntries(
+          Array.from(pending, ([owner, { signal }]) => [owner, signal.aborted ? "aborted" : "waiting"]),
+        ),
+        200,
+        { "Cache-Control": "no-store" },
+      ),
+    )
     .post("/reload/release/:owner", (c) => {
-      const release = pending.get(c.req.param("owner"));
-      if (!release) return c.text("No pending request", 404);
-      release();
+      const entry = pending.get(c.req.param("owner"));
+      if (!entry) return c.text("No pending request", 404);
+      entry.release();
       return c.body(null, 204);
     })
     .get("/navigation/page", (c) =>

@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+
 import { expect, test, waitForApp } from "./desktop.ts";
 
 // What a driver adds over the in-app smoke (DESKTOP_SMOKE=1): real input events, reloads and
@@ -19,33 +21,52 @@ test("a reload serves and hydrates the document again", async ({ desktop: { page
   expect(await page.evaluate(() => typeof window.desktop?.subscribeWindowState)).toBe("function");
 });
 
+function startPendingRequest(page: Page, owner: "old" | "new") {
+  return page.evaluateHandle((body) => {
+    const controller = new AbortController();
+    const reply = fetch("/__e2e/reload/request", { method: "POST", body, signal: controller.signal })
+      .then(async (response) => ({ status: response.status, body: await response.text() }))
+      .catch((error: Error) => ({ error: error.name }));
+    return { reply, abort: () => controller.abort() };
+  }, owner);
+}
+
+function pendingState(page: Page) {
+  return page.evaluate(async () => (await fetch("/__e2e/reload/pending")).json());
+}
+
+function releasePendingRequest(page: Page, owner: "old" | "new") {
+  return page.evaluate(async (url) => (await fetch(url, { method: "POST" })).status, `/__e2e/reload/release/${owner}`);
+}
+
 test("a request after reload gets its own response when the old request finishes first", async ({
   desktop: { page },
 }) => {
-  const request = (owner: "old" | "new") =>
-    page.evaluateHandle(
-      (body) => ({
-        reply: fetch("/__e2e/reload/request", { method: "POST", body })
-          .then(async (response) => ({ status: response.status, body: await response.text() }))
-          .catch((error: Error) => ({ error: error.message })),
-      }),
-      owner,
-    );
-  const pending = () => page.evaluate(async () => (await fetch("/__e2e/reload/pending")).json());
-  const release = (owner: "old" | "new") =>
-    page.evaluate(async (url) => (await fetch(url, { method: "POST" })).status, `/__e2e/reload/release/${owner}`);
-
-  await request("old");
-  await expect.poll(pending).toEqual(["old"]);
+  await startPendingRequest(page, "old");
+  await expect.poll(() => pendingState(page)).toEqual({ old: "waiting" });
   await page.reload();
   await waitForApp(page);
-  const current = await request("new");
-  await expect.poll(pending).toContain("new");
+  const current = await startPendingRequest(page, "new");
+  await expect.poll(() => pendingState(page)).toEqual({ old: "aborted", new: "waiting" });
 
-  expect(await release("old")).toBe(204);
-  await expect.poll(pending).toEqual(["new"]);
-  expect(await release("new")).toBe(204);
+  expect(await releasePendingRequest(page, "old")).toBe(204);
+  await expect.poll(() => pendingState(page)).toEqual({ new: "waiting" });
+  expect(await releasePendingRequest(page, "new")).toBe(204);
   expect(await current.evaluate(({ reply }) => reply)).toEqual({ status: 200, body: "new" });
+});
+
+test("cancelling one of two same-URL requests before headers aborts only its utility signal", async ({
+  desktop: { page },
+}) => {
+  const first = await startPendingRequest(page, "old");
+  const second = await startPendingRequest(page, "new");
+  await expect.poll(() => pendingState(page)).toEqual({ old: "waiting", new: "waiting" });
+  await first.evaluate(({ abort }) => abort());
+  expect(await first.evaluate(({ reply }) => reply)).toEqual({ error: "AbortError" });
+  await expect.poll(() => pendingState(page)).toEqual({ old: "aborted", new: "waiting" });
+  expect(await releasePendingRequest(page, "old")).toBe(204);
+  expect(await releasePendingRequest(page, "new")).toBe(204);
+  expect(await second.evaluate(({ reply }) => reply)).toEqual({ status: 200, body: "new" });
 });
 
 test("an unknown path renders the 404 page, and the app recovers from it", async ({ desktop: { page } }) => {

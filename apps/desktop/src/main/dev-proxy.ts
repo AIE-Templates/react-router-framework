@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import { PortFetchTimeoutError, type PortFetch } from "@repo/port-fetch";
 
 import { REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
@@ -11,17 +13,22 @@ const RETRY_FOR_MS = 5_000;
  * `net.fetch` would follow them and hand the target page back under the original URL.
  *
  * The dev server restarts itself (once at startup, with `--conditions=development`, and whenever
- * its config changes); a request that cannot connect while it is away is retried for a few seconds
- * instead of becoming a 500 in the window. Requests with a body are not retried: it was consumed.
+ * its config changes). Retry GET and HEAD while it comes back. A reset can happen after a write
+ * was processed, even when that request had no body.
  */
 export function createDevProxyFetch(): PortFetch {
   return async (request) => {
     const timeout = new AbortController();
+    const signal = AbortSignal.any([request.signal, timeout.signal]);
     const timer = setTimeout(() => {
       timeout.abort(new PortFetchTimeoutError(REQUEST_HEADERS_TIMEOUT_MS, "headers"));
     }, REQUEST_HEADERS_TIMEOUT_MS);
     try {
-      return await fetchWithRetry(request, AbortSignal.any([request.signal, timeout.signal]));
+      return await fetchWithRetry(request, signal);
+    } catch (err) {
+      // fetch and the retry delay can wrap an abort; preserve the reason (including a headers timeout).
+      signal.throwIfAborted();
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -29,7 +36,8 @@ export function createDevProxyFetch(): PortFetch {
 }
 
 async function fetchWithRetry(request: Request, signal: AbortSignal): Promise<Response> {
-  const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
+  const canRetry = request.method === "GET" || request.method === "HEAD";
+  const hasBody = !canRetry && request.body !== null;
   const deadline = Date.now() + RETRY_FOR_MS;
   for (;;) {
     try {
@@ -42,9 +50,8 @@ async function fetchWithRetry(request: Request, signal: AbortSignal): Promise<Re
         ...(hasBody ? { duplex: "half" } : {}),
       });
     } catch (err) {
-      signal.throwIfAborted();
-      if (hasBody || Date.now() >= deadline || !isConnectionFailure(err)) throw err;
-      await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+      if (!canRetry || signal.aborted || Date.now() >= deadline || !isConnectionFailure(err)) throw err;
+      await delay(RETRY_MS, undefined, { signal });
     }
   }
 }
