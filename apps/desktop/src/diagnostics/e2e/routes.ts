@@ -26,6 +26,7 @@ const COOKIE_PATH = /^\/(?:__e2e\/[\w/-]{0,64})?$/;
  *   carried, as the server received them (the second for path-scoped cookies).
  * - `GET /__e2e/navigation/page`: a parent document whose CSP lets the fixed redirect reach the native guard.
  * - `GET /__e2e/navigation/frame`: an application-owned iframe document.
+ * - `GET /__e2e/navigation/local-redirect`: a same-origin 302 to the fixture document.
  * - `GET /__e2e/navigation/redirect`: a redirect to a fixed external test URL for navigation confinement.
  */
 export function e2eRoutes() {
@@ -68,6 +69,7 @@ export function e2eRoutes() {
       ),
     )
     .get("/navigation/frame", (c) => c.html("<!doctype html><title>Navigation fixture</title><p>Application frame</p>"))
+    .get("/navigation/local-redirect", (c) => c.redirect(`${E2E_PREFIX}/navigation/frame`, 302))
     .get("/navigation/redirect", (c) => c.redirect("https://example.test/e2e-redirect"))
     .get("/cookies", (c) => c.json({ cookies: parseCookies(c.req.header("cookie")) }))
     .get("/cookies/*", (c) => c.json({ cookies: parseCookies(c.req.header("cookie")) }))

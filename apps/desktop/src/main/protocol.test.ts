@@ -36,8 +36,9 @@ function setup(
   let handler: Handler | undefined;
   const before = vi.fn<ProtocolSession["webRequest"]["onBeforeSendHeaders"]>();
   const onError = vi.fn<ProtocolSession["webRequest"]["onErrorOccurred"]>();
+  const onCompleted = vi.fn<ProtocolSession["webRequest"]["onCompleted"]>();
   const session: ProtocolSession = {
-    webRequest: { onBeforeSendHeaders: before, onErrorOccurred: onError, onCompleted() {} },
+    webRequest: { onBeforeSendHeaders: before, onErrorOccurred: onError, onCompleted },
     protocol: {
       handle: (_scheme, h) => {
         handler = h;
@@ -62,6 +63,7 @@ function setup(
       return headers;
     },
     disconnect: (id: number) => onError.mock.calls[0][0]({ id }),
+    complete: (id: number) => onCompleted.mock.calls[0][0]({ id }),
   };
 }
 
@@ -162,6 +164,34 @@ describe("registerAppProtocol with the cookie jar", () => {
     expect(returned?.headers.getSetCookie()).toEqual([]);
   });
 
+  it("releases only the completed network request when it never reaches the handler", async () => {
+    const upstream = vi.fn<Handler>(async () => new Response("ok"));
+    const { handle, networkHeaders, complete } = setup(upstream);
+    const finished = networkHeaders(1);
+    const active = networkHeaders(2);
+    complete(1);
+    expect((await handle("app://app/path", { headers: finished })).type).toBe("error");
+    expect(upstream).not.toHaveBeenCalled();
+    expect(await (await handle("app://app/path", { headers: active })).text()).toBe("ok");
+  });
+
+  it("cancels the response body if the renderer disconnects during the cookie flush", async () => {
+    const store = fakeCookieStore();
+    let finishFlush!: () => void;
+    store.flushStore.mockImplementationOnce(() => new Promise<void>((resolve) => (finishFlush = resolve)));
+    const cancel = vi.fn<() => void>();
+    const { handle, networkHeaders, disconnect } = setup(
+      async () => new Response(new ReadableStream({ cancel }), { headers: { "set-cookie": "sid=1; Path=/" } }),
+      { store },
+    );
+    const pending = handle("app://app/login", { headers: networkHeaders(1) });
+    await vi.waitFor(() => expect(store.flushStore).toHaveBeenCalledOnce());
+    disconnect(1);
+    finishFlush();
+    expect((await pending).type).toBe("error");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("stores a redirect's Set-Cookie, so the redirected request carries it", async () => {
     const seen: (string | null)[] = [];
     const { handle } = setup(async (request) => {
@@ -248,6 +278,23 @@ describe("registerAppProtocol with the cookie jar", () => {
     const { handle } = setup(createDevProxyFetch());
     expect((await handle("app://app/read", { method })).status).toBe(204);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a dev GET during retry backoff without sending a second attempt", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValue(new Response("recovered"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { handle, networkHeaders, disconnect } = setup(createDevProxyFetch());
+    const pending = handle("app://app/read", { headers: networkHeaders(1) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    disconnect(1);
+    expect((await pending).type).toBe("error");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(await (await handle("app://app/read", { headers: networkHeaders(2) })).text()).toBe("recovered");
   });
 
   it("keeps a dev response body live past the headers deadline and forwards later caller cancellation", async () => {
