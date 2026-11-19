@@ -10,6 +10,21 @@ declare global {
   var e2eNavigationProbe: NavigationProbe | undefined;
 }
 
+test("fetch and main-frame navigation follow a same-origin 302", async ({ desktop: { page } }) => {
+  const redirect = "app://app/__e2e/navigation/local-redirect";
+  const target = "app://app/__e2e/navigation/frame";
+  const result = await page.evaluate(async (url) => {
+    const response = await fetch(url);
+    return { redirected: response.redirected, url: response.url, status: response.status };
+  }, redirect);
+  expect(result).toEqual({ redirected: true, url: target, status: 200 });
+
+  const document = await page.goto(redirect);
+  expect(document?.status()).toBe(200);
+  await expect(page).toHaveURL(target);
+  await expect(page.getByText("Application frame", { exact: true })).toBeVisible();
+});
+
 test("application iframes load but external redirects never open the system browser", async ({
   desktop: { app, page },
 }) => {
