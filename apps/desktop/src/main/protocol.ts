@@ -21,7 +21,7 @@ export interface ProtocolSession {
     onBeforeSendHeaders(
       filter: WebRequestFilter,
       listener: (
-        details: { id: number; requestHeaders: Record<string, string> },
+        details: { id: number; webContentsId?: number; requestHeaders: Record<string, string> },
         next: (response: { requestHeaders: Record<string, string> }) => void,
       ) => void,
     ): void;
@@ -36,7 +36,7 @@ export interface AppProtocolOptions {
   /** The server's origin, as the mapped URLs name it. */
   internalOrigin: string;
   /** The window's current title bar mode, full-screen state and preferences, injected per request. */
-  desktop: () => DesktopRequest;
+  desktop: (contentsId?: number) => DesktopRequest;
   /** The server's cookies, which Chromium does not keep for `app://` (HOST-09). */
   cookies: CookieJar;
   log: Logger;
@@ -62,27 +62,31 @@ export function registerAppProtocol(
   // shapeRequestHeaders strips it upstream. Electron allows one listener per webRequest event.
   const header = "x-desktop-protocol-request";
   const prefix = randomUUID() + ":";
-  const pending = new Map<string, AbortController>();
-  session.webRequest.onBeforeSendHeaders({ urls: [APP_ORIGIN + "/*"] }, ({ id, requestHeaders }, next) => {
-    const key = prefix + id;
-    if (!pending.has(key)) pending.set(key, new AbortController());
-    for (const name of Object.keys(requestHeaders)) {
-      if (name.toLowerCase() === header) delete requestHeaders[name];
-    }
-    requestHeaders[header] = key;
-    next({ requestHeaders });
-  });
+  const pending = new Map<string, { controller: AbortController; contentsId?: number }>();
+  session.webRequest.onBeforeSendHeaders(
+    { urls: [APP_ORIGIN + "/*"] },
+    ({ id, webContentsId, requestHeaders }, next) => {
+      const key = prefix + id;
+      if (!pending.has(key)) pending.set(key, { controller: new AbortController(), contentsId: webContentsId });
+      for (const name of Object.keys(requestHeaders)) {
+        if (name.toLowerCase() === header) delete requestHeaders[name];
+      }
+      requestHeaders[header] = key;
+      next({ requestHeaders });
+    },
+  );
   // Terminal events also cover a request that never reaches the handler (or redirects off-origin).
   session.webRequest.onErrorOccurred(({ id }) => {
     const key = prefix + id;
-    pending.get(key)?.abort();
+    pending.get(key)?.controller.abort();
     pending.delete(key);
   });
   session.webRequest.onCompleted(({ id }) => pending.delete(prefix + id));
 
   session.protocol.handle(APP_SCHEME, async (request) => {
     const key = request.headers.get(header) ?? "";
-    const controller = pending.get(key);
+    const entry = pending.get(key);
+    const controller = entry?.controller;
     const signal = controller ? AbortSignal.any([request.signal, controller.signal]) : request.signal;
     try {
       if (!controller && key.startsWith(prefix)) return Response.error(); // Cancelled before dispatch.
@@ -93,7 +97,7 @@ export function registerAppProtocol(
       const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
       const headers = shapeRequestHeaders(request.headers, {
         method: request.method,
-        desktop: desktop(),
+        desktop: desktop(entry?.contentsId),
         internalOrigin,
       });
       const cookie = await cookies.cookieHeader(pathname);
@@ -128,7 +132,7 @@ export function registerAppProtocol(
       return new Response(message, { status, headers: { "content-type": "text/plain", "retry-after": "1" } });
     } finally {
       // Once Electron has the response, abandoning it cancels the body directly.
-      if (controller && pending.get(key) === controller) pending.delete(key);
+      if (controller && pending.get(key) === entry) pending.delete(key);
     }
   });
 }

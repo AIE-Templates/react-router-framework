@@ -113,8 +113,4 @@ test("the window is shown, confined to app://app and has the trusted bridge", as
   expect(bridge.platform).toBe(process.platform);
   expect(bridge.mode).toBe("native-overlay");
   expect(bridge.state).toMatchObject({ maximized: false, fullscreen: false });
-  // Page-initiated windows are denied (and http(s) would go to the system browser, not tested here).
-  await page.evaluate(() => window.open("app://app/?popup=1"));
-  await page.waitForTimeout(200);
-  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
 });

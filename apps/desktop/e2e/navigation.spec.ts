@@ -75,3 +75,48 @@ test("application iframes load but external redirects never open the system brow
     });
   }
 });
+
+test("internal popup shares the application session and survives its opener", async ({ desktop: { app, page } }) => {
+  const popup = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?child=1", "_blank");
+  });
+  const child = await popup;
+  await expect(child).toHaveURL("app://app/?child=1");
+  for (const current of [child, page]) {
+    expect(await current.evaluate(() => window.desktop!.setPref("windowProbe", "active"))).toEqual({
+      status: "applied",
+    });
+  }
+  expect(
+    await app.evaluate(
+      ({ app: electronApp }) => electronApp.getAppMetrics().filter((metric) => metric.name === "web-server").length,
+    ),
+  ).toBe(1);
+  expect(
+    await app.evaluate(({ BrowserWindow }) => {
+      const windows = BrowserWindow.getAllWindows();
+      return windows.length === 2 && windows[0]?.webContents.session === windows[1]?.webContents.session;
+    }),
+  ).toBe(true);
+  await page.close();
+  await child.reload();
+  await expect(child).toHaveURL("app://app/?child=1");
+});
+
+test("an ordinary target=_blank link opens its route in a separate window", async ({ desktop: { app, page } }) => {
+  await page.evaluate(() => {
+    const link = document.createElement("a");
+    link.href = "/?from=link#section";
+    link.target = "_blank";
+    link.textContent = "Open child route";
+    document.body.prepend(link);
+  });
+  const popup = app.waitForEvent("window");
+  await page.getByText("Open child route", { exact: true }).click();
+  const child = await popup;
+  await expect(child).toHaveURL("app://app/?from=link#section");
+  await child.close();
+  await expect(page).toHaveURL("app://app/");
+  expect(await page.evaluate(() => window.desktop!.setPref("afterClose", "ok"))).toEqual({ status: "applied" });
+});

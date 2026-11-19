@@ -14,6 +14,12 @@ import { PORT_ACK_COALESCE } from "~/port-options";
 import type { Logger } from "./log.ts";
 import { REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
 
+export interface UtilityLifecycle {
+  generation: number;
+  state: "starting" | "ready" | "failed";
+  restarted: boolean;
+}
+
 export interface ServerProcessOptions {
   /** `.vite/build/utility.mjs`. */
   utilityPath: string;
@@ -38,7 +44,7 @@ export interface ServerProcessOptions {
   /** Extra variables over the inherited ones. NODE_ENV stays production for the built web host. */
   env?: Record<string, string>;
   /** Lifecycle facts for the window recovery coordinator; includes the restart backoff period. */
-  onLifecycle?: (event: { generation: number; state: "starting" | "ready" | "failed"; restarted: boolean }) => void;
+  onLifecycle?: (event: UtilityLifecycle) => void;
 }
 
 export interface ServerProcess {

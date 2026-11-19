@@ -1,5 +1,5 @@
 import { DESKTOP_BOOTSTRAP_ARGUMENT, type DesktopBootstrap } from "@repo/shared";
-import { BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, ipcMain, type Session, shell } from "electron";
+import { BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, type Session, shell } from "electron";
 
 import { isAppUrl } from "./app-url.ts";
 import type { BootProfile } from "./boot-profile.ts";
@@ -15,6 +15,7 @@ export const IPC = {
 } as const;
 
 export interface MainWindowOptions {
+  onChildWindow?: (win: BrowserWindow, url: string) => void;
   session: Session;
   preloadPath: string;
   appVersion: string;
@@ -100,18 +101,16 @@ export function isTrustedSender(event: IpcMainEvent | IpcMainInvokeEvent, win: B
 
 /**
  * The app window: sandboxed renderer on a dedicated session, shown on first paint, confined to
- * `app://app` (other navigations and new windows go to the system browser).
+ * `app://app` (external web links go to the system browser).
  */
-export function createMainWindow({
-  session,
-  preloadPath,
-  appVersion,
-  log,
-  profile,
-  logRendererConsole,
-  chrome,
-}: MainWindowOptions): BrowserWindow {
-  const win = new BrowserWindow({
+export function createMainWindow(options: MainWindowOptions): BrowserWindow {
+  const win = new BrowserWindow(nativeOptions(options));
+  configureWindow(win, options);
+  return win;
+}
+
+function nativeOptions({ session, preloadPath, chrome, appVersion }: MainWindowOptions) {
+  return {
     width: 1200,
     height: 800,
     show: false,
@@ -129,8 +128,11 @@ export function createMainWindow({
         ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify(chrome.bootstrap)}`] : []),
       ],
     },
-  });
+  };
+}
 
+function configureWindow(win: BrowserWindow, options: MainWindowOptions) {
+  const { chrome, profile, log, logRendererConsole, onChildWindow } = options;
   if (chrome) {
     installWindowChrome(win, chrome.policy, (event) => isTrustedSender(event, win), log, chrome.visualThemeStore);
     log.info(
@@ -156,10 +158,9 @@ export function createMainWindow({
     profile.report();
     show("first-paint");
   };
-  ipcMain.on(IPC.firstPaint, onFirstPaint);
+  win.webContents.ipc.on(IPC.firstPaint, onFirstPaint);
   win.once("ready-to-show", () => setTimeout(() => show("ready-to-show fallback"), 1000));
   win.webContents.once("dom-ready", () => profile.mark("dom-content-loaded"));
-  win.once("closed", () => ipcMain.off(IPC.firstPaint, onFirstPaint));
 
   const confine = (details: { preventDefault(): void; url: string }) => {
     if (isAppUrl(details.url)) return;
@@ -181,8 +182,15 @@ export function createMainWindow({
   });
   win.webContents.on("will-frame-navigate", confineSubframe);
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAppUrl(url)) {
+      return { action: "allow", outlivesOpener: true, overrideBrowserWindowOptions: nativeOptions(options) };
+    }
     openExternal(url, log);
     return { action: "deny" };
+  });
+  win.webContents.on("did-create-window", (child, details) => {
+    configureWindow(child, options);
+    onChildWindow?.(child, details.url);
   });
   win.webContents.on("render-process-gone", (_event, details) => {
     if (details.reason !== "clean-exit" && details.reason !== "killed") log.error({ details }, "renderer process gone");
@@ -193,5 +201,4 @@ export function createMainWindow({
       log.info({ level: event.level, source: safeUrl(event.sourceId) }, `renderer: ${redactLogUrls(event.message)}`);
     });
   }
-  return win;
 }

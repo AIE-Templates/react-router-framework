@@ -23,6 +23,7 @@ import { createMainWindow } from "./window.ts";
 function setup(logRendererConsole = false) {
   const contents = Object.assign(new EventEmitter(), {
     mainFrame: {},
+    ipc: native.ipc,
     setWindowOpenHandler: vi.fn<(...args: unknown[]) => void>(),
   });
   const win = Object.assign(new EventEmitter(), { webContents: contents });
