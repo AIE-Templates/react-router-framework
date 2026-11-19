@@ -62,6 +62,34 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     await expect(message).toHaveValue("Unsent chat draft");
   });
 
+  for (const activation of ["activate", "second-instance"] as const) {
+    test(`reopening Home via ${activation} preserves the independent Chat draft`, async ({
+      desktop: { app, page: home },
+    }) => {
+      test.skip(activation === "activate" && process.platform !== "darwin", "Dock activation is macOS-specific");
+      const opened = app.waitForEvent("window");
+      await home.getByRole("link", { name: "Chat demo" }).click();
+      const chat = await opened;
+      await waitForApp(chat);
+      await chat.bringToFront();
+      const draft = chat.getByRole("textbox", { name: "Message" });
+      await draft.fill("Keep this conversation");
+      await home.close();
+
+      const reopened = app.waitForEvent("window");
+      await app.evaluate(({ app: host }, event) => {
+        host.emit(event);
+        host.emit(event);
+      }, activation);
+      const next = await reopened;
+      await waitForApp(next);
+      await expect(next).toHaveURL("app://app/");
+      expect(app.windows()).toHaveLength(2);
+      await expect(chat).toHaveURL("app://app/chat");
+      await expect(draft).toHaveValue("Keep this conversation");
+    });
+  }
+
   test("a failed appearance save leaves controls usable and the next command recovers persistence", async ({
     desktop: { page },
   }) => {

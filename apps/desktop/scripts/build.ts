@@ -31,7 +31,7 @@ function run(args: string[], cwd: string): void {
 if (mode[0] === "--workspace") {
   run(["-r", "build"], repoDir);
 } else {
-  if (mode[0] === "--with-web") run(["--filter", "web", "build"], repoDir);
+  if (mode[0] === "--with-web") run(["--filter", "web...", "build"], repoDir);
   for (const entry of ["main", "preload", "utility"]) {
     run(["exec", "vite", "build", "--config", `vite.${entry}.config.ts`], desktopDir);
   }

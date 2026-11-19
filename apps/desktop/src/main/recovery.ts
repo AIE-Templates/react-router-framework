@@ -87,6 +87,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     if (state.reloadInFlight && !urgentDialog) return;
     if (state.pending && !urgentDialog) {
       if (utility && utility.state !== "ready") return;
+      if (state.unresponsive && state.pending === "auto") return;
       const kind = state.pending;
       state.pending = undefined;
       if (kind === "auto" && (state.autoUsed || state.manualRetry)) {
@@ -95,6 +96,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
         if (kind === "auto") state.autoUsed = true;
         else state.manualRetry = true;
         state.dialog = undefined;
+        state.unresponsive = false;
         state.reloadInFlight = true;
         const reloadGeneration = ++state.reloadGeneration;
         state.loaded = false;
@@ -135,6 +137,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
         if (choice === "dismissed") {
           state.dialog = kind;
         } else if (choice === "close") {
+          state.pending = undefined;
           state.utilityFailureChoice = false;
           options.close(state.window);
         } else if (choice === "reload") {
@@ -160,7 +163,9 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
   const fault = (window: W) => {
     const state = episode;
     if (!state || state.window !== window || !live(state)) return;
-    if (state.utilityFailureChoice) {
+    if (state.utilityFailureChoice || state.unresponsive) {
+      // A document can fail while its renderer is still hung. Keep the native decision actionable.
+      if (state.unresponsive && !state.utilityFailureChoice) state.pending ??= "auto";
       state.loaded = false;
       cancelStable(state);
       pump(state);
@@ -226,7 +231,9 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
       if (details.isMainFrame && details.errorCode !== -3) fault(window);
     },
     rendererGone(window: W, reason: string) {
-      if (reason !== "clean-exit") fault(window);
+      if (reason === "clean-exit") return;
+      if (episode?.window === window) episode.unresponsive = false;
+      fault(window);
     },
     unresponsive(window: W) {
       const state = episode;
@@ -243,18 +250,18 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
       state.unresponsive = false;
       if (state.dialog === "unresponsive") state.dialog = undefined;
       awaitStability(state);
+      pump(state);
     },
     utilityStarting(generation: number) {
       if (stopped || (utility && generation <= utility.generation)) return;
       utility = { generation, state: "starting" };
       if (episode && live(episode)) {
-        // A failed start still needs its native choice even if server-process immediately
-        // schedules another generation. The choice's retry waits for that existing startup.
-        if (episode.utilityFailureChoice) cancelStable(episode);
+        // A replacement utility does not resolve a hung renderer or a pending startup-failure choice.
+        if (episode.utilityFailureChoice || episode.unresponsive) cancelStable(episode);
         else {
           invalidate(episode);
           // Preserve the recovery need when a generation change retires a native dialog.
-          if (episode.active && !episode.loaded && !episode.unresponsive) episode.pending ??= "auto";
+          if (episode.active && !episode.loaded) episode.pending ??= "auto";
           episode.dialog = undefined;
         }
       }
@@ -265,7 +272,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
       const state = episode;
       if (handledGeneration >= generation || !state || !live(state)) return;
       handledGeneration = generation;
-      if (state.utilityFailureChoice) {
+      if (state.utilityFailureChoice || state.unresponsive) {
         pump(state);
         return;
       }
@@ -280,7 +287,7 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
       if (stopped || (utility && generation < utility.generation)) return;
       utility = { generation, state: "failed" };
       const state = episode;
-      if (!state || !live(state) || state.loaded) return;
+      if (!state || !live(state) || state.loaded || state.unresponsive) return;
       beginFault(state);
       state.pending = undefined;
       state.utilityFailureChoice = true;

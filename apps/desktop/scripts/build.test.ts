@@ -76,7 +76,7 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
     expect(result.status).toBe(0);
     const calls = readInvocations();
     expect(calls.map(({ args, cwd }) => ({ args, cwd }))).toEqual([
-      ...(web ? [{ args: ["--filter", "web", "build"], cwd: repoDir }] : []),
+      ...(web ? [{ args: ["--filter", "web...", "build"], cwd: repoDir }] : []),
       ...["main", "preload", "utility"].map((entry) => ({
         args: ["exec", "vite", "build", "--config", `vite.${entry}.config.ts`],
         cwd: desktopDir,
@@ -105,7 +105,7 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
   });
 
   it("stops before desktop bundling when the web build fails", () => {
-    expect(run(["--with-web"], { BUILD_FAIL_ARG: "web" }).status).toBe(7);
+    expect(run(["--with-web"], { BUILD_FAIL_ARG: "web..." }).status).toBe(7);
     expect(readInvocations()).toHaveLength(1);
   });
 });
