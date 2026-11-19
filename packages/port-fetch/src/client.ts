@@ -50,10 +50,7 @@ export interface PortFetchOptions {
   maxQueuedBytes?: number;
   /** Coalesce response-body acks; by default each chunk is acked as soon as it is read. */
   ackCoalesce?: AckCoalesceOptions;
-  /**
-   * How long the response status and headers may take to arrive. Default: none. The bound for
-   * requests whose cancellation cannot reach the server before it answers (Electron's `app://`).
-   */
+  /** How long the response status and headers may take to arrive. Default: none. */
   headersTimeoutMs?: number;
   /** The longest gap allowed between two response body chunks. Default: none, so streams may idle. */
   idleTimeoutMs?: number;
