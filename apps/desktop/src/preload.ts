@@ -151,6 +151,31 @@ const bridge: DesktopBridge = {
       return { status: "rejected", reason: "bridge-unavailable" };
     }
   },
+  subscribePreferences(rendered, listener) {
+    let active = true;
+    const changed = () => {
+      if (active) listener();
+    };
+    ipcRenderer.on(DESKTOP_PREFS_IPC.changed, changed);
+    // A peer may have written after SSR took its snapshot but before hydration subscribed.
+    void ipcRenderer
+      .invoke(DESKTOP_PREFS_IPC.snapshot)
+      .then((snapshot: unknown) => {
+        if (
+          snapshot &&
+          typeof snapshot === "object" &&
+          (Object.keys(snapshot).length !== Object.keys(rendered).length ||
+            Object.entries(snapshot).some(([key, value]) => rendered[key] !== value))
+        )
+          changed();
+        return undefined;
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      ipcRenderer.off(DESKTOP_PREFS_IPC.changed, changed);
+    };
+  },
   // `null` is how removal crosses IPC; through setPref it is an invalid value like `undefined`.
   setPref: async (key, value) =>
     value === null ? { status: "rejected", reason: "invalid-value" } : updatePref(key, value),

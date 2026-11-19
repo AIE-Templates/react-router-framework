@@ -5,6 +5,11 @@ import { parseDesktopBootstrap, type DesktopBootstrap, type WindowChromeBridge }
 
 export interface DesktopBridge extends WindowChromeBridge {
   syncVisualTheme?(this: void, preference: VisualThemePreference): Promise<VisualThemeResult>;
+  subscribePreferences?(
+    this: void,
+    rendered: Readonly<Record<string, PreferenceValue>>,
+    listener: () => void,
+  ): () => void;
   setPref(this: void, key: string, value: PreferenceValue): Promise<PreferenceUpdateResult>;
   removePref(this: void, key: string): Promise<PreferenceUpdateResult>;
 }

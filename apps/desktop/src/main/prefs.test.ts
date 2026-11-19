@@ -231,7 +231,8 @@ const invoke = (...args: unknown[]) => handlers.get(DESKTOP_PREFS_IPC.set)!(...a
 describe("prefs IPC", () => {
   it("updates only for trusted senders and well-formed requests", () => {
     const store = createPrefsStore(dir, { log });
-    const dispose = installPrefsIpc(store, trusted);
+    const changed = vi.fn<() => void>();
+    const dispose = installPrefsIpc(store, trusted, changed);
     expect(invoke(event(false), { key: "theme", value: "dark" })).toEqual({
       status: "rejected",
       reason: "untrusted-sender",
@@ -244,6 +245,11 @@ describe("prefs IPC", () => {
     expect(store.current()).toEqual({ theme: "dark" });
     expect(invoke(event(true), { key: "theme", value: null })).toEqual({ status: "applied" });
     expect(store.current()).toEqual({});
+    expect(invoke(event(true), { key: "theme", value: null })).toEqual({ status: "applied" });
+    expect(changed).toHaveBeenCalledTimes(2);
+    const snapshot = handlers.get(DESKTOP_PREFS_IPC.snapshot)!;
+    expect(snapshot(event(false))).toBeNull();
+    expect(snapshot(event(true))).toEqual({});
     dispose();
     expect(handlers.has(DESKTOP_PREFS_IPC.set)).toBe(false);
   });

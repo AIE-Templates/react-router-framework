@@ -17,6 +17,24 @@ async function choose(page: Page, label: string, value: string, option: string) 
 
 // These controls and layout expectations belong to the disposable demo.
 test.describe("demo appearance", { tag: "@demo" }, () => {
+  test("appearance changes reach other open windows without losing their drafts", async ({
+    desktop: { app, page },
+  }) => {
+    const opened = app.waitForEvent("window");
+    await page.evaluate(() => {
+      window.open("/");
+    });
+    const peer = await opened;
+    await waitForApp(peer);
+    const draft = peer.getByRole("textbox", { name: "Module draft" });
+    await draft.fill("unsaved in peer");
+    await choose(page, "Color scheme", "dark", "Dark");
+    await expect(peer.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+    await choose(peer, "Direction", "rtl", "RTL");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(draft).toHaveValue("unsaved in peer");
+  });
+
   test("a failed appearance save leaves controls usable and the next command recovers persistence", async ({
     desktop: { page },
   }) => {

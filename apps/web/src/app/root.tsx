@@ -10,6 +10,7 @@ import {
 } from "react-router";
 
 import { useAppEnvironment } from "~/managers/environment/hooks";
+import { DesktopPreferenceSync } from "~/platform/electron/preferences";
 import { desktopContext, shellContext } from "~/platform/electron/shell";
 
 import type { Route } from "./+types/root";
@@ -61,7 +62,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       managersInitialState={data?.managersInitialState}
     >
       <DesktopVisualSync>
-        <Document nonce={nonce}>{children}</Document>
+        <Document nonce={nonce}>
+          {data?.desktop && <DesktopPreferenceSync prefs={data.desktop.prefs} />}
+          {children}
+        </Document>
       </DesktopVisualSync>
     </AppRoot>
   );

@@ -83,3 +83,22 @@ test("desktop writes enforce the application-prefixed cookie budget", async ({ d
     for (const key of keys) expect(await setPref(page, key, null)).toEqual({ status: "applied" });
   }
 });
+
+test("open peer windows revalidate on preference writes and removals", async ({ desktop: { app, page } }) => {
+  const opened = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/?peer=1");
+  });
+  const peer = await opened;
+  await waitForApp(peer);
+  for (const [source, receiver, value] of [
+    [page, peer, VALUE],
+    [peer, page, null],
+  ] as const) {
+    const updated = receiver.waitForResponse((response) => new URL(response.url()).pathname.endsWith(".data"));
+    expect(await setPref(source, KEY, value)).toEqual({ status: "applied" });
+    const response = await updated;
+    expect(response.ok()).toBe(true);
+    expect((await response.text()).includes(VALUE)).toBe(value !== null);
+  }
+});

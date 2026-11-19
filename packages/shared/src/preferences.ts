@@ -34,6 +34,8 @@ export const PREFERENCE_COOKIE_PREFIX = cookieName("pref_");
 export const DESKTOP_PREFS_IPC = {
   /** Renderer → main (invoke): `{ key, value }`, `value: null` removes; answers a `PreferenceUpdateResult`. */
   set: "desktop:prefs:set",
+  snapshot: "desktop:prefs:snapshot",
+  changed: "desktop:prefs:changed",
 } as const;
 
 export type PreferenceRejection = "invalid-key" | "invalid-value" | "too-large";

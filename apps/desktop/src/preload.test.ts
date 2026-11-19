@@ -143,3 +143,19 @@ it("does not expose the bridge, register teardown or announce paint in a sub-fra
   expect(paint).not.toHaveBeenCalled();
   expect(wire.send).not.toHaveBeenCalled();
 });
+
+it("catches peer writes during hydration and ignores a snapshot returned after unsubscribe", async () => {
+  const bridge = await load();
+  const change = vi.fn<() => void>();
+  wire.invoke.mockResolvedValueOnce({ locale: "en" });
+  const stop = bridge.subscribePreferences!({ locale: "zh" }, change);
+  await vi.waitFor(() => expect(change).toHaveBeenCalledOnce());
+  stop();
+  const delayed = deferred();
+  wire.invoke.mockReturnValueOnce(delayed.promise);
+  const release = bridge.subscribePreferences!({}, change);
+  release();
+  delayed.resolve({ locale: "en" });
+  await delayed.promise;
+  expect(change).toHaveBeenCalledOnce();
+});
