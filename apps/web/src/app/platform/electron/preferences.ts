@@ -8,7 +8,7 @@ import {
   type PreferenceValue,
   type Shell,
 } from "@repo/shared";
-import { useCallback } from "react";
+import { useCallback, useEffect, useEffectEvent } from "react";
 import { createContext, type RouterContextProvider, useRevalidator } from "react-router";
 
 import { useAppEnvironment } from "~/managers/environment/hooks";
@@ -123,4 +123,19 @@ export function useSetPreference(): (key: string, value: PreferenceValue | null)
     },
     [shell.kind, revalidate],
   );
+}
+
+/** Refresh active loaders when another desktop window commits a preference. */
+export function DesktopPreferenceSync({ prefs }: { prefs: Preferences }) {
+  const { revalidate } = useRevalidator();
+  const refresh = useEffectEvent(() => {
+    void revalidate();
+  });
+  const rendered = useEffectEvent(() => prefs);
+  useEffect(() => {
+    const bridge = window.desktop;
+    if (hasPreferences(bridge)) return bridge.subscribePreferences?.(rendered(), refresh);
+    return undefined;
+  }, []);
+  return null;
 }

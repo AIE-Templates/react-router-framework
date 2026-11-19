@@ -88,13 +88,29 @@ export function createPrefsStore(
  * Handles `desktop:prefs:set` from the preload: `{ key, value }` from a trusted sender (the app
  * window's main frame on `app://app`) goes to `store.update()`. Returns the cleanup.
  */
-export function installPrefsIpc(store: PrefsStore, trusted: (event: IpcMainInvokeEvent) => boolean): () => void {
+export function installPrefsIpc(
+  store: PrefsStore,
+  trusted: (event: IpcMainInvokeEvent) => boolean,
+  changed: (event: IpcMainInvokeEvent) => void,
+): () => void {
   const set = (event: IpcMainInvokeEvent, input: unknown): PreferenceUpdateResult => {
     if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
     if (typeof input !== "object" || input === null || !("key" in input) || !("value" in input))
       return { status: "rejected", reason: "invalid-request" };
-    return store.update(input.key, input.value);
+    const before = store.current();
+    const result = store.update(input.key, input.value);
+    if (
+      result.status === "applied" &&
+      typeof input.key === "string" &&
+      before[input.key] !== store.current()[input.key]
+    )
+      changed(event);
+    return result;
   };
   ipcMain.handle(DESKTOP_PREFS_IPC.set, set);
-  return () => ipcMain.removeHandler(DESKTOP_PREFS_IPC.set);
+  ipcMain.handle(DESKTOP_PREFS_IPC.snapshot, (event) => (trusted(event) ? store.current() : null));
+  return () => {
+    ipcMain.removeHandler(DESKTOP_PREFS_IPC.set);
+    ipcMain.removeHandler(DESKTOP_PREFS_IPC.snapshot);
+  };
 }

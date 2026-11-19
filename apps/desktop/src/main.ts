@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
+import { DESKTOP_PREFS_IPC, shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
 import { app, type BrowserWindow, dialog, nativeTheme, protocol, session } from "electron";
 
 import { benchConfigFromEnv, runBench } from "./diagnostics/bench/bench.ts";
@@ -101,7 +101,17 @@ async function main(): Promise<void> {
   // Preferences the page writes through the preload; every request carries the current ones.
   const visualThemeStore = createVisualThemeStore(app.getPath("userData"), { log });
   const prefsStore = createPrefsStore(app.getPath("userData"), { log });
-  installPrefsIpc(prefsStore, (event) => isTrustedSender(event, ownedWindows.get(event.sender.id)));
+  installPrefsIpc(
+    prefsStore,
+    (event) => isTrustedSender(event, ownedWindows.get(event.sender.id)),
+    (event) => {
+      for (const window of ownedWindows.values()) {
+        if (!window.isDestroyed() && window.webContents !== event.sender && isAppUrl(window.webContents.getURL())) {
+          window.webContents.send(DESKTOP_PREFS_IPC.changed);
+        }
+      }
+    },
+  );
   const shell = shellFromEnv({
     WEB_SHELL: "desktop",
     WEB_SHELL_PLATFORM: process.platform,
