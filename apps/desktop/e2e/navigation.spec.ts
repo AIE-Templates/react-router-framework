@@ -251,5 +251,42 @@ test("renderer recovery reloads affected documents and preserves unrelated windo
       }),
     )
     .toEqual(expect.arrayContaining(["app://app/", "app://app/?opener", "app://app/?independent"]));
+  // The first crash consumed the automatic retry. The second needs a user decision.
+  const decisions = await app.evaluate(async ({ BrowserWindow, dialog }) => {
+    const windows = BrowserWindow.getAllWindows();
+    const target = windows.find((win) => win.webContents.getURL().includes("?opener"))!;
+    const affected = windows.filter((win) => win.webContents.getOSProcessId() === target.webContents.getOSProcessId());
+    const original = dialog.showMessageBox.bind(dialog);
+    const answers: (() => void)[] = [];
+    const buttons: string[][] = [];
+    dialog.showMessageBox = (
+      first: Electron.BaseWindow | Electron.MessageBoxOptions,
+      second?: Electron.MessageBoxOptions,
+    ) =>
+      new Promise((resolve) => {
+        const options = second ?? first;
+        if ("buttons" in options) buttons.push(options.buttons ?? []);
+        answers.push(() => resolve({ response: 0, checkboxChecked: false }));
+      });
+    try {
+      const gone = affected.map(
+        (win) => new Promise<void>((resolve) => win.webContents.once("render-process-gone", () => resolve())),
+      );
+      const loaded = affected.map(
+        (win) => new Promise<void>((resolve) => win.webContents.once("did-finish-load", () => resolve())),
+      );
+      target.webContents.forcefullyCrashRenderer();
+      await Promise.all(gone);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      for (const answer of answers) answer();
+      await Promise.all(loaded);
+      return { buttons, shared: affected.length > 1 };
+    } finally {
+      dialog.showMessageBox = original;
+    }
+  });
+  expect(decisions.buttons).toEqual(
+    decisions.shared ? [["Reload affected windows", "Close affected windows"]] : [["Reload", "Close"]],
+  );
   expect(await other.evaluate(() => Reflect.get(window, "unrelatedDraft"))).toBe("leave intact");
 });

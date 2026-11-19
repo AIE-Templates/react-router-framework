@@ -400,3 +400,16 @@ it("reserves automatic recovery for a failed document when opened during a utili
   expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
   expect(s.showDialog).not.toHaveBeenCalled();
 });
+
+it("offers the decision in a surviving window if the shared sheet owner closes", async () => {
+  const s = setup();
+  s.recovery.unresponsive(s.window);
+  await flush();
+  s.choices[0].resolve("dismissed");
+  await flush();
+  expect(s.showDialog).toHaveBeenCalledTimes(2);
+  expect(s.close).not.toHaveBeenCalled();
+  s.choices[1].resolve("wait");
+  await flush();
+  s.recovery.shutdown();
+});
