@@ -1,4 +1,6 @@
-import type { PortFetch } from "@repo/port-fetch";
+import { PortFetchTimeoutError, type PortFetch } from "@repo/port-fetch";
+
+import { REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
 
 const RETRY_MS = 250;
 const RETRY_FOR_MS = 5_000;
@@ -14,24 +16,37 @@ const RETRY_FOR_MS = 5_000;
  */
 export function createDevProxyFetch(): PortFetch {
   return async (request) => {
-    const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
-    const deadline = Date.now() + RETRY_FOR_MS;
-    for (;;) {
-      try {
-        return await fetch(request.url, {
-          method: request.method,
-          headers: request.headers,
-          body: hasBody ? request.body : null,
-          redirect: "manual",
-          signal: request.signal,
-          ...(hasBody ? { duplex: "half" } : {}),
-        });
-      } catch (err) {
-        if (hasBody || request.signal.aborted || Date.now() >= deadline || !isConnectionFailure(err)) throw err;
-        await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
-      }
+    const timeout = new AbortController();
+    const timer = setTimeout(() => {
+      timeout.abort(new PortFetchTimeoutError(REQUEST_HEADERS_TIMEOUT_MS, "headers"));
+    }, REQUEST_HEADERS_TIMEOUT_MS);
+    try {
+      return await fetchWithRetry(request, AbortSignal.any([request.signal, timeout.signal]));
+    } finally {
+      clearTimeout(timer);
     }
   };
+}
+
+async function fetchWithRetry(request: Request, signal: AbortSignal): Promise<Response> {
+  const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
+  const deadline = Date.now() + RETRY_FOR_MS;
+  for (;;) {
+    try {
+      return await fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: hasBody ? request.body : null,
+        redirect: "manual",
+        signal,
+        ...(hasBody ? { duplex: "half" } : {}),
+      });
+    } catch (err) {
+      signal.throwIfAborted();
+      if (hasBody || Date.now() >= deadline || !isConnectionFailure(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+    }
+  }
 }
 
 /** `fetch failed` with a connection refused/reset cause: the dev server is not listening right now. */

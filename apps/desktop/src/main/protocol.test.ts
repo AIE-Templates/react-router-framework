@@ -7,7 +7,7 @@ import { fakeCookieStore } from "./cookie-store-testing.ts";
 import { createDevProxyFetch } from "./dev-proxy.ts";
 import type { Logger } from "./log.ts";
 import { INTERNAL_ORIGIN } from "./mapping.ts";
-import { type ProtocolSession, registerAppProtocol } from "./protocol.ts";
+import { type ProtocolSession, registerAppProtocol, REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -61,6 +61,7 @@ function withCookies(init: ResponseInit & { setCookie: string[] }): Response {
 describe("registerAppProtocol with the cookie jar", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("forwards cancellation to a pending upstream request", async () => {
@@ -159,5 +160,46 @@ describe("registerAppProtocol with the cookie jar", () => {
     const next = await handle("app://app/next");
     expect(await next.text()).toBe("sid=dev");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:5174/next");
+  });
+
+  it("aborts a dev fetch still waiting for headers, returns 504 and serves the next request", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response("recovered"));
+    fetchMock.mockImplementationOnce((_url, init) => {
+      const signal = init!.signal!;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { handle } = setup(createDevProxyFetch());
+    const pending = handle("app://app/slow");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const signal = fetchMock.mock.calls[0][1]!.signal!;
+    await vi.advanceTimersByTimeAsync(REQUEST_HEADERS_TIMEOUT_MS);
+    expect(signal.aborted).toBe(true);
+    expect((await pending).status).toBe(504);
+    expect(await (await handle("app://app/next")).text()).toBe("recovered");
+  });
+
+  it("keeps a dev response body live past the headers deadline and forwards later caller cancellation", async () => {
+    vi.useFakeTimers();
+    const stream = new TransformStream<Uint8Array, Uint8Array>();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream.readable));
+    vi.stubGlobal("fetch", fetchMock);
+    const caller = new AbortController();
+    const { handle } = setup(createDevProxyFetch());
+    const response = await handle("app://app/events", { signal: caller.signal });
+    const signal = fetchMock.mock.calls[0][1]!.signal!;
+    await vi.advanceTimersByTimeAsync(REQUEST_HEADERS_TIMEOUT_MS + 1);
+    expect(signal.aborted).toBe(false);
+    const reader = response.body!.getReader();
+    const chunk = Uint8Array.of(42);
+    const read = reader.read();
+    await stream.writable.getWriter().write(chunk);
+    expect(await read).toEqual({ done: false, value: chunk });
+    caller.abort();
+    expect(signal.aborted).toBe(true);
+    await reader.cancel();
   });
 });
