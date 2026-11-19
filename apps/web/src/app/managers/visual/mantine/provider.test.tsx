@@ -126,3 +126,20 @@ it("restores current system preferences in Mantine after suspended effects and a
   expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
   view.unmount();
 });
+
+it("propagates another window's saved direction and scheme into Mantine context", () => {
+  const manager = createVisualManager({ host: window });
+  const view = render(<ConnectedVisualTree manager={manager} />);
+  try {
+    const key = STORAGE_KEYS.visualPreferences;
+    localStorage.setItem(key, JSON.stringify({ version: 1, preferences: { direction: "rtl", colorScheme: "dark" } }));
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key }));
+    });
+    expect(screen.getByRole("status")).toHaveTextContent('"dir":"rtl"');
+    expect(screen.getByRole("status")).toHaveTextContent('"colorScheme":"dark"');
+  } finally {
+    view.unmount();
+    localStorage.removeItem(STORAGE_KEYS.visualPreferences);
+  }
+});
