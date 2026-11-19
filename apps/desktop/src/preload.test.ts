@@ -104,6 +104,30 @@ describe("sandbox preload chrome bridge", () => {
   });
 });
 
+it("shares one main-issued document token across concurrent visual writes and retries a failed lookup", async () => {
+  const bridge = await load();
+  const pending = deferred();
+  wire.invoke
+    .mockRejectedValueOnce(new Error("temporarily unavailable"))
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValue({ status: "unsupported", reason: "native-overlay-appearance-unavailable" });
+  expect(await bridge.syncVisualTheme!("auto")).toEqual({ status: "rejected", reason: "bridge-unavailable" });
+  const declaration = { owner: "shell", revision: 1, appearance: null };
+  const writes = [bridge.syncVisualTheme!("dark"), bridge.declareOverlayAppearance!(declaration)];
+  expect(wire.invoke.mock.calls.map(([channel]) => channel)).toEqual([
+    DESKTOP_CHROME_IPC.visualDocument,
+    DESKTOP_CHROME_IPC.visualDocument,
+  ]);
+  pending.resolve("document-token");
+  await Promise.all(writes);
+  expect(wire.invoke).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.visualTheme, {
+    document: "document-token",
+    revision: 2,
+    preference: "dark",
+  });
+  expect(wire.invoke).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.declaration, { document: "document-token", declaration });
+});
+
 describe("sandbox preload preference bridge", () => {
   it("rejects bad keys and values before IPC", async () => {
     const bridge = await load();

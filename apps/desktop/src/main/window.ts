@@ -14,8 +14,7 @@ export const IPC = {
   firstPaint: "desktop:first-paint",
 } as const;
 
-export interface MainWindowOptions {
-  onChildWindow?: (win: BrowserWindow, url: string) => void;
+export interface WindowOptions {
   session: Session;
   preloadPath: string;
   appVersion: string;
@@ -26,43 +25,8 @@ export interface MainWindowOptions {
   chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualThemeStore?: VisualThemeStore };
 }
 
+const CASCADE_STEP = 24;
 const EXTERNAL_SCHEMES = new Set(["http:", "https:", "mailto:"]);
-
-/** What `createWindowKeeper()` needs of a window. */
-export interface KeptWindow {
-  isDestroyed(): boolean;
-  once(event: "closed", listener: () => void): unknown;
-}
-
-export interface WindowKeeper<W extends KeptWindow> {
-  /** The live window, or `undefined` once it was closed or destroyed. */
-  current(): W | undefined;
-  /** The live window, or a new one from `create` (with its `closed` bookkeeping) when there is none. */
-  open(): { window: W; created: boolean };
-}
-
-/**
- * Keeps the reference to the single main window straight across close and reopen: every window
- * made through `open()` clears the reference when it closes, and only if it is still the one held,
- * so a window created on `activate` is tracked like the first one.
- */
-export function createWindowKeeper<W extends KeptWindow>(create: () => W): WindowKeeper<W> {
-  let held: W | undefined;
-  const current = () => (held && !held.isDestroyed() ? held : undefined);
-  return {
-    current,
-    open() {
-      const existing = current();
-      if (existing) return { window: existing, created: false };
-      const window = create();
-      held = window;
-      window.once("closed", () => {
-        if (held === window) held = undefined;
-      });
-      return { window, created: true };
-    },
-  };
-}
 
 /** URL schemes that may be handed to an external application. */
 export function isExternalUrl(url: string): boolean {
@@ -99,18 +63,13 @@ export function isTrustedSender(event: IpcMainEvent | IpcMainInvokeEvent, win: B
   return isAppUrl(frame.url);
 }
 
-/**
- * The app window: sandboxed renderer on a dedicated session, shown on first paint, confined to
- * `app://app` (external web links go to the system browser).
- */
-export function createMainWindow(options: MainWindowOptions): BrowserWindow {
-  const policy = options.chrome?.currentPolicy();
-  const win = new BrowserWindow({ width: 1200, height: 800, ...nativeOptions(options, policy) });
-  configureWindow(win, options, policy);
-  return win;
+/** Chromium constructs renderer-opened windows; the host uses the same native options for its own. */
+export function createAppWindow(options: WindowOptions): BrowserWindow {
+  return new BrowserWindow({ width: 1200, height: 800, ...nativeOptions(options) });
 }
 
-function nativeOptions({ session, preloadPath, chrome, appVersion }: MainWindowOptions, policy?: ChromePolicy) {
+function nativeOptions({ session, preloadPath, chrome, appVersion }: WindowOptions) {
+  const policy = chrome?.currentPolicy();
   return {
     show: false,
     ...(policy ? chromeWindowOptions(policy) : { backgroundColor: "#ffffff" }),
@@ -130,8 +89,13 @@ function nativeOptions({ session, preloadPath, chrome, appVersion }: MainWindowO
   };
 }
 
-function configureWindow(win: BrowserWindow, options: MainWindowOptions, policy?: ChromePolicy) {
-  const { chrome, profile, log, logRendererConsole, onChildWindow } = options;
+export function configureWindow(
+  win: BrowserWindow,
+  options: WindowOptions,
+  children: { reuse(url: string): boolean; adopt(window: BrowserWindow, url: string): void },
+) {
+  const { chrome, profile, log, logRendererConsole } = options;
+  const policy = chrome?.currentPolicy();
   if (chrome && policy) {
     installWindowChrome(win, policy, (event) => isTrustedSender(event, win), log, chrome.visualThemeStore);
     log.info(
@@ -182,7 +146,7 @@ function configureWindow(win: BrowserWindow, options: MainWindowOptions, policy?
   win.webContents.on("will-frame-navigate", confineSubframe);
   win.webContents.setWindowOpenHandler(({ url, features }) => {
     if (isAppUrl(url)) {
-      const childPolicy = chrome?.currentPolicy();
+      if (children.reuse(url)) return { action: "deny" };
       const bounds = win.getBounds();
       const area = screen.getDisplayMatching(bounds).workArea;
       const named = new Set(
@@ -195,20 +159,34 @@ function configureWindow(win: BrowserWindow, options: MainWindowOptions, policy?
         action: "allow",
         outlivesOpener: true,
         overrideBrowserWindowOptions: {
-          ...nativeOptions(options, childPolicy),
-          ...(!named.has("width") && { width: bounds.width }),
-          ...(!named.has("height") && { height: bounds.height }),
-          ...(!named.has("left") && !named.has("x") && { x: cascade(bounds.x, bounds.width, area.x, area.width) }),
-          ...(!named.has("top") && !named.has("y") && { y: cascade(bounds.y, bounds.height, area.y, area.height) }),
+          ...nativeOptions(options),
+          // Leave room to stagger children even when their opener fills the display.
+          ...(!named.has("width") &&
+            !named.has("innerwidth") && { width: Math.min(bounds.width, Math.max(1, area.width - CASCADE_STEP * 2)) }),
+          ...(!named.has("height") &&
+            !named.has("innerheight") && {
+              height: Math.min(bounds.height, Math.max(1, area.height - CASCADE_STEP * 2)),
+            }),
         },
       };
     }
     openExternal(url, log);
     return { action: "deny" };
   });
-  win.webContents.on("did-create-window", (child, details) => {
-    configureWindow(child, options, chrome?.currentPolicy());
-    onChildWindow?.(child, details.url);
+  let placement = 0;
+  win.webContents.on("did-create-window", (child, { url, options: geometry }) => {
+    if (geometry.x === undefined || geometry.y === undefined) {
+      // At creation Electron has resolved explicit features, including innerWidth and minimum sizes.
+      const bounds = win.getBounds();
+      const area = screen.getDisplayMatching(bounds).workArea;
+      const size = child.getBounds();
+      placement++;
+      child.setBounds({
+        x: geometry.x ?? cascade(bounds.x, size.width, area.x, area.width, placement),
+        y: geometry.y ?? cascade(bounds.y, size.height, area.y, area.height, placement),
+      });
+    }
+    children.adopt(child, url);
   });
   win.webContents.on("render-process-gone", (_event, details) => {
     if (details.reason !== "clean-exit" && details.reason !== "killed") log.error({ details }, "renderer process gone");
@@ -219,10 +197,25 @@ function configureWindow(win: BrowserWindow, options: MainWindowOptions, policy?
       log.info({ level: event.level, source: safeUrl(event.sourceId) }, `renderer: ${redactLogUrls(event.message)}`);
     });
   }
+
+  // Reuse must respect the first-paint gate even if the initial URL has already committed.
+  return function present() {
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) {
+      if (!shown) return;
+      win.show();
+    }
+    win.focus();
+  };
 }
 
-// Keep the new title bar visible even when its opener is at the edge of a display.
-function cascade(position: number, size: number, start: number, extent: number): number {
-  const end = start + extent - size;
-  return Math.max(start, Math.min(end, position + 24 <= end ? position + 24 : position - 24));
+// Walk the available positions on either side of the opener before reusing one.
+function cascade(position: number, size: number, start: number, extent: number, placement: number): number {
+  const end = Math.max(start, start + extent - size);
+  const origin = Math.max(start, Math.min(position, end));
+  const forward = Math.ceil((end - origin) / CASCADE_STEP);
+  const backward = Math.ceil((origin - start) / CASCADE_STEP);
+  const slot = placement % (1 + forward + backward);
+  if (slot <= forward) return Math.min(end, origin + slot * CASCADE_STEP);
+  return Math.max(start, origin - (slot - forward) * CASCADE_STEP);
 }

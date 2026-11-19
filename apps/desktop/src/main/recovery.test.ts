@@ -9,32 +9,27 @@ function deferred<T>() {
 }
 
 function setup() {
-  const window = { isDestroyed: vi.fn<() => boolean>(() => false) };
-  let current = window;
+  const isDestroyed = vi.fn<() => boolean>(() => false);
   const choices: ReturnType<typeof deferred<RecoveryChoice>>[] = [];
-  const reload = vi.fn<(_: typeof window, url: string) => void | Promise<unknown>>();
+  const reload = vi.fn<(url: string) => void | Promise<unknown>>();
   const close = vi.fn<() => void>();
   const cancelReload = vi.fn<() => void>();
-  const showDialog = vi.fn<(_win: typeof window, kind: RecoveryDialog, signal: AbortSignal) => Promise<RecoveryChoice>>(
-    () => {
-      const choice = deferred<RecoveryChoice>();
-      choices.push(choice);
-      return choice.promise;
-    },
-  );
+  const showDialog = vi.fn<(kind: RecoveryDialog, signal: AbortSignal) => Promise<RecoveryChoice>>(() => {
+    const choice = deferred<RecoveryChoice>();
+    choices.push(choice);
+    return choice.promise;
+  });
   const onError = vi.fn<(error: unknown) => void>();
-  const recovery = createWindowRecovery({
-    current: () => current,
-    isAppUrl: (url) => url.startsWith("app://app/"),
+  const recovery = createWindowRecovery("app://app/start", {
+    isDestroyed,
     reload,
     cancelReload,
     close,
     showDialog,
     onError,
   });
-  recovery.track(window, "app://app/start");
   return {
-    window,
+    isDestroyed,
     recovery,
     reload,
     cancelReload,
@@ -42,12 +37,7 @@ function setup() {
     showDialog,
     choices,
     onError,
-    replace: () => {
-      current = { isDestroyed: vi.fn<() => boolean>(() => false) };
-      recovery.track(current, "app://app/new");
-      return current;
-    },
-    fail: () => recovery.didFailLoad(window, { errorCode: -105, isMainFrame: true }),
+    fail: () => recovery.didFailLoad({ errorCode: -105, isMainFrame: true }),
   };
 }
 const flush = async () => {
@@ -62,9 +52,9 @@ describe("window recovery", () => {
     const s = setup();
     s.reload.mockReturnValueOnce(new Promise(() => {}));
     s.fail();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
-    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "unresponsive", expect.any(AbortSignal));
+    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith("unresponsive", expect.any(AbortSignal));
     s.choices[0].resolve(choice);
     await flush();
     expect(s.close).toHaveBeenCalledTimes(choice === "close" ? 1 : 0);
@@ -80,7 +70,7 @@ describe("window recovery", () => {
     const replacement = deferred<unknown>();
     s.reload.mockReturnValueOnce(replacement.promise);
     s.fail();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
     s.choices[0].resolve("reload");
     await flush();
@@ -103,9 +93,9 @@ describe("window recovery", () => {
     const s = setup();
     s.reload.mockReturnValueOnce(new Promise(() => {}));
     s.fail();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
-    s.recovery.responsive(s.window);
+    s.recovery.responsive();
     s.choices[0].resolve("reload");
     await flush();
     expect(s.cancelReload).not.toHaveBeenCalled();
@@ -115,13 +105,13 @@ describe("window recovery", () => {
 
   it("releases a recovered window before its obsolete native dialog settles", async () => {
     const s = setup();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
-    s.recovery.responsive(s.window);
-    expect(s.showDialog.mock.calls[0][2].aborted).toBe(true);
-    s.recovery.rendererGone(s.window, "crashed");
+    s.recovery.responsive();
+    expect(s.showDialog.mock.calls[0][1].aborted).toBe(true);
+    s.recovery.rendererGone("crashed");
     await flush();
-    expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
+    expect(s.reload).toHaveBeenCalledExactlyOnceWith("app://app/start");
     s.choices[0].resolve("close");
     await flush();
     expect(s.close).not.toHaveBeenCalled();
@@ -135,12 +125,12 @@ describe("window recovery", () => {
       s.recovery.utilityStarting(1);
       s.recovery.utilityFailed(1);
       await flush();
-      s.recovery.unresponsive(s.window);
+      s.recovery.unresponsive();
       await flush();
-      if (outcome === "responsive") s.recovery.responsive(s.window);
-      else s.recovery.rendererGone(s.window, "crashed");
+      if (outcome === "responsive") s.recovery.responsive();
+      else s.recovery.rendererGone("crashed");
       await flush();
-      expect(s.showDialog.mock.calls.map(([, kind, signal]) => [kind, signal.aborted])).toEqual([
+      expect(s.showDialog.mock.calls.map(([kind, signal]) => [kind, signal.aborted])).toEqual([
         ["failure", true],
         ["unresponsive", true],
         ["failure", false],
@@ -156,9 +146,9 @@ describe("window recovery", () => {
 
   it("ignores aborted navigation, subframes and clean renderer exits", async () => {
     const s = setup();
-    s.recovery.didFailLoad(s.window, { errorCode: -3, isMainFrame: true });
-    s.recovery.didFailLoad(s.window, { errorCode: -105, isMainFrame: false });
-    s.recovery.rendererGone(s.window, "clean-exit");
+    s.recovery.didFailLoad({ errorCode: -3, isMainFrame: true });
+    s.recovery.didFailLoad({ errorCode: -105, isMainFrame: false });
+    s.recovery.rendererGone("clean-exit");
     await flush();
     expect(s.reload).not.toHaveBeenCalled();
     expect(s.showDialog).not.toHaveBeenCalled();
@@ -168,10 +158,10 @@ describe("window recovery", () => {
     const s = setup();
     s.fail();
     await flush();
-    expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
+    expect(s.reload).toHaveBeenCalledExactlyOnceWith("app://app/start");
     s.fail();
     await flush();
-    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "failure", expect.any(AbortSignal));
+    expect(s.showDialog).toHaveBeenCalledExactlyOnceWith("failure", expect.any(AbortSignal));
     s.choices[0].resolve("reload");
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(2);
@@ -185,21 +175,21 @@ describe("window recovery", () => {
     const s = setup();
     s.fail();
     await flush();
-    s.recovery.documentLoaded(s.window, "app://app/current");
+    s.recovery.documentLoaded("app://app/current");
     await vi.advanceTimersByTimeAsync(RECOVERY_STABLE_MS - 1);
-    s.recovery.rendererGone(s.window, "crashed");
+    s.recovery.rendererGone("crashed");
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(1);
-    s.recovery.documentLoaded(s.window, "app://app/current");
+    s.recovery.documentLoaded("app://app/current");
     await vi.advanceTimersByTimeAsync(RECOVERY_STABLE_MS);
-    s.recovery.rendererGone(s.window, "crashed");
+    s.recovery.rendererGone("crashed");
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(2);
-    expect(s.showDialog.mock.calls[0][2].aborted).toBe(true);
+    expect(s.showDialog.mock.calls[0][1].aborted).toBe(true);
     s.choices[0].resolve("reload");
     await flush();
     expect(s.reload).toHaveBeenCalledTimes(2);
-    expect(s.reload).toHaveBeenLastCalledWith(s.window, "app://app/current");
+    expect(s.reload).toHaveBeenLastCalledWith("app://app/current");
   });
 
   it("defers failures and manual retries during utility startup and deduplicates readiness", async () => {
@@ -243,8 +233,8 @@ describe("window recovery", () => {
     "honors a hung renderer's reload choice while the replacement utility is %s",
     async (phase) => {
       const s = setup();
-      s.recovery.documentLoaded(s.window, "app://app/chat");
-      s.recovery.unresponsive(s.window);
+      s.recovery.documentLoaded("app://app/chat");
+      s.recovery.unresponsive();
       await flush();
       s.recovery.utilityStarting(2);
       if (phase === "ready") s.recovery.utilityReady(2);
@@ -252,19 +242,19 @@ describe("window recovery", () => {
       await flush();
       expect(s.reload).toHaveBeenCalledTimes(phase === "ready" ? 1 : 0);
       s.recovery.utilityReady(2);
-      expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/chat");
-      expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "unresponsive", expect.any(AbortSignal));
+      expect(s.reload).toHaveBeenCalledExactlyOnceWith("app://app/chat");
+      expect(s.showDialog).toHaveBeenCalledExactlyOnceWith("unresponsive", expect.any(AbortSignal));
       s.recovery.shutdown();
     },
   );
 
   it("ignores the old close choice when the renderer recovers during a utility restart", async () => {
     const s = setup();
-    s.recovery.documentLoaded(s.window, "app://app/chat");
-    s.recovery.unresponsive(s.window);
+    s.recovery.documentLoaded("app://app/chat");
+    s.recovery.unresponsive();
     await flush();
     s.recovery.utilityStarting(2);
-    s.recovery.responsive(s.window);
+    s.recovery.responsive();
     s.recovery.utilityReady(2);
     s.choices[0].resolve("close");
     await flush();
@@ -278,7 +268,7 @@ describe("window recovery", () => {
     const s = setup();
     s.recovery.utilityStarting(2);
     s.fail();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
     s.fail();
     s.recovery.utilityFailed(2);
@@ -297,35 +287,35 @@ describe("window recovery", () => {
       const s = setup();
       s.recovery.utilityStarting(2);
       s.fail();
-      s.recovery.unresponsive(s.window);
+      s.recovery.unresponsive();
       await flush();
       s.choices[0].resolve("wait");
       await flush();
       s.recovery.utilityReady(2);
       expect(s.reload).not.toHaveBeenCalled();
-      if (outcome === "responsive") s.recovery.responsive(s.window);
-      else s.recovery.rendererGone(s.window, "crashed");
-      expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
+      if (outcome === "responsive") s.recovery.responsive();
+      else s.recovery.rendererGone("crashed");
+      expect(s.reload).toHaveBeenCalledExactlyOnceWith("app://app/start");
       s.recovery.shutdown();
     },
   );
 
   it("offers manual wait/reload/close for unresponsive and ignores recovered dialog results", async () => {
     const s = setup();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
-    expect(s.showDialog).toHaveBeenCalledWith(s.window, "unresponsive", expect.any(AbortSignal));
+    expect(s.showDialog).toHaveBeenCalledWith("unresponsive", expect.any(AbortSignal));
     expect(s.reload).not.toHaveBeenCalled();
-    s.recovery.responsive(s.window);
+    s.recovery.responsive();
     s.choices[0].resolve("close");
     await flush();
     expect(s.close).not.toHaveBeenCalled();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
     s.choices[1].resolve("wait");
     await flush();
     expect(s.showDialog).toHaveBeenCalledTimes(2);
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
     s.choices[2].resolve("reload");
     await flush();
@@ -337,12 +327,11 @@ describe("window recovery", () => {
     expect(s.showDialog).toHaveBeenCalledTimes(4);
   });
 
-  it.each(["close", "replace", "shutdown"])("discards pending results after %s", async (action) => {
+  it.each(["destruction", "shutdown"])("discards pending results after %s", async (action) => {
     const s = setup();
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
-    if (action === "close") s.recovery.closed(s.window);
-    if (action === "replace") s.replace();
+    if (action === "destruction") s.isDestroyed.mockReturnValue(true);
     if (action === "shutdown") s.recovery.shutdown();
     s.choices[0].resolve("reload");
     await flush();
@@ -367,7 +356,7 @@ describe("window recovery", () => {
     let reject!: (reason: Error) => void;
     s.reload.mockReturnValueOnce(new Promise((_resolve, fail) => (reject = fail)));
     s.fail();
-    s.recovery.documentLoaded(s.window, "app://app/success");
+    s.recovery.documentLoaded("app://app/success");
     reject(new Error("retired navigation"));
     await flush();
     expect(s.showDialog).not.toHaveBeenCalled();
@@ -411,11 +400,11 @@ describe("window recovery", () => {
     const s = setup();
     s.fail();
     await flush();
-    s.recovery.documentLoaded(s.window, "app://app/current");
+    s.recovery.documentLoaded("app://app/current");
     await vi.advanceTimersByTimeAsync(20_000);
-    s.recovery.unresponsive(s.window);
+    s.recovery.unresponsive();
     await flush();
-    s.recovery.responsive(s.window);
+    s.recovery.responsive();
     s.choices[0].resolve("reload");
     await flush();
     await vi.advanceTimersByTimeAsync(RECOVERY_STABLE_MS);
@@ -474,14 +463,14 @@ describe("window recovery", () => {
 
   it("retries the committed in-page route without treating it as successful document load", async () => {
     const s = setup();
-    s.recovery.documentLoaded(s.window, "app://app/start");
-    s.recovery.sameDocumentNavigated(s.window, "app://app/route?view=details", true);
-    s.recovery.sameDocumentNavigated(s.window, "app://app/subframe", false);
-    s.recovery.sameDocumentNavigated(s.window, "https://example.com/", true);
-    s.recovery.rendererGone(s.window, "crashed");
+    s.recovery.documentLoaded("app://app/start");
+    s.recovery.sameDocumentNavigated("app://app/route?view=details", true);
+    s.recovery.sameDocumentNavigated("app://app/subframe", false);
+    s.recovery.sameDocumentNavigated("https://example.com/", true);
+    s.recovery.rendererGone("crashed");
     await flush();
-    expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/route?view=details");
-    s.recovery.sameDocumentNavigated(s.window, "app://app/another", true);
+    expect(s.reload).toHaveBeenCalledExactlyOnceWith("app://app/route?view=details");
+    s.recovery.sameDocumentNavigated("app://app/another", true);
     await vi.advanceTimersByTimeAsync(RECOVERY_STABLE_MS);
     s.fail();
     await flush();
@@ -511,13 +500,13 @@ it("reserves automatic recovery for a failed document when opened during a utili
   expect(s.reload).not.toHaveBeenCalled();
   s.fail();
   await flush();
-  expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
+  expect(s.reload).toHaveBeenCalledExactlyOnceWith("app://app/start");
   expect(s.showDialog).not.toHaveBeenCalled();
 });
 
 it("offers the decision in a surviving window if the shared sheet owner closes", async () => {
   const s = setup();
-  s.recovery.unresponsive(s.window);
+  s.recovery.unresponsive();
   await flush();
   s.choices[0].resolve("dismissed");
   await flush();

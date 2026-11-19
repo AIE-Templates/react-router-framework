@@ -52,7 +52,8 @@ function setup(platform = "win32") {
   const store = { current: () => "auto" as const, save: vi.fn<() => boolean>(() => true) };
   const dispose = installWindowChrome(win, resolveChromePolicy({ platform }), trusted, log, store);
   const invoke = (channel: string, ...args: unknown[]) => win.handlers.get(channel)!(...args);
-  return { win, event, source, dispose, store, invoke };
+  const document = invoke(DESKTOP_CHROME_IPC.visualDocument, event);
+  return { win, event, source, dispose, store, invoke, document };
 }
 
 beforeEach(() => {
@@ -177,9 +178,9 @@ describe("window chrome bridge", () => {
     dispose();
   });
   it("keeps native theme, background, overlay support and persistence results independent", () => {
-    const { win, event, store, dispose, invoke } = setup("darwin");
+    const { win, event, store, dispose, invoke, document } = setup("darwin");
     const send = (preference: string, revision: number) =>
-      invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "doc", revision, preference });
+      invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision, preference });
     expect(send("dark", 1)).toEqual({
       status: "processed",
       background: "applied",
@@ -197,17 +198,21 @@ describe("window chrome bridge", () => {
     win.webContents.emit("did-navigate", {}, "app://app/");
     expect(send("dark", 3)).toMatchObject({ status: "rejected" });
     expect(
-      invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "new", revision: 1, preference: "light" }),
+      invoke(DESKTOP_CHROME_IPC.visualTheme, event, {
+        document: invoke(DESKTOP_CHROME_IPC.visualDocument, event),
+        revision: 1,
+        preference: "light",
+      }),
     ).toMatchObject({ status: "processed" });
     expect(win.setTitleBarOverlay).not.toHaveBeenCalled();
     dispose();
   });
   it("replaces and releases complete declarations without stale owners or requests clearing new values", () => {
-    const { win, event, dispose, invoke } = setup();
+    const { win, event, dispose, invoke, document } = setup();
     const declare = (owner: string, revision: number, appearance: unknown) =>
-      invoke(DESKTOP_CHROME_IPC.declaration, event, { document: "doc", declaration: { owner, revision, appearance } });
+      invoke(DESKTOP_CHROME_IPC.declaration, event, { document, declaration: { owner, revision, appearance } });
     expect(declare("shell", 1, { color: "#224466", height: 40 })).toMatchObject({ status: "applied" });
-    invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "doc", revision: 1, preference: "dark" });
+    invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 1, preference: "dark" });
     expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#224466", symbolColor: "#f3f4f6", height: 40 });
     expect(declare("shell", 2, { height: 42 })).toMatchObject({ appearance: { color: "#17191d", height: 42 } });
     expect(declare("other", 3, { height: 50 })).toMatchObject({
@@ -238,19 +243,68 @@ describe("window chrome bridge", () => {
 });
 
 it("keeps the current document live when navigation starts but is cancelled", () => {
-  const { win, event, source, dispose, invoke } = setup();
+  const { win, event, source, dispose, invoke, document } = setup();
   invoke(DESKTOP_CHROME_IPC.subscribe, event, "live");
-  invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "live", revision: 1, preference: "dark" });
+  invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 1, preference: "dark" });
   win.webContents.emit("did-start-navigation", {}, "https://example.com", false, true);
-  expect(
-    invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "live", revision: 2, preference: "light" }),
-  ).toMatchObject({ status: "processed" });
+  expect(invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 2, preference: "light" })).toMatchObject({
+    status: "processed",
+  });
   win.focused = true;
   win.emit("focus");
   expect(source.send).toHaveBeenCalledOnce();
   win.webContents.emit("did-navigate", {}, "app://app/");
-  expect(
-    invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "live", revision: 3, preference: "dark" }),
-  ).toMatchObject({ status: "rejected" });
+  expect(invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 3, preference: "dark" })).toMatchObject({
+    status: "rejected",
+  });
   dispose();
+});
+
+it("fans out system changes through one native listener and releases each closed window", () => {
+  const windows = Array.from({ length: 12 }, () => setup());
+  const [explicit, closed, ...following] = windows;
+  try {
+    explicit.invoke(DESKTOP_CHROME_IPC.visualTheme, explicit.event, {
+      document: explicit.document,
+      preference: "light",
+      revision: 1,
+    });
+    closed.win.emit("closed");
+    expect(theme.on).toHaveBeenCalledTimes(1);
+    expect(theme.off).not.toHaveBeenCalled();
+    const notify = theme.on.mock.calls[0][1];
+    theme.shouldUseDarkColors = true;
+    notify();
+    expect(explicit.win.setBackgroundColor).toHaveBeenCalledExactlyOnceWith("#ffffff");
+    expect(closed.win.setBackgroundColor).not.toHaveBeenCalled();
+    for (const item of following) expect(item.win.setBackgroundColor).toHaveBeenCalledExactlyOnceWith("#17191d");
+  } finally {
+    for (const item of windows) item.dispose();
+  }
+  expect(theme.off).toHaveBeenCalledExactlyOnceWith("updated", theme.on.mock.calls[0][1]);
+});
+
+it("rejects old theme and declaration messages even before the next document requests its token", () => {
+  const { win, event, store, dispose, invoke, document } = setup();
+  try {
+    expect(invoke(DESKTOP_CHROME_IPC.visualDocument, { ...event, allowed: false })).toBeNull();
+    expect(invoke(DESKTOP_CHROME_IPC.visualDocument, event)).toBe(document);
+    for (let i = 0; i < 20; i++) {
+      win.webContents.emit("did-navigate", {}, "app://app/");
+      expect(invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, preference: "dark", revision: i + 1 })).toEqual({
+        status: "rejected",
+        reason: "stale-document",
+      });
+      expect(
+        invoke(DESKTOP_CHROME_IPC.declaration, event, {
+          document,
+          declaration: { owner: "shell", revision: i + 1, appearance: null },
+        }),
+      ).toEqual({ status: "rejected", reason: "stale-document" });
+      expect(invoke(DESKTOP_CHROME_IPC.visualDocument, event)).not.toBe(document);
+    }
+    expect(store.save).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
 });

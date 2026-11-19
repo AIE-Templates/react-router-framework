@@ -63,6 +63,56 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     await expect(message).toHaveValue("Unsent chat draft");
   });
 
+  test("reuses the settings window across openers and creates a fresh one after close", async ({
+    desktop: { app, page: home },
+  }) => {
+    const chatOpened = app.waitForEvent("window");
+    await home.getByRole("link", { name: "Chat demo" }).click();
+    const chat = await chatOpened;
+    await waitForApp(chat);
+
+    const settingsOpened = app.waitForEvent("window");
+    await Promise.all(
+      [home, chat].map((page) =>
+        page.evaluate(() => {
+          window.open("/settings", "_blank", "noopener");
+        }),
+      ),
+    );
+    const settings = await settingsOpened;
+    await waitForApp(settings);
+    const native = await app.browserWindow(settings);
+    const originalId = await native.evaluate((win) => win.id);
+    const documentStart = await settings.evaluate(() => performance.timeOrigin);
+    const windowIds = () =>
+      app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .filter((win) => new URL(win.webContents.getURL() || "about:blank").pathname === "/settings")
+          .map((win) => win.id),
+      );
+    expect(await windowIds()).toEqual([originalId]);
+
+    await native.evaluate((win) => win.hide());
+    await home.bringToFront();
+    await home.getByRole("link", { name: "Settings", exact: true }).click();
+    await expect.poll(() => native.evaluate((win) => win.isVisible())).toBe(true);
+    await chat.evaluate(() => {
+      window.open("/settings?from=chat#appearance", "_blank", "noopener");
+    });
+    expect(await windowIds()).toEqual([originalId]);
+    expect(await settings.evaluate(() => performance.timeOrigin)).toBe(documentStart);
+
+    await settings.close();
+    const reopened = app.waitForEvent("window");
+    await home.bringToFront();
+    await home.getByRole("link", { name: "Settings", exact: true }).click();
+    const fresh = await reopened;
+    await waitForApp(fresh);
+    const nextId = await (await app.browserWindow(fresh)).evaluate((win) => win.id);
+    expect(nextId).not.toBe(originalId);
+    expect(await windowIds()).toEqual([nextId]);
+  });
+
   for (const activation of ["activate", "second-instance"] as const) {
     test(`reopening Home via ${activation} preserves the independent Chat draft`, async ({
       desktop: { app, page: home },
@@ -85,7 +135,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       const next = await reopened;
       await waitForApp(next);
       await expect(next).toHaveURL("app://app/");
-      expect(app.windows()).toHaveLength(2);
+      await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(2);
       await expect(chat).toHaveURL("app://app/chat");
       await expect(draft).toHaveValue("Keep this conversation");
     });

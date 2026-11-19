@@ -16,12 +16,13 @@ import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
 import { createPrefsStore, installPrefsIpc } from "./main/prefs.ts";
 import { registerAppProtocol } from "./main/protocol.ts";
-import { createWindowRecovery, type RecoveryChoice, type RecoveryDialog } from "./main/recovery.ts";
+import type { RecoveryChoice, RecoveryDialog } from "./main/recovery.ts";
 import { resolveRunModes } from "./main/run-modes.ts";
-import { startServerProcess, type UtilityLifecycle } from "./main/server-process.ts";
+import { startServerProcess } from "./main/server-process.ts";
 import { configureUserData } from "./main/user-data.ts";
 import { createVisualThemeStore } from "./main/visual-theme.ts";
-import { createMainWindow, createWindowKeeper, isTrustedSender } from "./main/window.ts";
+import { createWindowRegistry } from "./main/window-registry.ts";
+import { isTrustedSender } from "./main/window.ts";
 import { portAckCoalesce } from "./port-options.ts";
 
 // The main process must never die of an uncaught exception: Electron shows a blocking dialog for
@@ -117,23 +118,11 @@ async function askRecovery(
 
 async function main(): Promise<void> {
   profile.mark("ready");
-  const ownedWindows = new Map<number, BrowserWindow>();
   const appSession = session.fromPartition("persist:app");
   installPermissionPolicy(appSession, log);
   // Preferences the page writes through the preload; every request carries the current ones.
   const visualThemeStore = createVisualThemeStore(app.getPath("userData"), { log });
   const prefsStore = createPrefsStore(app.getPath("userData"), { log });
-  installPrefsIpc(
-    prefsStore,
-    (event) => isTrustedSender(event, ownedWindows.get(event.sender.id)),
-    (event) => {
-      for (const window of ownedWindows.values()) {
-        if (!window.isDestroyed() && window.webContents !== event.sender && isAppUrl(window.webContents.getURL())) {
-          window.webContents.send(DESKTOP_PREFS_IPC.changed);
-        }
-      }
-    },
-  );
   const shell = shellFromEnv({
     WEB_SHELL: "desktop",
     WEB_SHELL_PLATFORM: process.platform,
@@ -153,41 +142,32 @@ async function main(): Promise<void> {
   const chromePolicy = currentChromePolicy();
   const bootstrap: DesktopBootstrap = { protocolVersion: 1, shell, mode: chromePolicy.resolvedMode };
   if (chromePolicy.fallbackReason) log.info({ reason: chromePolicy.fallbackReason }, "using system window decoration");
-  // After a crash getOSProcessId() no longer identifies the exited renderer.
-  const rendererPids = new WeakMap<BrowserWindow, number>();
-  const dialogChoices = new Map<string, { owner: AbortSignal; choice: Promise<RecoveryChoice> }>();
-  const makeRecovery = (owner: BrowserWindow) =>
-    createWindowRecovery<BrowserWindow>({
-      current: () => owner,
-      isAppUrl,
-      reload: (win, url) => win.loadURL(url),
-      cancelReload: (win) => win.webContents.stop(),
-      close: (win) => win.close(),
-      showDialog: (win, kind, signal) => {
-        const pid =
-          kind === "unresponsive"
-            ? win.webContents.getOSProcessId()
-            : win.webContents.isCrashed() && rendererPids.get(win);
-        if (!pid) return askRecovery(win, kind, false, signal);
-        const key = kind + ":" + pid;
-        const pending = dialogChoices.get(key);
-        if (pending && !pending.owner.aborted) return pending.choice;
-        const shared = [...ownedWindows.values()].some((other) => other !== win && rendererPids.get(other) === pid);
-        if (!shared) return askRecovery(win, kind, false, signal);
-        const choice = askRecovery(win, kind, true, signal).finally(() => {
-          if (dialogChoices.get(key)?.owner === signal) dialogChoices.delete(key);
-        });
-        dialogChoices.set(key, { owner: signal, choice });
-        return choice;
-      },
-      onError: (err) => log.warn({ err }, "window recovery operation failed"),
-    });
-  const recoveries = new Set<ReturnType<typeof makeRecovery>>();
-  let lifecycle: UtilityLifecycle | undefined;
+  const registry = createWindowRegistry({
+    session: appSession,
+    chrome: { bootstrap, currentPolicy: currentChromePolicy, visualThemeStore },
+    preloadPath: join(__dirname, "preload.cjs"),
+    appVersion: app.getVersion(),
+    log,
+    profile,
+    logRendererConsole: devServerUrl !== undefined || process.env.DESKTOP_SMOKE === "1",
+    keyForUrl: (url) => (/^\/settings\/*$/i.test(url.pathname) ? "settings" : undefined),
+    askRecovery,
+  });
+  installPrefsIpc(
+    prefsStore,
+    (event) => isTrustedSender(event, registry.byContentsId(event.sender.id)),
+    (event) => {
+      for (const window of registry.windows()) {
+        if (!window.isDestroyed() && window.webContents !== event.sender && isAppUrl(window.webContents.getURL())) {
+          window.webContents.send(DESKTOP_PREFS_IPC.changed);
+        }
+      }
+    },
+  );
   const desktop = (contentsId?: number): DesktopRequest => ({
     titlebar: chromePolicy.resolvedMode === "system-decorated" ? "native" : "custom",
     chromeMode: chromePolicy.resolvedMode,
-    fullscreen: (contentsId === undefined ? undefined : ownedWindows.get(contentsId))?.isFullScreen() ?? false,
+    fullscreen: registry.byContentsId(contentsId)?.isFullScreen() ?? false,
     prefs: prefsStore.current(),
   });
 
@@ -229,15 +209,7 @@ async function main(): Promise<void> {
           DESKTOP_SMOKE: smoke ? "1" : "",
           DESKTOP_E2E: e2e ? "1" : "",
         },
-        onLifecycle: (event) => {
-          lifecycle = event;
-          const { generation, state } = event;
-          for (const recovery of recoveries) {
-            if (state === "starting") recovery.utilityStarting(generation);
-            else if (state === "ready") recovery.utilityReady(generation);
-            else recovery.utilityFailed(generation);
-          }
-        },
+        onLifecycle: registry.utilityChanged,
       });
   registerAppProtocol(appSession, {
     upstream: server ? server.fetch : createDevProxyFetch(),
@@ -256,63 +228,11 @@ async function main(): Promise<void> {
     log.info({ devServerUrl }, "development: forwarding app:// to react-router dev");
     // scripts/dev.ts writes "reload" on stdin when the preload script was rebuilt.
     process.stdin.on("data", (chunk: Buffer) => {
-      if (chunk.toString().includes("reload")) for (const win of ownedWindows.values()) win.webContents.reload();
+      if (chunk.toString().includes("reload")) for (const win of registry.windows()) win.webContents.reload();
     });
   }
 
-  const windowOptions = {
-    onChildWindow: trackWindow,
-    session: appSession,
-    chrome: { bootstrap, currentPolicy: currentChromePolicy, visualThemeStore },
-    preloadPath: join(__dirname, "preload.cjs"),
-    appVersion: app.getVersion(),
-    log,
-    profile,
-    logRendererConsole: devServerUrl !== undefined || process.env.DESKTOP_SMOKE === "1",
-  };
-  const mainWindows = createWindowKeeper(() => createMainWindow(windowOptions));
-  function trackWindow(win: BrowserWindow, initialUrl: string) {
-    const id = win.webContents.id;
-    ownedWindows.set(id, win);
-    const recovery = makeRecovery(win);
-    recoveries.add(recovery);
-    recovery.track(win, initialUrl);
-    if (lifecycle?.state === "starting") recovery.utilityStarting(lifecycle.generation);
-    if (lifecycle?.state === "failed") recovery.utilityFailed(lifecycle.generation);
-    // Chromium also finishes an internal error document after did-fail-load,
-    // and getURL() still returns the failed app URL. Only a committed navigation can recover.
-    let committed = false;
-    win.webContents.on("did-navigate", () => {
-      committed = true;
-      rendererPids.set(win, win.webContents.getOSProcessId());
-    });
-    win.webContents.on("did-finish-load", () => {
-      if (committed) recovery.documentLoaded(win, win.webContents.getURL());
-    });
-    win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) =>
-      recovery.sameDocumentNavigated(win, url, isMainFrame),
-    );
-    win.webContents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) => {
-      if (isMainFrame && errorCode !== -3) committed = false;
-      recovery.didFailLoad(win, { errorCode, isMainFrame });
-    });
-    win.webContents.on("render-process-gone", (_event, details) => recovery.rendererGone(win, details.reason));
-    win.on("unresponsive", () => recovery.unresponsive(win));
-    win.on("responsive", () => recovery.responsive(win));
-    win.once("closed", () => {
-      recovery.closed(win);
-      recovery.shutdown();
-      recoveries.delete(recovery);
-      ownedWindows.delete(id);
-    });
-  }
-  const openMainWindow = () => {
-    const { window, created } = mainWindows.open();
-    if (!created) return { window, loaded: undefined };
-    const url = APP_ORIGIN + "/";
-    trackWindow(window, url);
-    return { window, loaded: window.loadURL(url) };
-  };
+  const openMainWindow = () => registry.open(APP_ORIGIN + "/", "primary");
   profile.mark("navigation-start");
   const first = openMainWindow();
   const initialLoad = first.loaded ?? Promise.resolve();
@@ -320,18 +240,13 @@ async function main(): Promise<void> {
   let quitting = false;
   const reopenMainWindow = () => {
     if (quitting) return;
-    const { window, loaded } = openMainWindow();
-    if (loaded) {
-      void loaded.catch((err: unknown) => log.error({ err }, "reopened window failed to load"));
-    } else {
-      if (window.isMinimized()) window.restore();
-      window.focus();
-    }
+    const { loaded } = openMainWindow();
+    void loaded?.catch((err: unknown) => log.error({ err }, "reopened window failed to load"));
   };
   app.on("second-instance", reopenMainWindow);
   app.on("activate", () => {
     // Ordinary activation can leave the user's current child window in front.
-    if (!mainWindows.current()) reopenMainWindow();
+    if (!registry.find("primary")) reopenMainWindow();
   });
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
@@ -365,7 +280,7 @@ async function main(): Promise<void> {
       clientStats: () => utility.stats(),
       exit: async (code) => {
         quitting = true;
-        for (const recovery of recoveries) recovery.shutdown();
+        registry.shutdown();
         await utility.shutdown();
         app.exit(code);
       },
@@ -379,7 +294,7 @@ async function main(): Promise<void> {
       layout: process.env.DESKTOP_SMOKE_LAYOUT === "1",
       exit: async (code) => {
         quitting = true;
-        for (const recovery of recoveries) recovery.shutdown();
+        registry.shutdown();
         await server?.shutdown();
         app.exit(code);
       },

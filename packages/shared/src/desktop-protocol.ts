@@ -21,6 +21,7 @@ export const DESKTOP_CHROME_IPC = {
   state: "desktop:chrome:state",
   appearance: "desktop:chrome:appearance",
   declaration: "desktop:chrome:declaration",
+  visualDocument: "desktop:visual:document",
   visualTheme: "desktop:visual:theme",
 } as const;
 
