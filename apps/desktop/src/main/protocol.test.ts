@@ -281,16 +281,18 @@ describe("registerAppProtocol with the cookie jar", () => {
   });
 
   it("cancels a dev GET during retry backoff without sending a second attempt", async () => {
-    vi.useFakeTimers();
+    let failAttempt!: (reason: Error) => void;
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => (failAttempt = reject)))
       .mockResolvedValue(new Response("recovered"));
     vi.stubGlobal("fetch", fetchMock);
     const { handle, networkHeaders, disconnect } = setup(createDevProxyFetch());
     const pending = handle("app://app/read", { headers: networkHeaders(1) });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    failAttempt(new TypeError("fetch failed", { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) }));
+    // The fetch rejection enters backoff in the next microtask. Cancel before any retry timer can run.
+    await Promise.resolve();
     disconnect(1);
     expect((await pending).type).toBe("error");
     expect(fetchMock).toHaveBeenCalledOnce();
