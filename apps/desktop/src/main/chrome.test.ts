@@ -4,26 +4,12 @@ import { DESKTOP_CHROME_IPC } from "@repo/shared";
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { ipc, handlers, theme } = vi.hoisted(() => {
-  const registry = new Map<string, (...args: unknown[]) => unknown>();
-  return {
-    handlers: registry,
-    theme: {
-      shouldUseDarkColors: false,
-      on: vi.fn<(event: string, handler: () => void) => void>(),
-      off: vi.fn<(event: string, handler: () => void) => void>(),
-    },
-    ipc: {
-      handle: vi.fn<(channel: string, handler: (...args: unknown[]) => unknown) => unknown>((channel, handler) =>
-        registry.set(channel, handler),
-      ),
-      removeHandler: vi.fn<(channel: string) => unknown>((channel) => registry.delete(channel)),
-      on: vi.fn<(channel: string, handler: (...args: unknown[]) => void) => void>(),
-      off: vi.fn<(channel: string, handler: (...args: unknown[]) => void) => void>(),
-    },
-  };
-});
-vi.mock("electron", () => ({ ipcMain: ipc, nativeTheme: theme }));
+const theme = vi.hoisted(() => ({
+  shouldUseDarkColors: false,
+  on: vi.fn<(event: string, handler: () => void) => void>(),
+  off: vi.fn<(event: string, handler: () => void) => void>(),
+}));
+vi.mock("electron", () => ({ nativeTheme: theme }));
 
 import { resolveChromePolicy } from "./chrome-policy.ts";
 import { installWindowChrome } from "./chrome.ts";
@@ -32,7 +18,16 @@ class FakeWindow extends EventEmitter {
   focused = false;
   maximized = false;
   fullscreen = false;
-  webContents = new EventEmitter();
+  handlers = new Map<string, (...args: unknown[]) => unknown>();
+  ipc = {
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => this.handlers.set(channel, handler),
+    removeHandler: (channel: string) => this.handlers.delete(channel),
+    on: vi.fn<(channel: string, handler: (...args: unknown[]) => void) => void>(),
+    off: vi.fn<(channel: string, handler: (...args: unknown[]) => void) => void>(),
+  };
+  // Fixture callbacks accept structural doubles for native events.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  webContents = Object.assign(new EventEmitter(), { ipc: this.ipc as unknown as Electron.IpcMain });
   isDestroyed = () => false;
   isFocused = () => this.focused;
   isMaximized = () => this.maximized;
@@ -47,7 +42,6 @@ const log = {
   debug: vi.fn<(...args: unknown[]) => void>(),
 };
 const frame = () => ({ send: vi.fn<(...args: unknown[]) => void>(), detached: false });
-const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)!(...args);
 
 const trusted = (input: IpcMainEvent | IpcMainInvokeEvent) => "allowed" in input && input.allowed === true;
 
@@ -57,18 +51,18 @@ function setup(platform = "win32") {
   const event = { senderFrame: source, allowed: true };
   const store = { current: () => "auto" as const, save: vi.fn<() => boolean>(() => true) };
   const dispose = installWindowChrome(win, resolveChromePolicy({ platform }), trusted, log, store);
-  return { win, event, source, dispose, store };
+  const invoke = (channel: string, ...args: unknown[]) => win.handlers.get(channel)!(...args);
+  return { win, event, source, dispose, store, invoke };
 }
 
 beforeEach(() => {
-  handlers.clear();
   vi.clearAllMocks();
   theme.shouldUseDarkColors = false;
 });
 
 describe("window chrome bridge", () => {
   it("validates senders and sends actual initial facts followed by changed source revisions", () => {
-    const { win, event, source, dispose } = setup();
+    const { win, event, source, dispose, invoke } = setup();
     expect(invoke(DESKTOP_CHROME_IPC.subscribe, { ...event, allowed: false }, "a")).toBeNull();
     expect(invoke(DESKTOP_CHROME_IPC.subscribe, event, {})).toBeNull();
     win.focused = true;
@@ -88,7 +82,7 @@ describe("window chrome bridge", () => {
   });
 
   it("expires subscriptions on new main documents and renderer exit while retaining same-document navigation", () => {
-    const { win, event, source, dispose } = setup();
+    const { win, event, source, dispose, invoke } = setup();
     invoke(DESKTOP_CHROME_IPC.subscribe, event, "old");
     win.webContents.emit("did-start-navigation", {}, "app://app/#one", true, true);
     win.focused = true;
@@ -103,7 +97,7 @@ describe("window chrome bridge", () => {
       token: "new",
       state: { focused: true, maximized: true },
     });
-    const unsubscribe = ipc.on.mock.calls.find(([channel]) => channel === DESKTOP_CHROME_IPC.unsubscribe)![1];
+    const unsubscribe = win.ipc.on.mock.calls.find(([channel]) => channel === DESKTOP_CHROME_IPC.unsubscribe)![1];
     unsubscribe(event, "old");
     win.fullscreen = true;
     win.emit("enter-full-screen");
@@ -116,7 +110,7 @@ describe("window chrome bridge", () => {
   });
 
   it("bounds appearance updates, avoids duplicate writes and clears all listeners on close", () => {
-    const { win, event } = setup();
+    const { win, event, invoke } = setup();
     expect(invoke(DESKTOP_CHROME_IPC.appearance, { ...event, allowed: false }, { height: 40 })).toEqual({
       status: "rejected",
       reason: "untrusted-sender",
@@ -132,13 +126,13 @@ describe("window chrome bridge", () => {
     invoke(DESKTOP_CHROME_IPC.appearance, event, { height: 40 });
     expect(win.setTitleBarOverlay).toHaveBeenCalledTimes(1);
     win.emit("closed");
-    expect(handlers.size).toBe(0);
+    expect(win.handlers.size).toBe(0);
     expect(win.listenerCount("focus")).toBe(0);
     expect(win.webContents.listenerCount("did-navigate")).toBe(0);
   });
 
   it("reports macOS runtime appearance updates unavailable without moving native controls", () => {
-    const { win, event, dispose } = setup("darwin");
+    const { win, event, dispose, invoke } = setup("darwin");
     expect(invoke(DESKTOP_CHROME_IPC.appearance, event, { height: 40 })).toMatchObject({ status: "unsupported" });
     expect(win.setTitleBarOverlay).not.toHaveBeenCalled();
     dispose();
@@ -153,11 +147,12 @@ describe("window chrome bridge", () => {
     win.emit("closed");
     expect(theme.off).toHaveBeenCalledWith("updated", updated);
   });
-  it("replaces a disposed window's handlers before reopen and ignores its late close", () => {
+  it("keeps both windows' handlers independent when one closes", () => {
     const old = setup();
     const fresh = setup();
+    expect(old.invoke(DESKTOP_CHROME_IPC.subscribe, old.event, "original")).toMatchObject({ token: "original" });
     old.win.emit("closed");
-    expect(invoke(DESKTOP_CHROME_IPC.subscribe, fresh.event, "reopened")).toMatchObject({ token: "reopened" });
+    expect(fresh.invoke(DESKTOP_CHROME_IPC.subscribe, fresh.event, "reopened")).toMatchObject({ token: "reopened" });
     fresh.win.focused = true;
     fresh.win.emit("focus");
     expect(fresh.source.send).toHaveBeenCalledTimes(1);
@@ -165,7 +160,7 @@ describe("window chrome bridge", () => {
     fresh.dispose();
   });
   it("keeps overrides separate from theme backgrounds and fills missing overlay fields from the theme", () => {
-    const { win, event, dispose } = setup();
+    const { win, event, dispose, invoke } = setup();
     const updated = theme.on.mock.calls.find(([name]) => name === "updated")![1];
     invoke(DESKTOP_CHROME_IPC.appearance, event, { height: 40 });
     theme.shouldUseDarkColors = true;
@@ -182,7 +177,7 @@ describe("window chrome bridge", () => {
     dispose();
   });
   it("keeps native theme, background, overlay support and persistence results independent", () => {
-    const { win, event, store, dispose } = setup("darwin");
+    const { win, event, store, dispose, invoke } = setup("darwin");
     const send = (preference: string, revision: number) =>
       invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "doc", revision, preference });
     expect(send("dark", 1)).toEqual({
@@ -208,7 +203,7 @@ describe("window chrome bridge", () => {
     dispose();
   });
   it("replaces and releases complete declarations without stale owners or requests clearing new values", () => {
-    const { win, event, dispose } = setup();
+    const { win, event, dispose, invoke } = setup();
     const declare = (owner: string, revision: number, appearance: unknown) =>
       invoke(DESKTOP_CHROME_IPC.declaration, event, { document: "doc", declaration: { owner, revision, appearance } });
     expect(declare("shell", 1, { color: "#224466", height: 40 })).toMatchObject({ status: "applied" });
@@ -238,12 +233,12 @@ describe("window chrome bridge", () => {
     });
     expect(() => win.emit("closed")).not.toThrow();
     expect(contents.listenerCount("did-navigate")).toBe(0);
-    expect(handlers.size).toBe(0);
+    expect(win.handlers.size).toBe(0);
   });
 });
 
 it("keeps the current document live when navigation starts but is cancelled", () => {
-  const { win, event, source, dispose } = setup();
+  const { win, event, source, dispose, invoke } = setup();
   invoke(DESKTOP_CHROME_IPC.subscribe, event, "live");
   invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document: "live", revision: 1, preference: "dark" });
   win.webContents.emit("did-start-navigation", {}, "https://example.com", false, true);

@@ -18,7 +18,7 @@ import { createPrefsStore, installPrefsIpc } from "./main/prefs.ts";
 import { registerAppProtocol } from "./main/protocol.ts";
 import { createWindowRecovery } from "./main/recovery.ts";
 import { resolveRunModes } from "./main/run-modes.ts";
-import { startServerProcess } from "./main/server-process.ts";
+import { startServerProcess, type UtilityLifecycle } from "./main/server-process.ts";
 import { configureUserData } from "./main/user-data.ts";
 import { createVisualThemeStore } from "./main/visual-theme.ts";
 import { createMainWindow, createWindowKeeper, isTrustedSender } from "./main/window.ts";
@@ -53,7 +53,8 @@ protocol.registerSchemesAsPrivileged([
 
 /** The main window, tracked across close and reopen; set once `main()` can create windows. */
 let windows: { current(): BrowserWindow | undefined; open(): { window: BrowserWindow; created: boolean } } | undefined;
-const mainWindow = () => windows?.current();
+const ownedWindows = new Map<number, BrowserWindow>();
+const mainWindow = () => windows?.current() ?? ownedWindows.values().next().value;
 /** The utility process, once started, so a failed startup can still shut it down. */
 let server: ReturnType<typeof startServerProcess> | undefined;
 
@@ -100,7 +101,7 @@ async function main(): Promise<void> {
   // Preferences the page writes through the preload; every request carries the current ones.
   const visualThemeStore = createVisualThemeStore(app.getPath("userData"), { log });
   const prefsStore = createPrefsStore(app.getPath("userData"), { log });
-  installPrefsIpc(prefsStore, (event) => isTrustedSender(event, mainWindow()));
+  installPrefsIpc(prefsStore, (event) => isTrustedSender(event, ownedWindows.get(event.sender.id)));
   const shell = shellFromEnv({
     WEB_SHELL: "desktop",
     WEB_SHELL_PLATFORM: process.platform,
@@ -118,36 +119,39 @@ async function main(): Promise<void> {
   });
   const bootstrap: DesktopBootstrap = { protocolVersion: 1, shell, mode: chromePolicy.resolvedMode };
   if (chromePolicy.fallbackReason) log.info({ reason: chromePolicy.fallbackReason }, "using system window decoration");
-  const recovery = createWindowRecovery<BrowserWindow>({
-    current: mainWindow,
-    isAppUrl,
-    reload: (win, url) => win.loadURL(url),
-    cancelReload: (win) => win.webContents.stop(),
-    close: (win) => win.close(),
-    showDialog: async (win, kind) => {
-      const waiting = kind === "unresponsive";
-      // Initial document failures can happen before the normal first-paint show path.
-      if (!win.isVisible()) win.show();
-      const result = await dialog.showMessageBox(win, {
-        type: "warning",
-        message: waiting ? "The window is not responding" : "The page failed to load",
-        detail: "Reloading may discard unsaved changes.",
-        buttons: waiting ? ["Wait", "Reload", "Close"] : ["Reload", "Close"],
-        defaultId: 0,
-        cancelId: waiting ? 0 : 1,
-      });
-      return waiting
-        ? ((["wait", "reload", "close"] as const)[result.response] ?? "wait")
-        : result.response === 0
-          ? "reload"
-          : "close";
-    },
-    onError: (err) => log.warn({ err }, "window recovery operation failed"),
-  });
-  const desktop = (): DesktopRequest => ({
+  const makeRecovery = (owner: BrowserWindow) =>
+    createWindowRecovery<BrowserWindow>({
+      current: () => owner,
+      isAppUrl,
+      reload: (win, url) => win.loadURL(url),
+      cancelReload: (win) => win.webContents.stop(),
+      close: (win) => win.close(),
+      showDialog: async (win, kind) => {
+        const waiting = kind === "unresponsive";
+        // Initial document failures can happen before the normal first-paint show path.
+        if (!win.isVisible()) win.show();
+        const result = await dialog.showMessageBox(win, {
+          type: "warning",
+          message: waiting ? "The window is not responding" : "The page failed to load",
+          detail: "Reloading may discard unsaved changes.",
+          buttons: waiting ? ["Wait", "Reload", "Close"] : ["Reload", "Close"],
+          defaultId: 0,
+          cancelId: waiting ? 0 : 1,
+        });
+        return waiting
+          ? ((["wait", "reload", "close"] as const)[result.response] ?? "wait")
+          : result.response === 0
+            ? "reload"
+            : "close";
+      },
+      onError: (err) => log.warn({ err }, "window recovery operation failed"),
+    });
+  const recoveries = new Set<ReturnType<typeof makeRecovery>>();
+  let lifecycle: UtilityLifecycle | undefined;
+  const desktop = (contentsId?: number): DesktopRequest => ({
     titlebar: chromePolicy.resolvedMode === "system-decorated" ? "native" : "custom",
     chromeMode: chromePolicy.resolvedMode,
-    fullscreen: mainWindow()?.isFullScreen() ?? false,
+    fullscreen: (contentsId === undefined ? undefined : ownedWindows.get(contentsId))?.isFullScreen() ?? false,
     prefs: prefsStore.current(),
   });
 
@@ -190,9 +194,12 @@ async function main(): Promise<void> {
           DESKTOP_E2E: e2e ? "1" : "",
         },
         onLifecycle: ({ generation, state, restarted }) => {
-          if (state === "starting") recovery.utilityStarting(generation);
-          else if (state === "ready") recovery.utilityReady(generation, { restarted });
-          else recovery.utilityFailed(generation);
+          lifecycle = { generation, state, restarted };
+          for (const recovery of recoveries) {
+            if (state === "starting") recovery.utilityStarting(generation);
+            else if (state === "ready") recovery.utilityReady(generation, { restarted });
+            else recovery.utilityFailed(generation);
+          }
         },
       });
   registerAppProtocol(appSession, {
@@ -212,11 +219,12 @@ async function main(): Promise<void> {
     log.info({ devServerUrl }, "development: forwarding app:// to react-router dev");
     // scripts/dev.ts writes "reload" on stdin when the preload script was rebuilt.
     process.stdin.on("data", (chunk: Buffer) => {
-      if (chunk.toString().includes("reload")) mainWindow()?.webContents.reload();
+      if (chunk.toString().includes("reload")) for (const win of ownedWindows.values()) win.webContents.reload();
     });
   }
 
   const windowOptions = {
+    onChildWindow: trackWindow,
     session: appSession,
     chrome: { bootstrap, policy: chromePolicy, visualThemeStore },
     preloadPath: join(__dirname, "preload.cjs"),
@@ -241,23 +249,36 @@ async function main(): Promise<void> {
       },
     }),
   );
+  function trackWindow(win: BrowserWindow, initialUrl: string) {
+    const id = win.webContents.id;
+    ownedWindows.set(id, win);
+    const recovery = makeRecovery(win);
+    recoveries.add(recovery);
+    recovery.track(win, initialUrl);
+    if (lifecycle?.state === "starting") recovery.utilityStarting(lifecycle.generation);
+    if (lifecycle?.state === "failed") recovery.utilityFailed(lifecycle.generation);
+    win.webContents.on("did-finish-load", () => recovery.documentLoaded(win, win.webContents.getURL()));
+    win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) =>
+      recovery.sameDocumentNavigated(win, url, isMainFrame),
+    );
+    win.webContents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) =>
+      recovery.didFailLoad(win, { errorCode, isMainFrame }),
+    );
+    win.webContents.on("render-process-gone", (_event, details) => recovery.rendererGone(win, details.reason));
+    win.on("unresponsive", () => recovery.unresponsive(win));
+    win.on("responsive", () => recovery.responsive(win));
+    win.once("closed", () => {
+      recovery.closed(win);
+      recovery.shutdown();
+      recoveries.delete(recovery);
+      ownedWindows.delete(id);
+    });
+  }
   const openMainWindow = () => {
+    const current = mainWindow();
+    if (current) return { window: current, loaded: undefined };
     const opened = windows!.open();
-    if (opened.created) {
-      const win = opened.window;
-      recovery.track(win, `${APP_ORIGIN}/`);
-      win.webContents.on("did-finish-load", () => recovery.documentLoaded(win, win.webContents.getURL()));
-      win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) =>
-        recovery.sameDocumentNavigated(win, url, isMainFrame),
-      );
-      win.webContents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) =>
-        recovery.didFailLoad(win, { errorCode, isMainFrame }),
-      );
-      win.webContents.on("render-process-gone", (_event, details) => recovery.rendererGone(win, details.reason));
-      win.on("unresponsive", () => recovery.unresponsive(win));
-      win.on("responsive", () => recovery.responsive(win));
-      win.once("closed", () => recovery.closed(win));
-    }
+    trackWindow(opened.window, APP_ORIGIN + "/");
     return {
       window: opened.window,
       loaded: opened.created ? opened.window.loadURL(`${APP_ORIGIN}/`) : undefined,
@@ -275,7 +296,7 @@ async function main(): Promise<void> {
   });
   let quitting = false;
   app.on("before-quit", (event) => {
-    recovery.shutdown();
+    for (const recovery of recoveries) recovery.shutdown();
     if (quitting) return;
     event.preventDefault();
     quitting = true;
@@ -302,7 +323,7 @@ async function main(): Promise<void> {
       clientStats: () => utility.stats(),
       exit: async (code) => {
         quitting = true;
-        recovery.shutdown();
+        for (const recovery of recoveries) recovery.shutdown();
         await utility.shutdown();
         app.exit(code);
       },
@@ -316,7 +337,7 @@ async function main(): Promise<void> {
       layout: process.env.DESKTOP_SMOKE_LAYOUT === "1",
       exit: async (code) => {
         quitting = true;
-        recovery.shutdown();
+        for (const recovery of recoveries) recovery.shutdown();
         await server?.shutdown();
         app.exit(code);
       },

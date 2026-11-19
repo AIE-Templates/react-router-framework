@@ -8,14 +8,11 @@ import {
   isVisualThemePreference,
   type VisualThemeResult,
 } from "@repo/shared";
-import { type IpcMainEvent, type IpcMainInvokeEvent, ipcMain, nativeTheme, type WebFrameMain } from "electron";
+import { type IpcMainEvent, type IpcMainInvokeEvent, nativeTheme, type WebFrameMain } from "electron";
 
 import { chromeAppearance, type ChromePolicy } from "./chrome-policy.ts";
 import type { Logger } from "./log.ts";
 import type { VisualThemeStore } from "./visual-theme.ts";
-
-// The shell owns one current window. A late close from an old window cannot remove its successor's IPC handlers.
-let installedCleanup: (() => void) | undefined;
 
 const STATE_EVENTS = ["focus", "blur", "maximize", "unmaximize", "enter-full-screen", "leave-full-screen"] as const;
 interface ChromeWindow extends NodeJS.EventEmitter {
@@ -25,7 +22,7 @@ interface ChromeWindow extends NodeJS.EventEmitter {
   isFullScreen(): boolean;
   setTitleBarOverlay(appearance: OverlayAppearance): void;
   setBackgroundColor(color: string): void;
-  webContents: NodeJS.EventEmitter;
+  webContents: NodeJS.EventEmitter & { ipc: Pick<Electron.IpcMain, "handle" | "removeHandler" | "on" | "off"> };
 }
 
 interface Subscription {
@@ -41,7 +38,6 @@ export function installWindowChrome(
   log: Logger,
   themeStore?: VisualThemeStore,
 ): () => void {
-  installedCleanup?.();
   // Electron's webContents getter throws once BrowserWindow is destroyed; retain the emitter for cleanup.
   const contents = win.webContents;
   let subscription: Subscription | undefined;
@@ -196,11 +192,11 @@ export function installWindowChrome(
     if (!win.isDestroyed() && preference === "auto") applyTheme();
   };
   nativeTheme.on("updated", themeChanged);
-  ipcMain.handle(DESKTOP_CHROME_IPC.declaration, declareAppearance);
-  ipcMain.handle(DESKTOP_CHROME_IPC.visualTheme, syncTheme);
-  ipcMain.handle(DESKTOP_CHROME_IPC.subscribe, subscribe);
-  ipcMain.handle(DESKTOP_CHROME_IPC.appearance, updateAppearance);
-  ipcMain.on(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
+  contents.ipc.handle(DESKTOP_CHROME_IPC.declaration, declareAppearance);
+  contents.ipc.handle(DESKTOP_CHROME_IPC.visualTheme, syncTheme);
+  contents.ipc.handle(DESKTOP_CHROME_IPC.subscribe, subscribe);
+  contents.ipc.handle(DESKTOP_CHROME_IPC.appearance, updateAppearance);
+  contents.ipc.on(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
   for (const event of STATE_EVENTS) win.on(event, refresh);
   contents.on("did-navigate", navigate);
   contents.on("render-process-gone", clear);
@@ -208,20 +204,20 @@ export function installWindowChrome(
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    if (installedCleanup === dispose) installedCleanup = undefined;
+
     clear();
     nativeTheme.off("updated", themeChanged);
-    ipcMain.removeHandler(DESKTOP_CHROME_IPC.subscribe);
-    ipcMain.removeHandler(DESKTOP_CHROME_IPC.appearance);
-    ipcMain.removeHandler(DESKTOP_CHROME_IPC.declaration);
-    ipcMain.removeHandler(DESKTOP_CHROME_IPC.visualTheme);
-    ipcMain.off(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
+    contents.ipc.removeHandler(DESKTOP_CHROME_IPC.subscribe);
+    contents.ipc.removeHandler(DESKTOP_CHROME_IPC.appearance);
+    contents.ipc.removeHandler(DESKTOP_CHROME_IPC.declaration);
+    contents.ipc.removeHandler(DESKTOP_CHROME_IPC.visualTheme);
+    contents.ipc.off(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
     for (const event of STATE_EVENTS) win.off(event, refresh);
     contents.off("did-navigate", navigate);
     contents.off("render-process-gone", clear);
     win.off("closed", dispose);
   };
   win.once("closed", dispose);
-  installedCleanup = dispose;
+
   return dispose;
 }
