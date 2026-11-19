@@ -63,7 +63,7 @@ AppRoot owns environment/providers; BasicShell or NavigationShell owns applicati
 
 ## Source organization
 
-`src/app/routes.ts` maps URLs to feature route modules (`features/<name>/<page>.route.tsx`). The disposable home example lives in `features/demo`; removing its route registration and directory removes `/`. `features/main` holds the SPA 404. The root document remains in `root.tsx`.
+`src/app/routes.ts` maps URLs to feature route modules (`features/<name>/<page>.route.tsx`). The disposable Home, Settings and Chat examples live in `features/demo`. To remove them, delete that directory and its three route registrations (`/`, `/settings` and `/chat`). `features/main` holds the SPA 404. The root document remains in `root.tsx`.
 
 Global CSS enters through `styles/index.css`. Prefer colocated CSS Modules in the `components` cascade layer; Tailwind utilities remain available. Use `~/` for app-root imports and `./` within a directory or its children. See the root and directory-level AGENTS.md files for conventions.
 
