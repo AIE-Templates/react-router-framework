@@ -196,6 +196,77 @@ describe("window recovery", () => {
     expect(s.reload).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["starting", "ready"] as const)(
+    "honors a hung renderer's reload choice while the replacement utility is %s",
+    async (phase) => {
+      const s = setup();
+      s.recovery.documentLoaded(s.window, "app://app/chat");
+      s.recovery.unresponsive(s.window);
+      await flush();
+      s.recovery.utilityStarting(2);
+      if (phase === "ready") s.recovery.utilityReady(2);
+      s.choices[0].resolve("reload");
+      await flush();
+      expect(s.reload).toHaveBeenCalledTimes(phase === "ready" ? 1 : 0);
+      s.recovery.utilityReady(2);
+      expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/chat");
+      expect(s.showDialog).toHaveBeenCalledExactlyOnceWith(s.window, "unresponsive");
+      s.recovery.shutdown();
+    },
+  );
+
+  it("ignores the old close choice when the renderer recovers during a utility restart", async () => {
+    const s = setup();
+    s.recovery.documentLoaded(s.window, "app://app/chat");
+    s.recovery.unresponsive(s.window);
+    await flush();
+    s.recovery.utilityStarting(2);
+    s.recovery.responsive(s.window);
+    s.recovery.utilityReady(2);
+    s.choices[0].resolve("close");
+    await flush();
+    expect(s.close).not.toHaveBeenCalled();
+    expect(s.reload).not.toHaveBeenCalled();
+    expect(s.showDialog).toHaveBeenCalledTimes(1);
+    s.recovery.shutdown();
+  });
+
+  it("waits for a hung window's decision when readiness releases a queued document retry", async () => {
+    const s = setup();
+    s.recovery.utilityStarting(2);
+    s.fail();
+    s.recovery.unresponsive(s.window);
+    await flush();
+    s.fail();
+    s.recovery.utilityFailed(2);
+    s.recovery.utilityStarting(3);
+    s.recovery.utilityReady(3);
+    s.choices[0].resolve("close");
+    await flush();
+    expect(s.close).toHaveBeenCalledOnce();
+    expect(s.reload).not.toHaveBeenCalled();
+    s.recovery.shutdown();
+  });
+
+  it.each(["responsive", "crashed"] as const)(
+    "defers the queued automatic retry after Wait until the renderer is %s",
+    async (outcome) => {
+      const s = setup();
+      s.recovery.utilityStarting(2);
+      s.fail();
+      s.recovery.unresponsive(s.window);
+      await flush();
+      s.choices[0].resolve("wait");
+      await flush();
+      s.recovery.utilityReady(2);
+      expect(s.reload).not.toHaveBeenCalled();
+      if (outcome === "responsive") s.recovery.responsive(s.window);
+      else s.recovery.rendererGone(s.window, "crashed");
+      expect(s.reload).toHaveBeenCalledExactlyOnceWith(s.window, "app://app/start");
+      s.recovery.shutdown();
+    },
+  );
+
   it("offers manual wait/reload/close for unresponsive and ignores recovered dialog results", async () => {
     const s = setup();
     s.recovery.unresponsive(s.window);

@@ -51,22 +51,12 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-/** The main window, tracked across close and reopen; set once `main()` can create windows. */
-let windows: { current(): BrowserWindow | undefined; open(): { window: BrowserWindow; created: boolean } } | undefined;
-const ownedWindows = new Map<number, BrowserWindow>();
-const mainWindow = () => windows?.current() ?? ownedWindows.values().next().value;
 /** The utility process, once started, so a failed startup can still shut it down. */
 let server: ReturnType<typeof startServerProcess> | undefined;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    const win = mainWindow();
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  });
   // Not awaited at the top level: Electron defers `ready` until this module has evaluated. One
   // `catch` for both `whenReady` and `main` itself: a failure anywhere in startup exits.
   app
@@ -121,6 +111,7 @@ async function askRecovery(win: BrowserWindow, kind: RecoveryDialog, shared: boo
 
 async function main(): Promise<void> {
   profile.mark("ready");
+  const ownedWindows = new Map<number, BrowserWindow>();
   const appSession = session.fromPartition("persist:app");
   installPermissionPolicy(appSession, log);
   // Preferences the page writes through the preload; every request carries the current ones.
@@ -273,9 +264,7 @@ async function main(): Promise<void> {
     profile,
     logRendererConsole: devServerUrl !== undefined || process.env.DESKTOP_SMOKE === "1",
   };
-  // Every window, the first or one made on `activate`, goes through the keeper and gets the same
-  // `closed` bookkeeping; a second close followed by a Dock click reopens like the first did.
-  windows = createWindowKeeper(() => createMainWindow(windowOptions));
+  const mainWindows = createWindowKeeper(() => createMainWindow(windowOptions));
   function trackWindow(win: BrowserWindow, initialUrl: string) {
     const id = win.webContents.id;
     ownedWindows.set(id, win);
@@ -312,21 +301,29 @@ async function main(): Promise<void> {
     });
   }
   const openMainWindow = () => {
-    const current = mainWindow();
-    if (current) return { window: current, loaded: undefined };
-    const opened = windows!.open();
-    trackWindow(opened.window, APP_ORIGIN + "/");
-    return {
-      window: opened.window,
-      loaded: opened.created ? opened.window.loadURL(`${APP_ORIGIN}/`) : undefined,
-    };
+    const { window, created } = mainWindows.open();
+    if (!created) return { window, loaded: undefined };
+    const url = APP_ORIGIN + "/";
+    trackWindow(window, url);
+    return { window, loaded: window.loadURL(url) };
   };
   profile.mark("navigation-start");
   const first = openMainWindow();
-  const loaded = first.loaded ?? Promise.resolve();
+  const initialLoad = first.loaded ?? Promise.resolve();
 
+  const reopenMainWindow = () => {
+    const { window, loaded } = openMainWindow();
+    if (loaded) {
+      void loaded.catch((err: unknown) => log.error({ err }, "reopened window failed to load"));
+    } else {
+      if (window.isMinimized()) window.restore();
+      window.focus();
+    }
+  };
+  app.on("second-instance", reopenMainWindow);
   app.on("activate", () => {
-    void openMainWindow().loaded?.catch((err: unknown) => log.error({ err }, "reopened window failed to load"));
+    // Ordinary activation can leave the user's current child window in front.
+    if (!mainWindows.current()) reopenMainWindow();
   });
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
@@ -343,7 +340,7 @@ async function main(): Promise<void> {
   });
 
   // did-fail-load is handled by recovery; startup failure must not bypass the native retry path.
-  await loaded.catch((err: unknown) => {
+  await initialLoad.catch((err: unknown) => {
     log.warn({ err }, "initial document failed; recovery owns retry");
     if (process.env.DESKTOP_SMOKE === "1" || benchConfig) throw err;
   });
