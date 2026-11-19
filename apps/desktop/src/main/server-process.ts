@@ -12,6 +12,7 @@ import { MessageChannelMain, utilityProcess } from "electron";
 import { PORT_ACK_COALESCE } from "~/port-options";
 
 import type { Logger } from "./log.ts";
+import { REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
 
 export interface ServerProcessOptions {
   /** `.vite/build/utility.mjs`. */
@@ -78,11 +79,6 @@ export interface ServerProcessDeps {
 /** fork → spawn → ready must complete within this; otherwise the instance is killed and retried. */
 export const STARTUP_TIMEOUT_MS = 20_000;
 export const SHUTDOWN_GRACE_MS = 3_000;
-/**
- * Pre-header cancellation does not reach the utility, so the wait for response headers is bounded.
- * Nothing bounds the body: SSE and slow downloads stream for as long as they need.
- */
-export const REQUEST_HEADERS_TIMEOUT_MS = 60_000;
 const RESTART_BASE_MS = 250;
 export const RESTART_MAX_MS = 5_000;
 

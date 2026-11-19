@@ -8,6 +8,9 @@ import { safeUrl } from "./log-url.ts";
 import type { Logger } from "./log.ts";
 import { failureStatus, shapeRequestHeaders, shapeResponseHeaders, toInternalUrl } from "./mapping.ts";
 
+/** Bound the wait for upstream headers in both desktop modes. SSE and downloads may outlive it. */
+export const REQUEST_HEADERS_TIMEOUT_MS = 60_000;
+
 /** The part of Electron's `Session` the handler needs (structural, so tests can pass a fake). */
 export interface ProtocolSession {
   protocol: { handle(scheme: string, handler: (request: Request) => Promise<Response>): void };
