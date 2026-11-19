@@ -1,38 +1,26 @@
-/** The coordinator never imports Electron; the host owns listeners and native dialogs. */
-export interface RecoveryWindow {
-  isDestroyed(): boolean;
-}
+import { isAppUrl } from "./app-url.ts";
 
 export type RecoveryChoice = "reload" | "close" | "wait" | "dismissed";
 export type RecoveryDialog = "failure" | "unresponsive";
 
-export interface WindowRecoveryOptions<W extends RecoveryWindow> {
-  current(): W | undefined;
-  isAppUrl(url: string): boolean;
+interface WindowRecoveryOptions {
+  isDestroyed(): boolean;
   /** Load the supplied, validated document URL in the existing window. */
-  reload(window: W, url: string): void | Promise<unknown>;
+  reload(url: string): void | Promise<unknown>;
   /** Stop an in-flight load before an explicit retry supersedes it. */
-  cancelReload(window: W): void;
-  close(window: W): void;
+  cancelReload(): void;
+  close(): void;
   /** The host dismisses the native sheet when its owning fault is retired. */
-  showDialog(window: W, kind: RecoveryDialog, signal: AbortSignal): Promise<RecoveryChoice>;
+  showDialog(kind: RecoveryDialog, signal: AbortSignal): Promise<RecoveryChoice>;
   onError?(error: unknown): void;
 }
 
 export const RECOVERY_STABLE_MS = 30_000;
 
-/**
- * Call track before the initial load; forward main-document did-finish-load with its URL,
- * did-fail-load, render-process-gone, unresponsive/responsive and closed for that same window.
- * Forward did-navigate-in-page to sameDocumentNavigated with its isMainFrame flag.
- * Utility generations must increase monotonically. Starting includes the restart backoff interval
- * (report the upcoming generation there); ready can be reported by both ready and onRestart, with
- * the same generation. Readiness releases pending retries; healthy documents keep their renderer state.
- * Before quit call shutdown. Neither user retry nor this coordinator starts a utility process.
- */
-export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRecoveryOptions<W>) {
-  interface Episode {
-    window: W;
+/** One coordinator per window, from adoption through close. The host owns the native listeners. */
+export function createWindowRecovery(initialUrl: string, options: WindowRecoveryOptions) {
+  if (!isAppUrl(initialUrl)) throw new Error("Recovery requires an application document URL");
+  interface RecoveryState {
     target: string;
     active: boolean;
     loaded: boolean;
@@ -48,38 +36,48 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     pending?: "manual" | "auto";
     stableTimer?: ReturnType<typeof setTimeout>;
   }
-  let episode: Episode | undefined;
+  const state: RecoveryState = {
+    target: initialUrl,
+    active: false,
+    loaded: false,
+    autoUsed: false,
+    manualRetry: false,
+    epoch: 0,
+    unresponsive: false,
+    reloadInFlight: false,
+    reloadGeneration: 0,
+    utilityFailureChoice: false,
+  };
   let stopped = false;
   let utility: { generation: number; state: "starting" | "ready" | "failed" } | undefined;
   let handledGeneration = -1;
 
-  const live = (state: Episode) =>
-    !stopped && episode === state && !state.window.isDestroyed() && options.current() === state.window;
-  const cancelStable = (state: Episode) => {
+  const live = () => !stopped && !options.isDestroyed();
+  const cancelStable = () => {
     clearTimeout(state.stableTimer);
     state.stableTimer = undefined;
   };
-  const invalidate = (state: Episode) => {
-    cancelStable(state);
+  const invalidate = () => {
+    cancelStable();
     state.epoch++;
     state.dialogController?.abort();
     state.dialogController = undefined;
   };
-  const beginFault = (state: Episode) => {
-    invalidate(state);
+  const beginFault = () => {
+    invalidate();
     state.active = true;
   };
-  const endUnresponsive = (state: Episode) => {
-    invalidate(state);
+  const endUnresponsive = () => {
+    invalidate();
     state.unresponsive = false;
     state.dialog = state.utilityFailureChoice ? "failure" : undefined;
   };
   const report = (error: unknown) => options.onError?.(error);
-  const awaitStability = (state: Episode) => {
+  const awaitStability = () => {
     if (!state.active || !state.loaded || state.unresponsive) return;
     const epoch = state.epoch;
     state.stableTimer = setTimeout(() => {
-      if (!live(state) || state.epoch !== epoch) return;
+      if (!live() || state.epoch !== epoch) return;
       state.active = false;
       state.autoUsed = false;
       state.manualRetry = false;
@@ -87,8 +85,8 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     }, RECOVERY_STABLE_MS);
   };
 
-  const pump = (state: Episode) => {
-    if (!live(state) || state.dialogController) return;
+  const pump = () => {
+    if (!live() || state.dialogController) return;
     // A stalled load must not prevent the user from waiting, retrying or closing.
     const urgentDialog = state.dialog === "unresponsive";
     if (state.reloadInFlight && !urgentDialog) return;
@@ -110,21 +108,21 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
         const epoch = state.epoch;
         let loading: void | Promise<unknown>;
         try {
-          loading = options.reload(state.window, state.target);
+          loading = options.reload(state.target);
         } catch (error) {
           loading = Promise.reject(error);
         }
         void Promise.resolve(loading)
           .catch((error: unknown) => {
             report(error);
-            if (!live(state) || state.epoch !== epoch || state.reloadGeneration !== reloadGeneration) return;
-            beginFault(state);
+            if (!live() || state.epoch !== epoch || state.reloadGeneration !== reloadGeneration) return;
+            beginFault();
             state.dialog = "failure";
           })
           .finally(() => {
             if (state.reloadGeneration !== reloadGeneration) return;
             state.reloadInFlight = false;
-            pump(state);
+            pump();
           });
         return;
       }
@@ -137,25 +135,25 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     const epoch = state.epoch;
     void Promise.resolve()
       .then(() => {
-        if (live(state) && state.epoch === epoch) return options.showDialog(state.window, kind, controller.signal);
+        if (live() && state.epoch === epoch) return options.showDialog(kind, controller.signal);
         return undefined;
       })
       .then((choice) => {
-        if (!live(state) || state.epoch !== epoch || (kind === "unresponsive" && !state.unresponsive)) return undefined;
+        if (!live() || state.epoch !== epoch || (kind === "unresponsive" && !state.unresponsive)) return undefined;
         if (choice === "dismissed") {
           state.dialog = kind;
         } else if (choice === "close") {
           state.pending = undefined;
           state.utilityFailureChoice = false;
-          options.close(state.window);
+          options.close();
         } else if (choice === "reload") {
           state.utilityFailureChoice = false;
-          invalidate(state);
+          invalidate();
           if (state.reloadInFlight) {
             // Retire the promise before stop() emits events or settles the old load.
             state.reloadGeneration++;
             state.reloadInFlight = false;
-            options.cancelReload(state.window);
+            options.cancelReload();
           }
           state.pending = "manual";
         } else if (choice === "wait" && kind === "failure") {
@@ -166,22 +164,21 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
       .catch(report)
       .finally(() => {
         if (state.dialogController === controller) state.dialogController = undefined;
-        pump(state);
+        pump();
       });
   };
 
-  const fault = (window: W) => {
-    const state = episode;
-    if (!state || state.window !== window || !live(state)) return;
+  const fault = () => {
+    if (!live()) return;
     if (state.utilityFailureChoice || state.unresponsive) {
       // A document can fail while its renderer is still hung. Keep the native decision actionable.
       if (state.unresponsive && !state.utilityFailureChoice) state.pending ??= "auto";
       state.loaded = false;
-      cancelStable(state);
-      pump(state);
+      cancelStable();
+      pump();
       return;
     }
-    beginFault(state);
+    beginFault();
     state.loaded = false;
     if (utility?.state === "starting") {
       state.pending ??= "auto";
@@ -191,123 +188,93 @@ export function createWindowRecovery<W extends RecoveryWindow>(options: WindowRe
     } else {
       state.pending ??= "auto";
     }
-    pump(state);
+    pump();
   };
 
   return {
-    track(window: W, initialUrl: string) {
-      if (stopped) return;
-      if (!options.isAppUrl(initialUrl)) throw new Error("Recovery requires an application document URL");
-      if (episode) invalidate(episode);
-      episode = {
-        window,
-        target: initialUrl,
-        active: false,
-        loaded: false,
-        autoUsed: false,
-        manualRetry: false,
-        epoch: 0,
-        unresponsive: false,
-        reloadInFlight: false,
-        reloadGeneration: 0,
-        utilityFailureChoice: false,
-      };
-    },
-    closed(window: W) {
-      if (episode?.window !== window) return;
-      invalidate(episode);
-      episode = undefined;
-    },
-    documentLoaded(window: W, url: string) {
-      const state = episode;
-      if (!state || state.window !== window || !live(state) || !options.isAppUrl(url)) return;
-      invalidate(state);
+    documentLoaded(url: string) {
+      if (!live() || !isAppUrl(url)) return;
+      invalidate();
       state.target = url;
       state.loaded = true;
       state.utilityFailureChoice = false;
       state.unresponsive = false;
       state.dialog = undefined;
       state.pending = undefined;
-      awaitStability(state);
+      awaitStability();
     },
     /** A committed in-page app navigation changes the retry target, not document health. */
-    sameDocumentNavigated(window: W, url: string, isMainFrame: boolean) {
-      const state = episode;
-      if (!isMainFrame || !state || state.window !== window || !live(state) || !options.isAppUrl(url)) return;
+    sameDocumentNavigated(url: string, isMainFrame: boolean) {
+      if (!isMainFrame || !live() || !isAppUrl(url)) return;
       state.target = url;
     },
-    didFailLoad(window: W, details: { errorCode: number; isMainFrame: boolean }) {
-      if (details.isMainFrame && details.errorCode !== -3) fault(window);
+    didFailLoad(details: { errorCode: number; isMainFrame: boolean }) {
+      if (details.isMainFrame && details.errorCode !== -3) fault();
     },
-    rendererGone(window: W, reason: string) {
-      if (reason === "clean-exit") return;
-      if (episode?.window === window && episode.unresponsive) endUnresponsive(episode);
-      fault(window);
+    rendererGone(reason: string) {
+      if (!live() || reason === "clean-exit") return;
+      if (state.unresponsive) endUnresponsive();
+      fault();
     },
-    unresponsive(window: W) {
-      const state = episode;
-      if (!state || state.window !== window || !live(state)) return;
+    unresponsive(this: void) {
+      if (!live()) return;
       if (state.unresponsive && state.dialogController) return;
-      beginFault(state);
+      beginFault();
       state.unresponsive = true;
       state.dialog = "unresponsive";
-      pump(state);
+      pump();
     },
-    responsive(window: W) {
-      const state = episode;
-      if (!state || state.window !== window || !live(state) || !state.unresponsive) return;
-      endUnresponsive(state);
-      awaitStability(state);
-      pump(state);
+    responsive(this: void) {
+      if (!live() || !state.unresponsive) return;
+      endUnresponsive();
+      awaitStability();
+      pump();
     },
     utilityStarting(generation: number) {
       if (stopped || (utility && generation <= utility.generation)) return;
       utility = { generation, state: "starting" };
-      if (episode && live(episode)) {
+      if (live()) {
         // A replacement utility does not resolve a hung renderer or a pending startup-failure choice.
-        if (episode.utilityFailureChoice || episode.unresponsive) cancelStable(episode);
+        if (state.utilityFailureChoice || state.unresponsive) cancelStable();
         else {
-          invalidate(episode);
+          invalidate();
           // Preserve the recovery need when a generation change retires a native dialog.
-          if (episode.active && !episode.loaded) episode.pending ??= "auto";
-          episode.dialog = undefined;
+          if (state.active && !state.loaded) state.pending ??= "auto";
+          state.dialog = undefined;
         }
       }
     },
     utilityReady(generation: number) {
       if (stopped || (utility && generation < utility.generation)) return;
       utility = { generation, state: "ready" };
-      const state = episode;
-      if (handledGeneration >= generation || !state || !live(state)) return;
+      if (handledGeneration >= generation || !live()) return;
       handledGeneration = generation;
       if (state.utilityFailureChoice || state.unresponsive) {
-        pump(state);
+        pump();
         return;
       }
       if (state.pending) {
-        beginFault(state);
-        pump(state);
+        beginFault();
+        pump();
       } else {
-        awaitStability(state);
+        awaitStability();
       }
     },
     utilityFailed(generation: number) {
       if (stopped || (utility && generation < utility.generation)) return;
       utility = { generation, state: "failed" };
-      const state = episode;
-      if (!state || !live(state) || state.loaded || state.unresponsive) return;
+      if (!live() || state.loaded || state.unresponsive) return;
       // Reconfirm against the latest failed generation without reopening the same sheet on every backoff.
       if (state.utilityFailureChoice && state.dialogController) state.epoch++;
-      else beginFault(state);
+      else beginFault();
       state.pending = undefined;
       state.utilityFailureChoice = true;
       state.dialog = "failure";
-      pump(state);
+      pump();
     },
     shutdown() {
       stopped = true;
-      if (episode) invalidate(episode);
-      episode = undefined;
+      invalidate();
     },
   };
 }

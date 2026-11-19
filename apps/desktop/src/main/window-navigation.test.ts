@@ -13,12 +13,13 @@ vi.mock("electron", () => ({
     return native.createWindow(options);
   },
   session: { defaultSession: {} },
+  screen: { getDisplayMatching: () => ({ workArea: { x: -1000, y: 0, width: 1000, height: 800 } }) },
   shell: { openExternal: native.openExternal },
   ipcMain: native.ipc,
 }));
 
 import { createBootProfile } from "./boot-profile.ts";
-import { createMainWindow } from "./window.ts";
+import { configureWindow, createAppWindow, type WindowOptions } from "./window.ts";
 
 function setup(logRendererConsole = false) {
   const contents = Object.assign(new EventEmitter(), {
@@ -26,7 +27,10 @@ function setup(logRendererConsole = false) {
     ipc: native.ipc,
     setWindowOpenHandler: vi.fn<Electron.WebContents["setWindowOpenHandler"]>(),
   });
-  const win = Object.assign(new EventEmitter(), { webContents: contents });
+  const win = Object.assign(new EventEmitter(), {
+    webContents: contents,
+    getBounds: () => ({ x: -1000, y: 0, width: 1000, height: 800 }),
+  });
   native.createWindow.mockReturnValue(win);
   const log = {
     debug: vi.fn<(...args: unknown[]) => void>(),
@@ -34,7 +38,7 @@ function setup(logRendererConsole = false) {
     warn: vi.fn<(...args: unknown[]) => void>(),
     error: vi.fn<(...args: unknown[]) => void>(),
   };
-  createMainWindow({
+  const options: WindowOptions = {
     // The native constructor is stubbed; navigation handlers do not access the session.
     session: session.defaultSession,
     preloadPath: "preload.cjs",
@@ -42,7 +46,8 @@ function setup(logRendererConsole = false) {
     log,
     logRendererConsole,
     profile: createBootProfile(false),
-  });
+  };
+  configureWindow(createAppWindow(options), options, { reuse: () => false, adopt: vi.fn<() => void>() });
   return { contents, log };
 }
 
@@ -143,4 +148,34 @@ it.each([
     handler({ url, frameName: "", features: "", disposition: "new-window", referrer: { url: "", policy: "default" } }),
   ).toEqual({ action: "deny" });
   expect(native.openExternal.mock.calls).toEqual(external ? [[url]] : []);
+});
+
+it("staggering respects explicit coordinates, actual child size and the full-size opener's display", () => {
+  const { contents } = setup();
+  const request = contents.setWindowOpenHandler.mock.calls[0][0];
+  const details: Electron.HandlerDetails = {
+    url: "app://app/chat",
+    features: "",
+    frameName: "",
+    disposition: "new-window",
+    referrer: { url: "", policy: "default" },
+  };
+  expect(request(details).overrideBrowserWindowOptions).toMatchObject({ width: 952, height: 752 });
+  const explicit = request({ ...details, features: "innerWidth=700,height=600" }).overrideBrowserWindowOptions;
+  expect(explicit).not.toHaveProperty("width");
+  expect(explicit).not.toHaveProperty("height");
+
+  const placed = vi.fn<(point: { x: number; y: number }) => void>();
+  const child = { getBounds: () => ({ width: 952, height: 752 }), setBounds: placed };
+  const created = (options: { x?: number; y?: number }) =>
+    contents.emit("did-create-window", child, { url: details.url, options });
+  created({});
+  created({ x: -800, y: 15 }); // Fully positioned popups retain their native placement and do not use a slot.
+  created({ y: 10 });
+  created({});
+  expect(placed.mock.calls.map(([point]) => point)).toEqual([
+    { x: -976, y: 24 },
+    { x: -952, y: 10 },
+    { x: -1000, y: 0 },
+  ]);
 });

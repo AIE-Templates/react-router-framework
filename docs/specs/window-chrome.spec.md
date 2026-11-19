@@ -45,6 +45,8 @@ Bootstrap is synchronous immutable creation data, not a synchronous IPC request.
 
 Appearance updates allow only color, symbolColor and height, with at least one valid value. Colors are `#RRGGBB` or `#RRGGBBAA`; height is an integer from 32 through 80. Preload and main both validate. Windows/Linux native-overlay uses `setTitleBarOverlay`; unchanged values do not cause another write. macOS and system-decorated return unsupported. Invalid values/senders or native failure return rejected without changing mode.
 
+The host shares one system theme listener across open windows. Each window following the system applies the update with its own appearance overrides. Main issues one visual token to the current trusted document for theme and declaration writes. A committed main-document navigation or renderer exit retires the token. Same-document navigation keeps it.
+
 The theme layer owns window background and default overlay colors. Appearance writes only change the overlay layer and never change the background. Each missing overlay field inherits the theme default. System or explicit theme changes retain all declared overrides. `declareOverlayAppearance` accepts an owner token, increasing revision and a complete appearance snapshot or null release. Removed fields return to theme defaults; stale revisions and conflicting active owners are rejected. An old owner release cannot clear another owner. A committed main-document navigation clears overrides; cancelled or failed navigation attempts retain the current document state. AppShell is the only appearance owner. Every IPC checks the registered window, current main frame and trusted app URL; lifecycle cleanup invalidates listeners, tokens and asynchronous results.
 
 ## Geometry and interaction (CHR-05)

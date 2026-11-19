@@ -175,21 +175,18 @@ describe("startServerProcess", () => {
   });
 
   it("preserves the native recovery choice after a failed utility startup and replacement readiness", async () => {
-    const window = { isDestroyed: () => false };
-    const reload = vi.fn<(_window: typeof window, url: string) => void>();
+    const reload = vi.fn<(url: string) => void>();
     let choose!: (choice: RecoveryChoice) => void;
     const showDialog = vi.fn<() => Promise<RecoveryChoice>>(
       () => new Promise<RecoveryChoice>((resolve) => (choose = resolve)),
     );
-    const recovery = createWindowRecovery({
-      current: () => window,
-      isAppUrl: (url) => url.startsWith("app://app/"),
+    const recovery = createWindowRecovery("app://app/", {
+      isDestroyed: () => false,
       reload,
       cancelReload: vi.fn<() => void>(),
       close: vi.fn<() => void>(),
       showDialog,
     });
-    recovery.track(window, "app://app/");
     const h = harness({ autoReady: false }, ({ generation, state }) => {
       if (state === "starting") recovery.utilityStarting(generation);
       else if (state === "ready") recovery.utilityReady(generation);
@@ -199,7 +196,7 @@ describe("startServerProcess", () => {
       await flush();
       h.children[0].exit(1);
       await flush();
-      expect(showDialog).toHaveBeenCalledExactlyOnceWith(window, "failure", expect.any(AbortSignal));
+      expect(showDialog).toHaveBeenCalledExactlyOnceWith("failure", expect.any(AbortSignal));
       await vi.advanceTimersByTimeAsync(500);
       h.children[1].ready();
       await flush();
@@ -208,7 +205,7 @@ describe("startServerProcess", () => {
 
       choose("reload");
       await flush();
-      expect(reload).toHaveBeenCalledExactlyOnceWith(window, "app://app/");
+      expect(reload).toHaveBeenCalledExactlyOnceWith("app://app/");
     } finally {
       recovery.shutdown();
       await h.server.shutdown();

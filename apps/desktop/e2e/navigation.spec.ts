@@ -152,6 +152,40 @@ test("the child uses the current native theme at creation and honors explicit ge
   expect(await created).toEqual({ color: dark ? "#17191d" : "#ffffff", x: 80, width: 650 });
 });
 
+test("ten sibling popups stagger on the display and share one system theme listener", async ({
+  desktop: { app, page },
+}) => {
+  const parent = await app.browserWindow(page);
+  const parentId = await parent.evaluate((win) => win.id);
+  const listeners = () => app.evaluate(({ nativeTheme }) => nativeTheme.listenerCount("updated"));
+  const windowCount = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  const initial = await listeners();
+  // A small app document that can share the opener's renderer keeps the eleven-window case inexpensive.
+  await page.evaluate(() => {
+    for (let i = 0; i < 10; i++) window.open("/__e2e/navigation/frame?sibling=" + i, "_blank");
+  });
+  await expect.poll(windowCount).toBe(11);
+  expect(await listeners()).toBe(initial);
+  // Wayland compositors own absolute placement. Other desktops expose the native coordinates.
+  if (process.platform !== "linux" || process.env.XDG_SESSION_TYPE !== "wayland") {
+    const [first, second] = await app.evaluate(
+      ({ BrowserWindow }, id) =>
+        BrowserWindow.getAllWindows()
+          .filter((win) => win.id !== id)
+          .toSorted((a, b) => a.id - b.id)
+          .slice(0, 2)
+          .map((win) => win.getBounds()),
+      parentId,
+    );
+    expect([first.x, first.y]).not.toEqual([second.x, second.y]);
+  }
+  await app.evaluate(({ BrowserWindow }, id) => {
+    for (const win of BrowserWindow.getAllWindows()) if (win.id !== id) win.close();
+  }, parentId);
+  await expect.poll(windowCount).toBe(1);
+  expect(await listeners()).toBe(initial);
+});
+
 test("a fullscreen child receives its own SSR window state on reload", async ({ desktop: { app, page } }) => {
   const opened = app.waitForEvent("window");
   await page.evaluate(() => {

@@ -68,9 +68,9 @@ async function updatePref(key: unknown, value: unknown): Promise<PreferenceUpdat
   }
 }
 
-async function invokeAppearance(channel: string, input: unknown): Promise<OverlayAppearanceResult> {
+async function invokeAppearance(request: () => Promise<unknown>): Promise<OverlayAppearanceResult> {
   try {
-    const response: unknown = await ipcRenderer.invoke(channel, input);
+    const response = await request();
     if (typeof response === "object" && response !== null && "status" in response) {
       if (response.status === "applied" && "appearance" in response) {
         const accepted = parseOverlayAppearance(response.appearance);
@@ -90,7 +90,23 @@ async function invokeAppearance(channel: string, input: unknown): Promise<Overla
   }
 }
 
-const visualDocument = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+// The main process issues one token per committed document. Both appearance channels share its
+// first async lookup. A temporary IPC failure can be retried by the next call.
+let visualDocument: Promise<string> | undefined;
+async function invokeForDocument(channel: string, input: object): Promise<unknown> {
+  visualDocument ??= ipcRenderer
+    .invoke(DESKTOP_CHROME_IPC.visualDocument)
+    .then((issued: unknown) => {
+      if (typeof issued !== "string" || !issued) throw new Error("Missing visual document token");
+      return issued;
+    })
+    .catch((error: unknown) => {
+      visualDocument = undefined;
+      throw error;
+    });
+  return ipcRenderer.invoke(channel, { ...input, document: await visualDocument });
+}
+
 let visualRevision = 0;
 
 const bridge: DesktopBridge = {
@@ -131,18 +147,17 @@ const bridge: DesktopBridge = {
   async updateOverlayAppearance(input): Promise<OverlayAppearanceResult> {
     const appearance = parseOverlayAppearance(input);
     if (!appearance) return { status: "rejected", reason: "invalid-appearance" };
-    return invokeAppearance(DESKTOP_CHROME_IPC.appearance, appearance);
+    return invokeAppearance(() => ipcRenderer.invoke(DESKTOP_CHROME_IPC.appearance, appearance));
   },
   declareOverlayAppearance(input) {
     const declaration = parseOverlayDeclaration(input);
     if (!declaration) return Promise.resolve({ status: "rejected", reason: "invalid-appearance" });
-    return invokeAppearance(DESKTOP_CHROME_IPC.declaration, { document: visualDocument, declaration });
+    return invokeAppearance(() => invokeForDocument(DESKTOP_CHROME_IPC.declaration, { declaration }));
   },
   async syncVisualTheme(preference) {
     if (!isVisualThemePreference(preference)) return { status: "rejected", reason: "invalid-request" };
     try {
-      const result: unknown = await ipcRenderer.invoke(DESKTOP_CHROME_IPC.visualTheme, {
-        document: visualDocument,
+      const result = await invokeForDocument(DESKTOP_CHROME_IPC.visualTheme, {
         revision: ++visualRevision,
         preference,
       });

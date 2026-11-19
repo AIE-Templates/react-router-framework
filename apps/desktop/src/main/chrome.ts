@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   DESKTOP_CHROME_IPC,
   type DesktopWindowState,
@@ -30,6 +32,12 @@ interface Subscription {
   frame: WebFrameMain;
 }
 
+// NativeTheme is process-wide. Window subscriptions last exactly as long as their native chrome.
+const themeListeners = new Set<() => void>();
+const notifyThemeListeners = () => {
+  for (const listener of themeListeners) listener();
+};
+
 /** One main-document subscription per window; no renderer-supplied window IDs or arbitrary IPC. */
 export function installWindowChrome(
   win: ChromeWindow,
@@ -47,8 +55,8 @@ export function installWindowChrome(
   let owner: string | undefined;
   let declarationRevision = 0;
   let themeRevision = 0;
-  let themeDocument: string | undefined;
-  const expiredDocuments = new Set<string>();
+  let visualDocument: string | undefined;
+  const getVisualDocument = (event: IpcMainInvokeEvent) => (trusted(event) ? (visualDocument ??= randomUUID()) : null);
   let appearance: OverlayAppearance = { ...policy.appearance };
   const read = (): DesktopWindowState => ({
     revision,
@@ -74,14 +82,16 @@ export function installWindowChrome(
   const clear = () => {
     subscription = undefined;
   };
-  const navigate = () => {
+  const retireDocument = () => {
     clear();
+    visualDocument = undefined;
+  };
+  const navigate = () => {
+    retireDocument();
     override = {};
     owner = undefined;
     declarationRevision = 0;
     themeRevision = 0;
-    if (themeDocument) expiredDocuments.add(themeDocument);
-    themeDocument = undefined;
     applyTheme();
   };
   const subscribe = (event: IpcMainInvokeEvent, token: unknown) => {
@@ -143,14 +153,12 @@ export function installWindowChrome(
       !("declaration" in input)
     )
       return { status: "rejected", reason: "invalid-appearance" };
-    if (expiredDocuments.has(input.document) || (themeDocument !== undefined && themeDocument !== input.document))
-      return { status: "rejected", reason: "stale-document" };
+    if (input.document !== visualDocument) return { status: "rejected", reason: "stale-document" };
     const next = parseOverlayDeclaration(input.declaration);
     if (!next) return { status: "rejected", reason: "invalid-appearance" };
     if (next.revision <= declarationRevision) return { status: "rejected", reason: "stale-declaration" };
     if (next.appearance !== null && owner !== undefined && owner !== next.owner)
       return { status: "rejected", reason: "appearance-owner-conflict" };
-    themeDocument = input.document;
     declarationRevision = next.revision;
     if (next.appearance !== null) {
       owner = next.owner;
@@ -177,13 +185,8 @@ export function installWindowChrome(
       input.revision < 1
     )
       return { status: "rejected", reason: "invalid-request" };
-    if (
-      expiredDocuments.has(input.document) ||
-      (themeDocument !== undefined && themeDocument !== input.document) ||
-      input.revision <= themeRevision
-    )
+    if (input.document !== visualDocument || input.revision <= themeRevision)
       return { status: "rejected", reason: "stale-document" };
-    themeDocument = input.document;
     themeRevision = input.revision;
     preference = input.preference;
     return { status: "processed", ...applyTheme(), persistence: themeStore?.save(preference) ? "saved" : "failed" };
@@ -191,7 +194,9 @@ export function installWindowChrome(
   const themeChanged = () => {
     if (!win.isDestroyed() && preference === "auto") applyTheme();
   };
-  nativeTheme.on("updated", themeChanged);
+  if (themeListeners.size === 0) nativeTheme.on("updated", notifyThemeListeners);
+  themeListeners.add(themeChanged);
+  contents.ipc.handle(DESKTOP_CHROME_IPC.visualDocument, getVisualDocument);
   contents.ipc.handle(DESKTOP_CHROME_IPC.declaration, declareAppearance);
   contents.ipc.handle(DESKTOP_CHROME_IPC.visualTheme, syncTheme);
   contents.ipc.handle(DESKTOP_CHROME_IPC.subscribe, subscribe);
@@ -199,14 +204,16 @@ export function installWindowChrome(
   contents.ipc.on(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
   for (const event of STATE_EVENTS) win.on(event, refresh);
   contents.on("did-navigate", navigate);
-  contents.on("render-process-gone", clear);
+  contents.on("render-process-gone", retireDocument);
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
     disposed = true;
 
     clear();
-    nativeTheme.off("updated", themeChanged);
+    themeListeners.delete(themeChanged);
+    if (themeListeners.size === 0) nativeTheme.off("updated", notifyThemeListeners);
+    contents.ipc.removeHandler(DESKTOP_CHROME_IPC.visualDocument);
     contents.ipc.removeHandler(DESKTOP_CHROME_IPC.subscribe);
     contents.ipc.removeHandler(DESKTOP_CHROME_IPC.appearance);
     contents.ipc.removeHandler(DESKTOP_CHROME_IPC.declaration);
@@ -214,7 +221,7 @@ export function installWindowChrome(
     contents.ipc.off(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
     for (const event of STATE_EVENTS) win.off(event, refresh);
     contents.off("did-navigate", navigate);
-    contents.off("render-process-gone", clear);
+    contents.off("render-process-gone", retireDocument);
     win.off("closed", dispose);
   };
   win.once("closed", dispose);
