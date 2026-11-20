@@ -127,3 +127,35 @@ it("replaces malformed local storage with the request seed once initialization c
   expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.visualPreferences)!)).toMatchObject({ preferences: seed });
   expect(readVisualCookie(document.cookie)).toMatchObject({ preferences: seed });
 });
+
+it("keeps unavailable storage distinct from a failed explicit save on an unseeded mount", () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("unavailable");
+  });
+  const saves = vi.spyOn(Storage.prototype, "setItem");
+  render(
+    <AppRoot>
+      <Consumer />
+    </AppRoot>,
+  );
+  expect(manager.getStatus().persistence).toBe("unavailable");
+  expect(saves).not.toHaveBeenCalled();
+});
+
+it("writes the mirror once per update, repeat command and reset", () => {
+  const writes = vi.spyOn(Document.prototype, "cookie", "set");
+  render(
+    <AppRoot>
+      <Consumer />
+    </AppRoot>,
+  );
+  for (const command of [
+    () => manager.actions.setColorSchemePreference("dark"),
+    () => manager.actions.setColorSchemePreference("dark"),
+    manager.actions.resetVisualPreferences,
+  ]) {
+    writes.mockClear();
+    act(command);
+    expect(writes).toHaveBeenCalledOnce();
+  }
+});

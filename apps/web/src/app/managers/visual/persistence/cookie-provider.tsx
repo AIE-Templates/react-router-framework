@@ -4,7 +4,7 @@ import { STORAGE_KEYS } from "~/config/storage";
 import { visualCookie } from "~/config/visual-cookie";
 import { useAppEnvironment } from "~/managers/environment/hooks";
 import { visualCodec } from "~/managers/visual/bootstrap";
-import { useVisualManager } from "~/managers/visual/hooks";
+import { useVisualManager, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
 import type { VisualPreferences } from "~/managers/visual/types";
 
 import { readVisualCookie, writeVisualCookie } from "./cookie";
@@ -15,12 +15,30 @@ export function VisualCookieProvider({
   requestSeed,
 }: PropsWithChildren<{ requestSeed?: VisualPreferences }>) {
   const manager = useVisualManager();
+  const { initialized } = useVisualStatus();
+  const { preferences } = useVisualState();
+  const mirrored = useRef<Readonly<VisualPreferences> | undefined>(undefined);
   const seedAttempted = useRef(false);
   const environment = useAppEnvironment();
   const enabled = visualCookie.enabled && environment.shell.kind === "web" && environment.enhancement === "unavailable";
   const [status, setStatus] = useState<VisualCookieStatus>("pending");
-  const sync = useCallback(() => {
-    if (!enabled || !manager.getStatus().initialized) return;
+  const sync = useCallback(
+    (reset = false) => {
+      if (!enabled || !manager.getStatus().initialized) return;
+      const current = manager.getSnapshot().preferences;
+      mirrored.current = current;
+      setStatus(writeVisualCookie(current, document, reset));
+    },
+    [enabled, manager],
+  );
+
+  useEffect(() => {
+    if (enabled) return manager.subscribeCommands((command) => sync(command === "reset"));
+    return undefined;
+  }, [enabled, manager, sync]);
+
+  useEffect(() => {
+    if (!enabled || !initialized) return;
     if (!seedAttempted.current) {
       // Initialization is one attempt, never a write echo for later storage events.
       seedAttempted.current = true;
@@ -40,28 +58,13 @@ export function VisualCookieProvider({
             /* Cookies may be unavailable in this browser. */
           }
         }
-        manager.actions.setPreferences(seed ?? manager.getSnapshot().preferences);
+        if (seed) manager.actions.setPreferences(seed);
       }
     }
-    setStatus(writeVisualCookie(manager.getSnapshot().preferences));
-  }, [enabled, manager, requestSeed]);
-  useEffect(() => {
-    if (!enabled) return () => {};
-    // Synchronizing an external cookie reports its actual write result.
-    // oxlint-disable-next-line react/set-state-in-effect
-    sync();
-    const state = manager.subscribe(sync);
-    const persistence = manager.subscribeStatus(sync);
-    const commands = manager.subscribeCommands((command) => {
-      if (command === "reset") setStatus(writeVisualCookie(manager.getSnapshot().preferences, document, true));
-      else sync();
-    });
-    return () => {
-      state();
-      persistence();
-      commands();
-    };
-  }, [enabled, manager, sync]);
+    // Commands mirror synchronously, including same-value retries. This effect covers initialization
+    // and external storage changes that did not pass through a local command.
+    if (mirrored.current !== manager.getSnapshot().preferences) sync();
+  }, [enabled, initialized, manager, preferences, requestSeed, sync]);
   return (
     <VisualCookieContext.Provider value={{ status: enabled ? status : "disabled", retry: sync }}>
       {children}

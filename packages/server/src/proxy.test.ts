@@ -36,6 +36,13 @@ describe("withForwardedOrigin", () => {
     expect(request.url).toBe("http://a.example.com/");
   });
 
+  it.each(["bad host", "example.com:99999", "example.com/path", "[::1"])(
+    "keeps the internal authority for %s",
+    (host) => {
+      expect(forwarded("http://app:3000/page", { "x-forwarded-host": host }).url).toBe("http://app:3000/page");
+    },
+  );
+
   it("keeps the method, headers, body and abort signal", async () => {
     const controller = new AbortController();
     const request = forwarded(

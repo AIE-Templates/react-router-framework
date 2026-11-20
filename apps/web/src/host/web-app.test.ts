@@ -21,11 +21,13 @@ const lastModified = new Date("2026-01-01T00:00:00Z");
 // when their describe blocks run.
 const clientDir = mkdtempSync(join(tmpdir(), "web-client-"));
 mkdirSync(join(clientDir, "assets"));
+mkdirSync(join(clientDir, ".well-known"));
 mkdirSync(join(clientDir, "about"));
 mkdirSync(join(clientDir, "manual.html"));
 mkdirSync(join(clientDir, "version.v1"));
 for (const [file, contents] of [
   ["index.html", SHELL],
+  [".well-known/assetlinks.json", "[]"],
   ["about/index.html", "<p>prerendered</p>"],
   ["favicon.ico", "icon"],
   ["assets/app.js", ASSET],
@@ -101,6 +103,28 @@ describe("static files", () => {
     expect(await response.text()).toBe(status === 304 ? "" : "co");
   });
 
+  it.each(["GET", "HEAD"])("respects failed preconditions before revalidation and ranges for %s", async (method) => {
+    const conditions: Record<string, string>[] = [
+      { "if-match": '"stale"', "if-none-match": "*" },
+      { "if-unmodified-since": "Sat, 01 Jan 2000 00:00:00 GMT", range: "bytes=99-" },
+    ];
+    for (const headers of conditions) {
+      const response = await web.request("/favicon.ico", { method, headers });
+      expect(response.status).toBe(412);
+      expect(response.headers.has("Content-Range")).toBe(false);
+      expect(await response.text()).toBe("");
+    }
+    const response = await web.request("/favicon.ico", {
+      method,
+      headers: {
+        "if-match": "*",
+        "if-unmodified-since": "Sat, 01 Jan 2000 00:00:00 GMT",
+        "if-none-match": "*",
+      },
+    });
+    expect(response.status).toBe(304);
+  });
+
   it("serves the API", async () => {
     const response = await web.request("/api/health");
 
@@ -126,6 +150,10 @@ describe("without server rendering", () => {
       expect(await response.text()).toBe(SHELL);
       expect(response.headers.get("cache-control")).toBe("no-cache");
       expect(response.headers.get("x-request-id")).toBe("req-1");
+    }
+    expect(await (await web.request("/.well-known/assetlinks.json")).json()).toEqual([]);
+    for (const method of ["GET", "HEAD"]) {
+      expect((await web.request("/.well-known/missing.json", { method })).status).toBe(404);
     }
     // Prerendered pages still win.
     expect(await (await web.request("/about")).text()).toBe("<p>prerendered</p>");

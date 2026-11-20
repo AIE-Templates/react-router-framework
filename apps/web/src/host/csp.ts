@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import type { MiddlewareHandler } from "hono";
+import { defaultTreeAdapter, parse, type DefaultTreeAdapterTypes } from "parse5";
 
 declare module "hono" {
   interface ContextVariableMap {
@@ -58,15 +59,22 @@ export function nonceSource(nonce: string): string {
  */
 export function inlineScriptHashes(html: string): string[] {
   const hashes: string[] = [];
-  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-    const [, attributes, body] = match;
-    if (/\bsrc\s*=/i.test(attributes ?? "")) continue;
-    hashes.push(
-      `'sha256-${createHash("sha256")
-        .update(body ?? "")
-        .digest("base64")}'`,
-    );
+  function visit(node: DefaultTreeAdapterTypes.ParentNode) {
+    for (const child of node.childNodes) {
+      if (!defaultTreeAdapter.isElementNode(child)) continue;
+      if (child.tagName === "script") {
+        if (child.attrs.some((attribute) => attribute.name === "src")) continue;
+        const body = child.childNodes
+          .filter((node) => defaultTreeAdapter.isTextNode(node))
+          .map((text) => text.value)
+          .join("");
+        hashes.push(`'sha256-${createHash("sha256").update(body).digest("base64")}'`);
+      } else {
+        visit(child);
+      }
+    }
   }
+  visit(parse(html));
   return hashes;
 }
 

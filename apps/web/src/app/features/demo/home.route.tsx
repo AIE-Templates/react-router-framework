@@ -50,15 +50,15 @@ export default function Home() {
       sidebar={
         <div className={classes.demoPanel}>
           <p className={classes.demoEyebrow}>On this page</p>
-          <a onClick={followSection} href="#layout-settings">
+          <a data-native-control="" onClick={followSection} href="#layout-settings">
             <DemoIcon name="settings" />
             Layout settings
           </a>
-          <a onClick={followSection} href="#scratchpad">
+          <a data-native-control="" onClick={followSection} href="#scratchpad">
             <DemoIcon name="file" />
             Scratchpad
           </a>
-          <a onClick={followSection} href="#resources">
+          <a data-native-control="" onClick={followSection} href="#resources">
             <DemoIcon name="book" />
             Resources
           </a>
@@ -107,11 +107,11 @@ export default function Home() {
             Host: {environment.shell.kind}.
           </span>
           <div className={classes.demoLaunch}>
-            <Link to="/chat" target="_blank" rel="noopener">
+            <Link data-native-control="" to="/chat" target="_blank" rel="noopener">
               Chat demo <DemoIcon name="arrow" />
             </Link>
             {basic && (
-              <Link to="/settings" target="_blank" rel="noopener">
+              <Link data-native-control="" to="/settings" target="_blank" rel="noopener">
                 Settings <DemoIcon name="arrow" />
               </Link>
             )}
@@ -136,9 +136,10 @@ export default function Home() {
               </div>
             </div>
             <div className={classes.layoutDemoControls} data-demo-controls>
-              <label>
+              <label className={classes.nativeField}>
                 App shell
                 <select
+                  data-native-control=""
                   data-demo-shell
                   value={basic ? "basic" : "navigation"}
                   onChange={(event) => choose("shell", event.target.value)}
@@ -147,9 +148,14 @@ export default function Home() {
                   <option value="basic">Basic</option>
                 </select>
               </label>
-              <label>
+              <label className={classes.nativeField}>
                 Title bar
-                <select data-demo-header value={headerMode} onChange={(event) => choose("header", event.target.value)}>
+                <select
+                  data-native-control=""
+                  data-demo-header
+                  value={headerMode}
+                  onChange={(event) => choose("header", event.target.value)}
+                >
                   <option value="fused">Fused</option>
                   <option value="standalone">Standalone</option>
                 </select>
@@ -246,18 +252,24 @@ export default function Home() {
           <span className={classes.demoBrand} title="Layout foundation" aria-hidden="true">
             <DemoIcon name="layers" />
           </span>
-          <Link to={{ search: `?${homeParams.toString()}` }} aria-current="page">
+          <Link data-native-control="" to={{ search: `?${homeParams.toString()}` }} aria-current="page">
             <DemoIcon name="home" />
             <span>Home</span>
           </Link>
-          <a href="https://reactrouter.com/docs">
+          <a data-native-control="" href="https://reactrouter.com/docs">
             <DemoIcon name="book" />
             <span>Docs</span>
           </a>
           <span className={classes.demoRailFooter} aria-hidden="true">
             LF
           </span>
-          <Link to="/settings" target="_blank" rel="noopener" title="Open settings in a new window">
+          <Link
+            data-native-control=""
+            to="/settings"
+            target="_blank"
+            rel="noopener"
+            title="Open settings in a new window"
+          >
             <DemoIcon name="settings" />
             <span>Settings</span>
           </Link>
