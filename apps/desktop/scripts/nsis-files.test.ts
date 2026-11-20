@@ -18,9 +18,9 @@ it("compiles only the packaged files into the uninstaller, escaping literals and
       .trim()
       .split("\n");
     expect(instructions).toEqual([
-      'Delete "$INSTDIR\\Desktop.exe"',
       '!insertmacro CheckDirectory "$INSTDIR\\resources"',
-      'Delete "$INSTDIR\\resources\\cost $$1.txt"',
+      '!insertmacro RemoveInstalledFile "$INSTDIR\\Desktop.exe"',
+      '!insertmacro RemoveInstalledFile "$INSTDIR\\resources\\cost $$1.txt"',
       'RMDir "$INSTDIR\\resources"',
     ]);
   } finally {

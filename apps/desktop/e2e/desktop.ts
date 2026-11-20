@@ -1,8 +1,8 @@
+import type { ChildProcess } from "node:child_process";
 import { realpathSync } from "node:fs";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
-import { killIfRunning } from "../scripts/child-run.ts";
 import {
   appProcesses,
   buildProfileMismatch,
@@ -16,6 +16,7 @@ import {
   packagedBinary,
   removeUserDataDir,
 } from "../scripts/launch.ts";
+import { windowsProcess } from "../scripts/powershell.ts";
 
 /**
  * What the Playwright Electron driver launches, both the test build profile, started the way
@@ -42,6 +43,7 @@ export interface Launched {
   page: Page;
   /** The main process's PID, to check it is gone after `quit()`. */
   pid: number;
+  close: () => Promise<void>;
 }
 
 /**
@@ -72,10 +74,17 @@ export async function launch(target: Target, userDataDir: string): Promise<Launc
     // Playwright otherwise adds `--no-sandbox` on Linux by itself, silently.
     chromiumSandbox: !spec.args.includes("--no-sandbox"),
   });
-  let pid: number | undefined;
+  const launcher = app.process();
+  let main: { pid: number; startedAt?: number } | undefined;
+  const close = () => closeApplication(app, launcher, main);
   try {
     // On Windows Playwright may launch Electron through a separate launcher process.
-    pid = await app.evaluate(() => process.pid);
+    main = await app.evaluate(() => {
+      const created = process.platform === "win32" ? process.getCreationTime() : null;
+      return { pid: process.pid, startedAt: created === null ? undefined : Math.trunc(created) };
+    });
+    if (main.pid !== launcher.pid && (process.platform !== "win32" || main.startedAt === undefined))
+      throw new Error("Cannot verify the identity of the launched Electron main process");
     const page = await app.firstWindow();
     // Playwright reads the app's stdout itself, so the startup line is out of reach: the main process
     // of every non-release build exposes its profile instead (src/main.ts).
@@ -96,10 +105,11 @@ export async function launch(target: Target, userDataDir: string): Promise<Launc
       }
     }
     await waitForApp(page);
-    return { app, page, pid };
+    return { app, page, pid: main.pid, close };
   } catch (err) {
-    await app.close().catch(() => {});
-    if (pid !== undefined) killIfRunning(pid);
+    await close().catch((closeError: unknown) => {
+      process.stderr.write(`e2e: cleanup after failed launch: ${String(closeError)}\n`);
+    });
     throw err;
   }
 }
@@ -112,19 +122,52 @@ export async function waitForApp(page: Page): Promise<void> {
 }
 
 /** Quits the app the way a user does (`app.quit()`, so `before-quit` runs) and waits for the process. */
-export async function quit({ app, pid }: Launched): Promise<void> {
-  await app.close();
-  const until = Date.now() + 10_000;
-  while (isAlive(pid) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
-  if (isAlive(pid)) throw new Error(`main process ${pid} still running after quit`);
+export function quit({ close }: Launched): Promise<void> {
+  return close();
 }
 
-function isAlive(pid: number): boolean {
+/** Keep the original child handle even after Playwright disposes the app. On Windows it can be cmd.exe. */
+export async function closeApplication(
+  app: Pick<ElectronApplication, "close">,
+  launcher: Pick<ChildProcess, "pid" | "exitCode" | "signalCode" | "kill">,
+  main?: { pid: number; startedAt?: number },
+): Promise<void> {
+  const separateMain = process.platform === "win32" && main && main.pid !== launcher.pid ? main : undefined;
+  const launcherRunning = () => launcher.exitCode === null && launcher.signalCode === null;
+  const mainRunning = () => {
+    if (!separateMain || separateMain.startedAt === undefined) return false;
+    try {
+      // Cheap probe after normal shutdown. Only the pinned process object can confirm identity or kill.
+      process.kill(separateMain.pid, 0);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+      throw error;
+    }
+    return windowsProcess(separateMain, "check");
+  };
+  if (!launcherRunning() && !mainRunning()) return;
+  const until = Date.now() + 10_000;
+  let timer: NodeJS.Timeout | undefined;
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    await Promise.race([
+      app.close(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("the app did not close within 10 seconds")), 10_000);
+      }),
+    ]);
+    while (launcherRunning() || mainRunning()) {
+      if (Date.now() >= until) throw new Error("the main process is still running after quit");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  } catch (err) {
+    try {
+      if (separateMain) windowsProcess(separateMain, "kill");
+    } finally {
+      if (launcherRunning()) launcher.kill("SIGKILL");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -161,17 +204,10 @@ export const test = base.extend<Fixtures & Options>({
     });
     const failures: unknown[] = [];
     for (const app of launched) {
-      if (isAlive(app.pid)) {
-        try {
-          await quit(app);
-        } catch (err) {
-          failures.push(err);
-          try {
-            killIfRunning(app.pid);
-          } catch (killError) {
-            failures.push(killError);
-          }
-        }
+      try {
+        await quit(app);
+      } catch (err) {
+        failures.push(err);
       }
     }
     if (failures.length) throw new AggregateError(failures, "Could not close all test apps cleanly");

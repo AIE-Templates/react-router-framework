@@ -10,7 +10,7 @@ function powershellEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 }
 
 /** Runs a PowerShell command with UTF-8 output, whatever the console's code page. */
-export function powershellOutput(command: string, extra: Record<string, string> = {}): string {
+export function powershellOutput(command: string, extra: Record<string, string> = {}, timeout?: number): string {
   return execFileSync(
     "powershell",
     [
@@ -19,7 +19,7 @@ export function powershellOutput(command: string, extra: Record<string, string> 
       "-Command",
       `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`,
     ],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: powershellEnv(extra) },
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: powershellEnv(extra), timeout },
   );
 }
 
@@ -29,12 +29,14 @@ export function windowsProcesses(): ProcessInfo[] {
       "Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine," +
         "@{n='Created';e={if ($_.CreationDate) { [DateTimeOffset]::new($_.CreationDate).ToUnixTimeMilliseconds() } else { $null }}}" +
         " | ConvertTo-Json -Compress",
+      {},
+      30_000,
     ),
   );
 }
 
 /** Pin the process object before checking its creation time, so a recycled Windows PID is never killed. */
-export function windowsProcess(process: ProcessInfo, action: "kill" | "check"): boolean {
+export function windowsProcess(process: Pick<ProcessInfo, "pid" | "startedAt">, action: "kill" | "check"): boolean {
   if (process.startedAt === undefined) return false;
   const result = powershellOutput(
     [
@@ -49,6 +51,7 @@ export function windowsProcess(process: ProcessInfo, action: "kill" | "check"): 
       "exit 0",
     ].join("\n"),
     { REAP_HELPER_PID: String(process.pid), REAP_HELPER_CREATED: String(process.startedAt) },
+    30_000,
   );
   return result.trim() === "matched";
 }

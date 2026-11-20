@@ -246,9 +246,10 @@ async function runOnce(
       if (killed.length) process.stderr.write(`  stopped lingering helpers of this run: ${killed.join(", ")}\n`);
     } finally {
       current = undefined;
-      removeUserDataDir(userDataDir);
       userDataDirs.delete(userDataDir);
     }
+    // A failed reap leaves this profile in place for any process still using it.
+    removeUserDataDir(userDataDir);
   }
 }
 
