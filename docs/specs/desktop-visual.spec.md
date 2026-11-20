@@ -1,6 +1,6 @@
 # Desktop visual synchronization
 
-Core VisualManager is authoritative for renderer preferences. DesktopVisualSync is composed in the Electron root within AppRoot; registries remain platform-independent. It waits for the environment runtime to report available desktop enhancement, then checks the dedicated syncVisualTheme capability. New renderer platform adapters live in app/platform/electron; existing generic preference helpers remain in app/lib.
+Core VisualManager is authoritative for renderer preferences. DesktopVisualSync is composed in the Electron root within AppRoot; registries remain platform-independent. It waits for the environment runtime to report available desktop enhancement, then checks the dedicated syncVisualTheme capability. Renderer platform adapters and generic preference helpers live in app/platform/electron.
 
 The dedicated IPC validates sender, preference enum, document token and increasing request revision. It returns separate background, overlay and persistence outcomes. No loader revalidation or general preference mutation occurs. Late results cannot update a disconnected adapter. useDesktopVisualStatus reports pending, unsupported, processed or rejected status without claiming that a page change implies durable native persistence.
 
