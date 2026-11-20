@@ -36,7 +36,7 @@ interface Check {
 
 /**
  * `DESKTOP_SMOKE=1`: once the page has loaded, run checks inside it and print `SMOKE_RESULT {...}`,
- * then exit 0 when every check passed. How the shell is verified without a browser driver. In
+ * then return the exit code for the checks. How the shell is verified without a browser driver. In
  * development (`development: true`) the Vite dev server serves modules and CSS differently, so the
  * production-only checks are skipped or relaxed, and the result says which.
  */
@@ -45,7 +45,6 @@ export async function runSmoke(
   {
     profile,
     log,
-    exit,
     development = false,
     smokeRoutes = false,
     layout = false,
@@ -53,7 +52,6 @@ export async function runSmoke(
   }: {
     profile: BootProfile;
     log: Logger;
-    exit: (code: number) => Promise<void>;
     development?: boolean;
     /** Whether the utility serves the `/__smoke/*` endpoints; not without a utility (development), which skips `sse`. */
     smokeRoutes?: boolean;
@@ -62,7 +60,7 @@ export async function runSmoke(
     /** `DESKTOP_SMOKE_SCREENSHOT=<file.png>`: where to save what the window shows after the checks. */
     screenshot?: string;
   },
-): Promise<void> {
+): Promise<number> {
   const js = (code: string): Promise<unknown> =>
     Promise.race([
       win.webContents.executeJavaScript(`(async () => { ${code} })()`),
@@ -358,7 +356,7 @@ export async function runSmoke(
   };
   process.stdout.write(`SMOKE_RESULT ${JSON.stringify(result)}\n`);
   log.info({ ok, skipped }, "smoke finished");
-  await exit(ok ? 0 : 1);
+  return ok ? 0 : 1;
 }
 
 /**
