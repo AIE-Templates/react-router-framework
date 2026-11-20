@@ -62,7 +62,7 @@ function Shell({
       typeof ResizeObserver === "undefined" ||
       (CSS.supports("anchor-scope: --header") && CSS.supports("top: anchor(--header bottom)"))
     )
-      return;
+      return undefined;
     // Older engines cannot anchor the navigation drawer to its sibling module's header.
     let header: HTMLElement | null;
     const measure = () => {
