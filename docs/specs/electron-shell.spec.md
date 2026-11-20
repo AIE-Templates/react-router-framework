@@ -108,7 +108,7 @@ Derived applications can extend this policy deliberately, keeping request/check 
 
 ## Build profiles (HOST-11)
 
-A build profile is fixed when the desktop bundles are built (`DESKTOP_BUILD_PROFILE`, compiled in) and never chosen at run time. `dev` is built only by `dev:desktop`, in watch mode. `test` is the default of `pnpm --filter desktop build` and is what Playwright, the smoke and the benchmark run. `release` is the only profile that ships. Each profile has its own bundle directory and package directory, so no launcher or package can pick up another profile's bundles; launchers refuse a process that reports another profile (its first log line, or `globalThis.desktopBuildProfile` under Playwright).
+A build profile is fixed when the desktop bundles are built (`DESKTOP_BUILD_PROFILE`, compiled in) and never chosen at run time. `dev` is built only by `dev:desktop`, in watch mode. Playwright, smoke and benchmarks use explicitly built `test` bundles. Desktop builds default to `release`, the only profile that ships. Each profile has its own bundle directory, and the test and release packages have separate output directories. Test launchers and the release verifier check the running profile through the first log line or, under Playwright, `globalThis.desktopBuildProfile`.
 
 What a profile contains is decided by the build configuration, not by tree-shaking or runtime checks: `PROFILE_ENTRIES` in `scripts/build-profile.ts` aliases each listed module to an empty implementation of the same contract in the profiles that exclude it.
 
