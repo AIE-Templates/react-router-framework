@@ -10,6 +10,7 @@ const selector = "[data-scroll-restoration-id]";
 export function ContentScrollRestoration({ children }: { children: ReactNode }) {
   const container = useRef<HTMLDivElement>(null);
   const history = useRef(new Map<string, Positions>());
+  const previous = useRef<ReturnType<typeof useLocation> | undefined>(undefined);
   const location = useLocation();
   const navigationType = useNavigationType();
 
@@ -17,14 +18,28 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
     const root = container.current;
     if (!root) return undefined;
     const positions = history.current;
-    const saved = navigationType === NavigationType.Pop ? positions.get(location.key) : undefined;
+    // Native fragment entries can lack a Router history key.
+    const key =
+      location.key === "default" ? JSON.stringify([location.pathname, location.search, location.hash]) : location.key;
+    const saved = navigationType === NavigationType.Pop ? positions.get(key) : undefined;
+    const keepPanes =
+      previous.current?.pathname === location.pathname &&
+      previous.current.search === location.search &&
+      previous.current.hash !== location.hash &&
+      !saved;
+    previous.current = location;
     const current: Positions = new Map(saved);
-    positions.set(location.key, current);
+    positions.set(key, current);
     // Bound memory in long-lived desktop sessions.
     if (positions.size > 100) positions.delete(positions.keys().next().value!);
     const elements = [root, ...root.querySelectorAll<HTMLElement>(selector)];
     for (const element of elements) {
-      const [left, top] = saved?.get(element.dataset.scrollRestorationId!) ?? [0, 0];
+      const id = element.dataset.scrollRestorationId!;
+      if (keepPanes) {
+        current.set(id, [element.scrollLeft, element.scrollTop]);
+        continue;
+      }
+      const [left, top] = saved?.get(id) ?? [0, 0];
       element.scrollLeft = left;
       element.scrollTop = top;
     }
@@ -63,7 +78,7 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
       observer?.disconnect();
       root.removeEventListener("scroll", record, true);
     };
-  }, [location.key, location.hash, navigationType]);
+  }, [location, navigationType]);
 
   return (
     <div ref={container} className="root-content" data-scroll-restoration-id="root">
