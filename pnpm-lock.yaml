@@ -256,6 +256,9 @@ importers:
       isbot:
         specifier: ^5.1.36
         version: 5.2.2
+      parse5:
+        specifier: 8.0.1
+        version: 8.0.1
       pino:
         specifier: ^10.4.0
         version: 10.4.0

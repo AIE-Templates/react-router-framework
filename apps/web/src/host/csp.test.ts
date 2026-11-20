@@ -19,6 +19,13 @@ describe("defaultPolicy", () => {
 const hash = (body: string) => `'sha256-${createHash("sha256").update(body).digest("base64")}'`;
 
 describe("inlineScriptHashes", () => {
+  it("uses HTML attribute and text boundaries, including browser newline normalization", () => {
+    const html =
+      "<!-- <script>comment</script> --><textarea><script>text</script></textarea>" +
+      '<script title="a > b" data-src="note">one\r\ntwo</script><script SRC></script>';
+    expect(inlineScriptHashes(html)).toEqual([hash("one\ntwo")]);
+  });
+
   it("hashes inline scripts and skips external ones", () => {
     const html = '<script src="/a.js"></script><script>window.x = 1;</script><SCRIPT type="module">go()</SCRIPT>';
 
