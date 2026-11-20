@@ -27,6 +27,30 @@ export const REMOTE_DEBUGGING_REFUSED_MESSAGE = "remote debugging refused";
 export const MAIN_WINDOW_READY_MESSAGE = "main window loaded and shown";
 
 /**
+ * The `msg` of the main-process log line (level `info`, with the writer's duration as `ms`) printed
+ * on Windows by a test or release launch whose profile had no cookie encryption key yet, once a
+ * cookie key writer stored it (src/main/cookie-key.ts). Never printed on macOS or Linux, nor by a
+ * launch that found the key.
+ */
+export const COOKIE_KEY_STORED_MESSAGE = "cookie key stored before start";
+
+/**
+ * After COOKIE_KEY_STORED_MESSAGE, once the main window is on its way, exactly one of: the `msg` of
+ * an `info` line saying the launch runs on the key its writer stored (it decrypted the writer's
+ * probe), or the `msg` of an `error` line, with `reason`, saying it does not.
+ */
+export const COOKIE_KEY_CHECKED_MESSAGE = "cookie key checked: this launch uses the stored key";
+export const COOKIE_KEY_MISMATCH_MESSAGE =
+  "this launch does not use the cookie key its key writer stored: a crash in its first ~10 s loses its persistent cookies";
+
+/**
+ * The switch, without its `--` prefix, that makes a test or release launch on Windows a cookie key
+ * writer: a short-lived copy of the app that only lets Chromium store the profile's cookie key and
+ * quits (src/main/cookie-key.ts).
+ */
+export const COOKIE_KEY_WRITER_SWITCH = "desktop-cookie-key-writer";
+
+/**
  * The remote debugging switch a process was started with, if any. `hasSwitch` is Chromium's own view
  * of the command line (Electron's `app.commandLine.hasSwitch`); `argv` is checked as well, in every
  * spelling Chromium accepts (`--name`, `--name=value`, a single `-`, and on Windows `/name` and any
