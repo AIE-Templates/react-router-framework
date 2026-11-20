@@ -71,7 +71,6 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
     { args: [], profile: "test", web: false },
     { args: ["--with-web"], profile: "test", web: true },
     { args: ["test"], profile: "test", web: false },
-    { args: ["dev"], profile: "dev", web: false },
     { args: ["release", "--with-web"], profile: "release", web: true },
     { args: ["--with-web", "release"], profile: "release", web: true },
   ])("builds the $profile profile with production inputs (arguments $args)", ({ args, profile, web }) => {
@@ -103,6 +102,7 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
 
   it.each([
     { args: ["staging"] },
+    { args: ["dev"] },
     { args: ["test", "release"] },
     { args: ["--with-web", "--with-web"] },
     { args: ["release", "--workspace"] },

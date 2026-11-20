@@ -11,6 +11,7 @@ extraMetadata:
 files:
   - ".vite/release/**"
   - "!.vite/release/*.map"
+  - "!.vite/release/web-server.json"
   - package.json
 directories:
   output: out/release

@@ -1,6 +1,6 @@
 // The desktop build profiles, shared by the build entry (scripts/build.ts), the Vite configuration
 // (vite.base.config.ts), development (scripts/dev.ts) and the launchers (scripts/launch.ts):
-// - `dev`: `pnpm dev:desktop`; unminified, NODE_ENV left to the runtime, watch mode there;
+// - `dev`: `pnpm dev:desktop` only, always in watch mode; unminified, NODE_ENV left to the runtime;
 // - `test`: `pnpm build:desktop` and `pnpm package:desktop`, what Playwright, the smoke and the bench run;
 // - `release`: `pnpm release:desktop` and `pnpm dist:desktop`, the distributed build.
 // Each profile has its own bundle directory (`.vite/<profile>`), so a launcher can never pick up
@@ -36,22 +36,25 @@ export function bundleDir(profile: BuildProfile): string {
 
 export type BuildMode = "desktop" | "with-web" | "workspace";
 
-export const BUILD_USAGE = "Usage: build.ts [dev | test | release] [--with-web] | build.ts --workspace";
+/** What scripts/build.ts builds; the dev profile is built only by scripts/dev.ts, in watch mode. */
+export type BuildCommandProfile = Exclude<BuildProfile, "dev">;
+
+export const BUILD_USAGE = "Usage: build.ts [test | release] [--with-web] | build.ts --workspace";
 
 /**
- * Parses scripts/build.ts's arguments: an optional profile and an optional `--with-web`, in either
- * order, or `--workspace` alone (the recursive build runs each package's own `build`, the desktop's
- * with the default profile).
+ * Parses scripts/build.ts's arguments: an optional `test` or `release` and an optional `--with-web`,
+ * in either order, or `--workspace` alone (the recursive build runs each package's own `build`, the
+ * desktop's with the default profile).
  */
-export function parseBuildArgs(args: readonly string[]): { profile: BuildProfile; mode: BuildMode } {
-  let profile: BuildProfile | undefined;
+export function parseBuildArgs(args: readonly string[]): { profile: BuildCommandProfile; mode: BuildMode } {
+  let profile: BuildCommandProfile | undefined;
   let mode: BuildMode | undefined;
   for (const arg of args) {
-    if (isBuildProfile(arg) && profile === undefined) profile = arg;
+    if ((arg === "test" || arg === "release") && profile === undefined) profile = arg;
     else if (arg === "--with-web" && mode === undefined) mode = "with-web";
     else if (arg === "--workspace" && mode === undefined) mode = "workspace";
     else throw new Error(BUILD_USAGE);
   }
   if (mode === "workspace" && profile !== undefined) throw new Error(BUILD_USAGE);
-  return { profile: profile ?? DEFAULT_BUILD_PROFILE, mode: mode ?? "desktop" };
+  return { profile: profile ?? "test", mode: mode ?? "desktop" };
 }

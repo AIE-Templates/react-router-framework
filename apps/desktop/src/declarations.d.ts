@@ -6,6 +6,12 @@
  */
 declare const DESKTOP_BUILD_PROFILE: "dev" | "test" | "release";
 
+/**
+ * The main process's build profile for the Playwright fixtures (e2e/desktop.ts), which evaluate it in
+ * the main process; set by src/main.ts in dev and test builds, never in release builds.
+ */
+declare var desktopBuildProfile: "dev" | "test" | undefined;
+
 /** The `react-router dev` address, defined by the Vite build in development; `undefined` in a production build. */
 declare const DESKTOP_DEV_SERVER_URL: string | undefined;
 

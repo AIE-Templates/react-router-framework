@@ -1,10 +1,11 @@
 // Development, the way `electron-forge start` works, without Forge: `react-router dev` for the web
 // app (desktop shell, own port), the three Vite builds of the dev profile in watch mode with the dev
-// server address baked in, then Electron on their directory (`electron .vite/dev`, with a generated
-// package.json carrying apps/desktop's name, product name and version, so the app name, version and
-// userData directory are those of `electron .`). The main process must report the dev build profile
-// (scripts/launch.ts). Main or utility rebuilt → Electron restarts; preload rebuilt → the window
-// reloads. Runs on Node directly (type stripping).
+// server address baked in, then Electron on their directory the way scripts/launch.ts starts the dev
+// profile (`electron .vite/dev`, with a generated package.json carrying apps/desktop's name, product
+// name and version, so the app name, version and userData directory are those of `electron .`). The
+// main process must report the dev build profile. Main or utility rebuilt → Electron restarts;
+// preload rebuilt → the window reloads. This is the only build of the dev profile. Runs on Node
+// directly (type stripping).
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, watch } from "node:fs";
@@ -14,7 +15,7 @@ import { createInterface } from "node:readline";
 import { stripVTControlCharacters } from "node:util";
 
 import { BUILD_PROFILE_ENV, bundleDir } from "./build-profile.ts";
-import { electronBinary, verifyBuildProfile, writeDevPackageJson } from "./launch.ts";
+import { launchSpec, verifyBuildProfile, writeDevPackageJson } from "./launch.ts";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 const repoDir = resolve(desktopDir, "../..");
@@ -101,13 +102,14 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
 }
 
 function startElectron(): ChildProcess {
-  const child = run(electronBinary(), [buildDir], {
-    cwd: desktopDir,
-    env: { DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev", NODE_ENV: "development" },
+  const spec = launchSpec("unpackaged", "dev");
+  const child = run(spec.command, spec.args, {
+    cwd: spec.cwd,
+    env: { ...spec.env, DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev" },
     stdin: true,
   });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
-  verifyBuildProfile(child.stdout!, "dev").catch((err: unknown) => {
+  verifyBuildProfile(child.stdout!, spec.profile).catch((err: unknown) => {
     if (shuttingDown || electron !== child) return;
     log(err instanceof Error ? err.message : String(err));
     shutdown(1);

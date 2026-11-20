@@ -1,20 +1,26 @@
 // What every launcher of the desktop app shares: the Playwright fixtures (e2e/desktop.ts), the
 // benchmark (scripts/bench.ts), `pnpm --filter desktop start` and with it the smoke
-// (scripts/start.ts), and development (scripts/dev.ts). Each build profile lives in its own
-// `.vite/<profile>` (scripts/build-profile.ts) and the main process logs the profile it was built
-// with first thing (`{"buildProfile":"test","msg":"build profile"}`); a launcher reads that line from
-// the app's stdout and fails when it is not the profile it meant to start, so a stale or
-// mismatched build can never pass as the one under test. Unpackaged launches also check first that
-// the bundles exist and match the web build (scripts/check-web-build.ts). Runs on Node directly
-// (type stripping).
-import { ChildProcess, execFileSync } from "node:child_process";
-import { subscribe, unsubscribe } from "node:diagnostics_channel";
+// (scripts/start.ts), and development (scripts/dev.ts).
+// - `launchSpec()` is the one place that says how a target (unpackaged bundles or the packaged test
+//   app) of a build profile is started: executable, arguments, Chromium switches, working directory
+//   and environment. Callers add only what is theirs (a test's media switch, a user's arguments).
+// - Each build profile lives in its own `.vite/<profile>` (scripts/build-profile.ts) and the main
+//   process logs the profile it was built with before anything else
+//   (`{"buildProfile":"test","msg":"build profile"}`). A launcher that spawns the app itself reads
+//   that line from its stdout (`verifyBuildProfile`) and fails when it is not the profile it meant to
+//   start, so a stale or mismatched build can never pass as the one under test. Playwright consumes
+//   the app's stdout itself; e2e/desktop.ts asks the main process instead (`desktopBuildProfile`).
+// - `checkLaunchInputs()` first makes sure the target exists and, unpackaged, that its bundles match
+//   the web build (scripts/check-web-build.ts).
+// Runs on Node directly (type stripping).
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
+import { packagedExecutable } from "../e2e/packaged-path.ts";
 import { type BuildProfile, bundleDir } from "./build-profile.ts";
 import { buildCommand, checkWebBuild } from "./check-web-build.ts";
 
@@ -63,6 +69,80 @@ export function appProcesses(executable: string, directory: string): number[] {
     .filter((pid) => pid > 0 && pid !== process.pid);
 }
 
+export type LaunchTarget = "unpackaged" | "packaged";
+
+/** How to start one target of one build profile; `env` goes over the caller's environment. */
+export interface LaunchSpec {
+  target: LaunchTarget;
+  profile: BuildProfile;
+  command: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+  /** The directory every process of the app has its executable under, for `appProcesses`. */
+  processDir: string;
+}
+
+/** The packaged test app electron-builder's `--dir` writes for this machine, only ever in `out/test`. */
+export function packagedBinary(directory: string = desktopDir): string {
+  const metadata = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
+  return packagedExecutable(join(directory, "out", "test"), metadata, process.platform, process.arch);
+}
+
+/** A macOS bundle's helpers live under Contents/Frameworks, beside Contents/MacOS: take the bundle. */
+function processDirOf(executable: string): string {
+  const bundle = executable.lastIndexOf(".app/Contents/MacOS/");
+  return process.platform === "darwin" && bundle >= 0 ? executable.slice(0, bundle + 4) : dirname(executable);
+}
+
+/**
+ * How to start `target` of `profile`: the unpackaged test bundles (`electron .`, package.json `main`
+ * is `.vite/test/main.cjs`), the unpackaged dev bundles (`electron .vite/dev`, scripts/dev.ts), or the
+ * packaged test app (`out/test` unless `executable` names another packaged test-profile executable).
+ * The release profile is not launched by these tools: its fuses stop the drivers and its cookie
+ * encryption reaches for the system keychain.
+ */
+export function launchSpec(
+  target: LaunchTarget,
+  profile: BuildProfile,
+  { executable, directory = desktopDir }: { executable?: string; directory?: string } = {},
+): LaunchSpec {
+  // Chromium switches every launch of this target and profile gets (platform specifics belong here).
+  const switches: string[] = [];
+  const env = { NODE_ENV: profile === "dev" ? "development" : "production" };
+  if (target === "unpackaged" && (profile === "test" || profile === "dev")) {
+    if (executable !== undefined) throw new Error("An unpackaged launch runs this checkout's Electron");
+    const command = electronBinary();
+    const app = profile === "test" ? "." : join(directory, bundleDir("dev"));
+    return {
+      target,
+      profile,
+      command,
+      args: [app, ...switches],
+      cwd: directory,
+      env,
+      processDir: processDirOf(command),
+    };
+  }
+  if (target === "packaged" && profile === "test") {
+    const command = resolve(executable ?? packagedBinary(directory));
+    return { target, profile, command, args: switches, cwd: dirname(command), env, processDir: processDirOf(command) };
+  }
+  throw new Error(`The ${target} ${profile} build is not a launch target`);
+}
+
+/**
+ * Throws, saying which command to run, unless what `spec` starts exists and, for the unpackaged test
+ * bundles, matches the web build. The dev bundles are checked by scripts/dev.ts, which builds them.
+ */
+export function checkLaunchInputs(spec: LaunchSpec, directory: string = desktopDir): void {
+  if (spec.target === "packaged") {
+    if (!existsSync(spec.command)) throw new Error(`${spec.command} is missing: run \`pnpm package:desktop\` first`);
+  } else if (spec.profile !== "dev") {
+    checkUnpackagedBuild(spec.profile, directory);
+  }
+}
+
 /**
  * Throws, saying which command to run, unless the profile's unpackaged bundles exist and its
  * utility bundle matches the web client build it will serve.
@@ -95,6 +175,13 @@ export function reportedBuildProfile(line: string): string | undefined {
   }
 }
 
+/** The error for an app that reports another build profile than the launcher meant to start. */
+export function buildProfileMismatch(reported: unknown, expected: BuildProfile): Error {
+  return new Error(
+    `The launched app reports build profile ${JSON.stringify(reported) ?? "none"}, expected "${expected}"`,
+  );
+}
+
 /**
  * Resolves once the app writing to `stdout` reports `expected` as its build profile; rejects when it
  * reports another one, when its output ends first or after `timeoutMs`. Reads alongside the stream's
@@ -119,13 +206,7 @@ export function verifyBuildProfile(stdout: Readable, expected: BuildProfile, tim
         const reported = reportedBuildProfile(pending.slice(0, newline).trim());
         pending = pending.slice(newline + 1);
         if (reported === undefined) continue;
-        settle(
-          reported === expected
-            ? undefined
-            : new Error(
-                `The launched app reports build profile ${JSON.stringify(reported)}, expected ${JSON.stringify(expected)}`,
-              ),
-        );
+        settle(reported === expected ? undefined : buildProfileMismatch(reported, expected));
         return;
       }
     };
@@ -140,53 +221,6 @@ export function verifyBuildProfile(stdout: Readable, expected: BuildProfile, tim
     stdout.once("end", onEnd);
     stdout.once("close", onEnd);
   });
-}
-
-/**
- * Runs `launch`, which spawns `executable` through a library that consumes its stdout itself (the
- * Playwright Electron driver), and checks the build profile that process reports. The child is
- * picked up through Node's `child_process` diagnostics channel the moment it is spawned, before any
- * output can be lost. On a mismatch, or when no such spawn is seen, `abort` stops what was launched
- * and this throws.
- */
-export async function withBuildProfileCheck<T>(
-  executable: string,
-  expected: BuildProfile,
-  launch: () => Promise<T>,
-  abort: (launched: T) => Promise<void>,
-): Promise<T> {
-  let verified: Promise<void> | undefined;
-  const onSpawn = (message: unknown) => {
-    if (typeof message !== "object" || message === null || !("process" in message)) return;
-    const child = message.process;
-    if (!(child instanceof ChildProcess)) return;
-    // Published from the constructor: the command and stdio exist once spawn() has returned, still
-    // before any output is read (that needs a turn of the event loop).
-    process.nextTick(() => {
-      if (verified || !child.spawnargs?.some((arg) => arg.includes(executable))) return;
-      unsubscribe("child_process", onSpawn);
-      verified = child.stdout
-        ? verifyBuildProfile(child.stdout, expected)
-        : Promise.reject(new Error(`${executable} was launched without a stdout pipe`));
-      // Awaited below, once `launch` returns; until then a rejection is not unhandled.
-      verified.catch(() => {});
-    });
-  };
-  subscribe("child_process", onSpawn);
-  let launched: T;
-  try {
-    launched = await launch();
-  } finally {
-    unsubscribe("child_process", onSpawn);
-  }
-  try {
-    if (!verified) throw new Error(`Did not see ${executable} being spawned, so its build profile is unknown`);
-    await verified;
-  } catch (err) {
-    await abort(launched).catch(() => {});
-    throw err;
-  }
-  return launched;
 }
 
 /**

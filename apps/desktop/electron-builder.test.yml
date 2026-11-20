@@ -10,6 +10,7 @@ extraMetadata:
 files:
   - ".vite/test/**"
   - "!.vite/test/*.map"
+  - "!.vite/test/web-server.json"
   - package.json
 directories:
   output: out/test

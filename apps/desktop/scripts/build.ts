@@ -1,13 +1,13 @@
 // All supported desktop build paths use production inputs, including the web build that the
-// utility bundles. Development deliberately uses scripts/dev.ts and its own watch environment.
+// utility bundles. Development deliberately uses scripts/dev.ts and its own watch environment; it
+// is the only build of the dev profile.
 //
-//   node scripts/build.ts [dev | test | release] [--with-web]   desktop bundles into .vite/<profile>
-//   node scripts/build.ts --workspace                            `pnpm -r build` (desktop: test)
+//   node scripts/build.ts [test | release] [--with-web]   desktop bundles into .vite/<profile>
+//   node scripts/build.ts --workspace                     `pnpm -r build` (desktop: test)
 //
 // Without a profile it builds `test`, which is also what the recursive build's call of this
 // package's own `build` script gets. `--with-web` builds the web app (and what it depends on)
-// first: the utility bundles its server build, and packaging copies its client build. A one-shot
-// `dev` build only emits the bundles; scripts/dev.ts adds the manifest Electron starts it with.
+// first: the utility bundles its server build, and packaging copies its client build.
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 

@@ -7,15 +7,15 @@ import { describe, expect, it } from "vitest";
 import { packagedExecutable } from "./packaged-path.ts";
 
 const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const base = readFileSync(new URL("../electron-builder.base.yml", import.meta.url), "utf8");
-const leaves = {
-  test: readFileSync(new URL("../electron-builder.test.yml", import.meta.url), "utf8"),
-  release: readFileSync(new URL("../electron-builder.release.yml", import.meta.url), "utf8"),
-};
+// A Windows checkout may have CRLF line endings; the assertions below are written for LF.
+const readConfig = (name: string) =>
+  readFileSync(new URL(`../${name}`, import.meta.url), "utf8").replace(/\r?\n/g, "\n");
+const base = readConfig("electron-builder.base.yml");
+const leaves = { test: readConfig("electron-builder.test.yml"), release: readConfig("electron-builder.release.yml") };
 
 /** A top-level YAML block list's items, comments left out (the configurations are plain YAML). */
 function topLevelList(config: string, key: string): string[] | undefined {
-  const lines = config.split("\n").filter((line) => !/^\s*#/.test(line));
+  const lines = config.split(/\r?\n/).filter((line) => !/^\s*#/.test(line));
   const start = lines.indexOf(`${key}:`);
   if (start < 0) return undefined;
   const items: string[] = [];
@@ -34,6 +34,10 @@ describe("builder profiles", () => {
     }
   });
 
+  it("reads block lists with either line ending", () => {
+    expect(topLevelList("files:\r\n  - a\r\n  - b\r\nnext: 1\r\n", "files")).toEqual(["a", "b"]);
+  });
+
   it("starts the test bundles unpackaged", () => {
     expect(metadata.main).toBe(".vite/test/main.cjs");
   });
@@ -45,6 +49,8 @@ describe("builder profiles", () => {
       expect(topLevelList(leaf, "files")).toEqual([
         `".vite/${profile}/**"`,
         `"!.vite/${profile}/*.map"`,
+        // The utility build's record of the web server build is for launch checks, not the app.
+        `"!.vite/${profile}/web-server.json"`,
         "package.json",
       ]);
       expect(leaf).toMatch(

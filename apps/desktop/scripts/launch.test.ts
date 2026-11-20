@@ -1,18 +1,20 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createInterface } from "node:readline";
+import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { packagedExecutable } from "../e2e/packaged-path.ts";
+import { WEB_SERVER_RECORD, webServerDigest } from "./check-web-build.ts";
 import {
+  buildProfileMismatch,
+  checkLaunchInputs,
   checkUnpackagedBuild,
+  electronBinary,
+  launchSpec,
   reportedBuildProfile,
   verifyBuildProfile,
-  withBuildProfileCheck,
   writeDevPackageJson,
 } from "./launch.ts";
 
@@ -50,7 +52,7 @@ describe("build profile verification", () => {
     expect(stdout.listenerCount("data")).toBe(1);
     expect(stdout.readableFlowing).toBe(true);
     stdout.write("later\n");
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((done) => setImmediate(done));
     expect(Buffer.concat(seen).toString()).toBe(`${line.toString()}later\n`);
   });
 
@@ -80,44 +82,83 @@ describe("build profile verification", () => {
   });
 });
 
-/** Spawns Node printing `output`, consuming its stdout the way Playwright does, and waits for it to exit. */
-const driverLaunch = (output: string) => async () => {
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  const child = spawn(process.execPath, ["-e", `process.stdout.write(${JSON.stringify(output)})`], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  createInterface({ input: child.stdout }).on("line", () => {});
-  await once(child, "close");
-  return child;
-};
+/** Where this checkout's Electron and its helpers run from: the macOS bundle, else its directory. */
+function electronProcessDir(): string {
+  const binary = electronBinary();
+  return process.platform === "darwin" ? binary.slice(0, binary.lastIndexOf(".app/") + 4) : dirname(binary);
+}
 
-describe("launch through a driver that reads stdout itself", () => {
-  it("checks the profile of the process the driver spawned", async () => {
-    const abort = vi.fn<() => Promise<void>>(async () => {});
-    const child = await withBuildProfileCheck(
-      process.execPath,
-      "test",
-      driverLaunch(`${startupLine("test")}\n`),
-      abort,
+describe("launch spec", () => {
+  let directory: string;
+  const metadata = { name: "desktop", productName: "My Product", version: "1.2.3" };
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), "desktop launch spec "));
+    writeFileSync(join(directory, "package.json"), JSON.stringify(metadata));
+  });
+
+  afterEach(() => rmSync(directory, { recursive: true, force: true }));
+
+  it("starts the unpackaged test bundles as `electron .` in apps/desktop", () => {
+    expect(launchSpec("unpackaged", "test", { directory })).toEqual({
+      target: "unpackaged",
+      profile: "test",
+      command: electronBinary(),
+      args: ["."],
+      cwd: directory,
+      env: { NODE_ENV: "production" },
+      processDir: electronProcessDir(),
+    });
+  });
+
+  it("starts the dev bundles on their directory", () => {
+    expect(launchSpec("unpackaged", "dev", { directory })).toMatchObject({
+      command: electronBinary(),
+      args: [join(directory, ".vite", "dev")],
+      cwd: directory,
+      env: { NODE_ENV: "development" },
+    });
+  });
+
+  it("starts the packaged test app from out/test, or the executable named", () => {
+    const packaged = packagedExecutable(join(directory, "out", "test"), metadata, process.platform, process.arch);
+    expect(launchSpec("packaged", "test", { directory })).toMatchObject({
+      command: resolve(packaged),
+      args: [],
+      cwd: dirname(resolve(packaged)),
+      env: { NODE_ENV: "production" },
+    });
+    const other = join(directory, "elsewhere", "Desktop");
+    expect(launchSpec("packaged", "test", { directory, executable: other })).toMatchObject({
+      command: other,
+      processDir: dirname(other),
+    });
+  });
+
+  it.each([
+    ["unpackaged", "release"],
+    ["packaged", "release"],
+    ["packaged", "dev"],
+  ] as const)("does not launch the %s %s build", (target, profile) => {
+    expect(() => launchSpec(target, profile, { directory })).toThrow(
+      `The ${target} ${profile} build is not a launch target`,
     );
-    expect(child.exitCode).toBe(0);
-    expect(abort).not.toHaveBeenCalled();
   });
 
-  it("stops what was launched when the profile differs", async () => {
-    const abort = vi.fn<() => Promise<void>>(async () => {});
-    await expect(
-      withBuildProfileCheck(process.execPath, "test", driverLaunch(`${startupLine("dev")}\n`), abort),
-    ).rejects.toThrow('reports build profile "dev", expected "test"');
-    expect(abort).toHaveBeenCalledOnce();
+  it("requires the packaged app to exist; the dev bundles are scripts/dev.ts's to check", () => {
+    expect(() => checkLaunchInputs(launchSpec("packaged", "test", { directory }), directory)).toThrow(
+      "is missing: run `pnpm package:desktop` first",
+    );
+    expect(() => checkLaunchInputs(launchSpec("unpackaged", "dev", { directory }), directory)).not.toThrow();
   });
 
-  it("fails when it never saw the executable being spawned", async () => {
-    const abort = vi.fn<() => Promise<void>>(async () => {});
-    await expect(
-      withBuildProfileCheck("/nonexistent/Electron", "test", driverLaunch(`${startupLine("test")}\n`), abort),
-    ).rejects.toThrow("Did not see /nonexistent/Electron being spawned");
-    expect(abort).toHaveBeenCalledOnce();
+  it("names what a launched app reported", () => {
+    expect(buildProfileMismatch("dev", "test").message).toBe(
+      'The launched app reports build profile "dev", expected "test"',
+    );
+    expect(buildProfileMismatch(undefined, "test").message).toBe(
+      'The launched app reports build profile none, expected "test"',
+    );
   });
 });
 
@@ -161,11 +202,14 @@ describe("files on disk", () => {
     const bundles = join(desktopDir, ".vite", "test");
     mkdirSync(bundles, { recursive: true });
     expect(() => checkUnpackagedBuild("test", desktopDir)).toThrow(
-      `${join(".vite/test", "main.cjs")} is missing: run \`pnpm build:desktop\` first`,
+      `${join(".vite", "test", "main.cjs")} is missing: run \`pnpm build:desktop\` first`,
     );
     writeFileSync(join(bundles, "main.cjs"), "");
     writeFileSync(join(bundles, "preload.cjs"), "");
     writeFileSync(join(bundles, "utility.mjs"), `m={module:"/assets/entry.client-BECgCha7.js"}`);
+    writeFileSync(join(bundles, WEB_SERVER_RECORD), JSON.stringify({ sha256: webServerDigest("server") }));
+    mkdirSync(join(directory, "apps", "web", "build", "server"), { recursive: true });
+    writeFileSync(join(directory, "apps", "web", "build", "server", "index.js"), "server");
     const assets = join(directory, "apps", "web", "build", "client", "assets");
     mkdirSync(assets, { recursive: true });
     expect(() => checkUnpackagedBuild("test", desktopDir)).toThrow("come from different web builds");

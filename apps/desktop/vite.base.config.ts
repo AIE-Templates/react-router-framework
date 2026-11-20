@@ -23,15 +23,21 @@ export interface EntryOptions {
  * profile (scripts/build-profile.ts; DESKTOP_BUILD_PROFILE, `test` when unset): output in
  * `.vite/<profile>`, the profile compiled in as DESKTOP_BUILD_PROFILE. The dev profile is unminified
  * and leaves NODE_ENV to the runtime; test and release are minified and replace NODE_ENV so
- * dependencies such as React select their production branches. Watch mode (`DESKTOP_WATCH=1`, while
- * `scripts/dev.ts` runs) is dev-only, and only watch builds embed the development server address.
+ * dependencies such as React select their production branches. The dev profile is always a watch
+ * build (`DESKTOP_WATCH=1`, while `scripts/dev.ts` runs) and only watch builds embed the development
+ * server address.
  */
 export function entryConfig(
   { entry, fileName, format }: EntryOptions,
   profile: BuildProfile = buildProfileFrom(process.env[BUILD_PROFILE_ENV]),
 ): UserConfig {
   const watch = process.env.DESKTOP_WATCH === "1";
-  if (watch && profile !== "dev") throw new Error(`Watch builds use the dev profile, not ${profile}`);
+  // The dev profile exists only as scripts/dev.ts's watch build, against its development server.
+  if (watch !== (profile === "dev")) {
+    throw new Error(
+      watch ? `Watch builds use the dev profile, not ${profile}` : "The dev profile is built in watch mode only",
+    );
+  }
   const development = profile === "dev";
   const devServerUrl = watch ? process.env.DESKTOP_DEV_SERVER_URL : undefined;
   return {

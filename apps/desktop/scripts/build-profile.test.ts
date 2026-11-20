@@ -25,7 +25,7 @@ describe("build profiles", () => {
 describe("build arguments", () => {
   it.each([
     { args: [], expected: { profile: "test", mode: "desktop" } },
-    { args: ["dev"], expected: { profile: "dev", mode: "desktop" } },
+    { args: ["test"], expected: { profile: "test", mode: "desktop" } },
     { args: ["--with-web"], expected: { profile: "test", mode: "with-web" } },
     { args: ["release", "--with-web"], expected: { profile: "release", mode: "with-web" } },
     { args: ["--with-web", "release"], expected: { profile: "release", mode: "with-web" } },
@@ -36,7 +36,10 @@ describe("build arguments", () => {
 
   it.each([
     { args: ["staging"] },
-    { args: ["dev", "test"] },
+    // Only scripts/dev.ts builds the dev profile.
+    { args: ["dev"] },
+    { args: ["dev", "--with-web"] },
+    { args: ["test", "release"] },
     { args: ["--with-web", "--workspace"] },
     { args: ["--workspace", "--workspace"] },
     { args: ["test", "--workspace"] },

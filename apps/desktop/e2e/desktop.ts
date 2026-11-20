@@ -1,41 +1,35 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, rmSync } from "node:fs";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
 import {
   appProcesses,
-  checkUnpackagedBuild,
+  buildProfileMismatch,
+  checkLaunchInputs,
   desktopDir,
   electronBinary,
-  withBuildProfileCheck,
+  type LaunchTarget,
+  launchSpec,
+  packagedBinary,
 } from "../scripts/launch.ts";
-import { packagedExecutable } from "./packaged-path.ts";
 
 /**
- * What the Playwright Electron driver launches, both the test build profile (checked at every launch
- * from the app's startup log line, scripts/launch.ts):
+ * What the Playwright Electron driver launches, both the test build profile, started the way
+ * scripts/launch.ts says and checked at every launch:
  * - `unpackaged`: `electron .` in apps/desktop (package.json `main`: `.vite/test/main.cjs`), on the
  *   output of `pnpm build:desktop`;
  * - `packaged`: the test profile from `pnpm --filter desktop package` in `out/test` (no fuses flipped).
  *   The release profile turns `EnableNodeCliInspectArguments` off, so the driver cannot attach to it.
  */
-export type Target = "unpackaged" | "packaged";
+export type Target = LaunchTarget;
 
-export { desktopDir, electronBinary };
-
-/** The test-profile executable electron-builder's `--dir` writes for this machine, only ever in `out/test`. */
-export function packagedBinary(): string {
-  const metadata = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
-  return packagedExecutable(join(desktopDir, "out", "test"), metadata, process.platform, process.arch);
-}
+export { desktopDir, electronBinary, packagedBinary };
 
 /** Includes macOS helpers under Contents/Frameworks beside the main executable. */
 export function targetProcesses(target: Target): number[] {
-  const binary = target === "unpackaged" ? electronBinary() : packagedBinary();
-  const directory = process.platform === "darwin" ? resolve(binary, "../../..") : dirname(binary);
-  return appProcesses(binary, directory);
+  const { command, processDir } = launchSpec(target, "test");
+  return appProcesses(command, processDir);
 }
 
 export interface Launched {
@@ -51,34 +45,32 @@ export interface Launched {
  * window to finish hydrating. Unpackaged, the test bundles must exist and match the web build.
  */
 export async function launch(target: Target, userDataSuffix: string): Promise<Launched> {
-  if (target === "unpackaged") checkUnpackagedBuild("test");
-  else if (!existsSync(packagedBinary())) {
-    throw new Error(`${packagedBinary()} is missing: run \`pnpm package:desktop\` first`);
-  }
+  const spec = launchSpec(target, "test");
+  checkLaunchInputs(spec);
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     // Nothing from a developer's shell that changes what the app does.
     if (value === undefined || /^(DESKTOP_|WEB_SHELL|ELECTRON_RUN_AS_NODE$|NODE_OPTIONS$)/.test(name)) continue;
     env[name] = value;
   }
-  Object.assign(env, { DESKTOP_E2E: "1", DESKTOP_USER_DATA_SUFFIX: userDataSuffix, NODE_ENV: "production" });
-  // Exercise the real permission policy without accessing the user's camera or microphone.
-  const mediaArgs = ["--use-fake-device-for-media-stream"];
-  const executablePath = target === "unpackaged" ? electronBinary() : packagedBinary();
-  const app = await withBuildProfileCheck(
-    executablePath,
-    "test",
-    () =>
-      electron.launch(
-        target === "unpackaged"
-          ? { executablePath, args: [".", ...mediaArgs], cwd: desktopDir, env }
-          : { executablePath, args: mediaArgs, env },
-      ),
-    (launched) => launched.close(),
-  );
+  Object.assign(env, spec.env, { DESKTOP_E2E: "1", DESKTOP_USER_DATA_SUFFIX: userDataSuffix });
+  const app = await electron.launch({
+    executablePath: spec.command,
+    // Exercise the real permission policy without accessing the user's camera or microphone.
+    args: [...spec.args, "--use-fake-device-for-media-stream"],
+    cwd: spec.cwd,
+    env,
+  });
   // On Windows Playwright may launch Electron through a separate launcher process.
   const pid = await app.evaluate(() => process.pid);
   const page = await app.firstWindow();
+  // Playwright reads the app's stdout itself, so the startup line is out of reach: the main process
+  // of every non-release build exposes its profile instead (src/main.ts).
+  const reported = await app.evaluate(() => globalThis.desktopBuildProfile);
+  if (reported !== spec.profile) {
+    await app.close().catch(() => {});
+    throw buildProfileMismatch(reported, spec.profile);
+  }
   await waitForApp(page);
   return { app, page, pid };
 }

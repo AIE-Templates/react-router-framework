@@ -30,9 +30,12 @@ import { portAckCoalesce } from "./port-options.ts";
 const log = createLogger(process.env.LOG_LEVEL === "debug" ? "debug" : "info");
 process.on("uncaughtException", (err) => log.error({ err }, "uncaught exception in the main process"));
 process.on("unhandledRejection", (reason) => log.error({ err: reason }, "unhandled rejection in the main process"));
-// Logged before anything else can fail: launchers read it to know they started the bundles they
-// meant to (scripts/launch.ts).
+// Logged before anything else can fail, at info, which LOG_LEVEL cannot suppress (the logger's
+// threshold is debug or info): launchers that spawn the app depend on this line to know they started
+// the bundles they meant to (scripts/launch.ts). Playwright reads the app's stdout itself, so the
+// same fact is also left where its driver can evaluate it, except in release builds.
 log.info({ buildProfile: DESKTOP_BUILD_PROFILE }, "build profile");
+if (DESKTOP_BUILD_PROFILE !== "release") globalThis.desktopBuildProfile = DESKTOP_BUILD_PROFILE;
 
 const profile = createBootProfile();
 const devServerUrl = DESKTOP_DEV_SERVER_URL;

@@ -14,7 +14,6 @@ const options = { entry: "src/main.ts", fileName: "main.cjs", format: "cjs" } as
 
 it.each([
   { profile: "dev", watch: true, mode: "development", devServerUrl: "http://localhost:5174" },
-  { profile: "dev", watch: false, mode: "development", devServerUrl: null },
   { profile: "test", watch: false, mode: "production", devServerUrl: null },
   { profile: "release", watch: false, mode: "production", devServerUrl: null },
 ])(
@@ -71,15 +70,17 @@ it("builds the test profile when none is named", () => {
 });
 
 it("takes an explicit profile over the environment", () => {
-  vi.stubEnv("DESKTOP_BUILD_PROFILE", "dev");
+  vi.stubEnv("DESKTOP_BUILD_PROFILE", "test");
   vi.stubEnv("DESKTOP_WATCH", undefined);
   expect(entryConfig(options, "release").build?.outDir).toBe(".vite/release");
 });
 
-it("rejects an unknown profile and watch mode outside the dev profile", () => {
+it("rejects an unknown profile, watch mode outside the dev profile and the dev profile outside watch mode", () => {
   vi.stubEnv("DESKTOP_WATCH", undefined);
   vi.stubEnv("DESKTOP_BUILD_PROFILE", "build");
   expect(() => entryConfig(options)).toThrow('Unknown desktop build profile "build"');
+  vi.stubEnv("DESKTOP_BUILD_PROFILE", "dev");
+  expect(() => entryConfig(options)).toThrow("The dev profile is built in watch mode only");
   vi.stubEnv("DESKTOP_BUILD_PROFILE", "test");
   vi.stubEnv("DESKTOP_WATCH", "1");
   expect(() => entryConfig(options)).toThrow("Watch builds use the dev profile, not test");
