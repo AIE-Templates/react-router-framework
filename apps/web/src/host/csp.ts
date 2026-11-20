@@ -65,7 +65,7 @@ export function inlineScriptHashes(html: string): string[] {
       if (child.tagName === "script") {
         if (child.attrs.some((attribute) => attribute.name === "src")) continue;
         const body = child.childNodes
-          .filter((node) => defaultTreeAdapter.isTextNode(node))
+          .filter((childNode) => defaultTreeAdapter.isTextNode(childNode))
           .map((text) => text.value)
           .join("");
         hashes.push(`'sha256-${createHash("sha256").update(body).digest("base64")}'`);

@@ -52,6 +52,7 @@ it("seeds once through StrictMode, mirrors external deletion and never restores 
 it("recovers a SPA session from its cookie when no request seed or stored preference exists", () => {
   const preferences = { colorScheme: "dark", direction: "rtl", reducedMotion: "reduce" } as const;
   document.cookie = `${visualCookie.name}=${encodeURIComponent(JSON.stringify({ version: 1, preferences }))}; Path=/`;
+  const writes = vi.spyOn(Document.prototype, "cookie", "set");
   render(
     <StrictMode>
       <AppRoot>
@@ -60,6 +61,7 @@ it("recovers a SPA session from its cookie when no request seed or stored prefer
     </StrictMode>,
   );
   expect(manager.getSnapshot().preferences).toEqual(preferences);
+  expect(writes).toHaveBeenCalledOnce();
   expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.visualPreferences)!)).toMatchObject({ preferences });
   expect(readVisualCookie(document.cookie)).toMatchObject({ preferences });
   act(() => manager.actions.resetVisualPreferences());
