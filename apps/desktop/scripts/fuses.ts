@@ -126,6 +126,9 @@ export function packagedProfileOf(entry: unknown): PackagedProfile {
 export default async function afterPack(context: AfterPackContext): Promise<void> {
   const { appOutDir, electronPlatformName, packager } = context;
   const { Arch } = await import("electron-builder");
+  // electron-builder calls afterPack for each temporary slice and again for the merged app.
+  // Signing a single slice adds CodeResources files that prevent the slices from merging.
+  const temporarySlice = appOutDir.endsWith(`-universal-${Arch[context.arch]}-temp`);
   const profile = packagedProfileOf(packager.config.extraMetadata?.main);
   const name = packager.appInfo.productFilename;
   const binary =
@@ -140,7 +143,10 @@ export default async function afterPack(context: AfterPackContext): Promise<void
     version: FuseVersion.V1,
     // Flipping fuses invalidates the ad-hoc signature macOS arm64 binaries carry; redo it so the
     // app still launches before real signing happens.
-    resetAdHocDarwinSignature: electronPlatformName === "darwin" && context.arch === Arch.arm64,
+    resetAdHocDarwinSignature:
+      electronPlatformName === "darwin" &&
+      !temporarySlice &&
+      (context.arch === Arch.arm64 || context.arch === Arch.universal),
     [FuseV1Options.RunAsNode]: fuses.RunAsNode,
     [FuseV1Options.EnableCookieEncryption]: fuses.EnableCookieEncryption,
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: fuses.EnableNodeOptionsEnvironmentVariable,
