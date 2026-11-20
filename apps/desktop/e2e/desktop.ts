@@ -155,12 +155,10 @@ export async function closeApplication(
     return windowsProcess(separateMain, "check", timeout);
   };
   let forcedGroup: number | undefined;
+  const groupRunning = () =>
+    forcedGroup !== undefined && listProcesses().some((item) => !item.zombie && item.pgid === forcedGroup);
   const waitForExit = async (deadline: number) => {
-    while (
-      launcherRunning() ||
-      mainRunning(Math.max(1, deadline - Date.now())) ||
-      (forcedGroup !== undefined && listProcesses().some((item) => !item.zombie && item.pgid === forcedGroup))
-    ) {
+    while (launcherRunning() || mainRunning(Math.max(1, deadline - Date.now())) || groupRunning()) {
       if (Date.now() >= deadline) throw new Error("the owned process did not exit before the deadline");
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
