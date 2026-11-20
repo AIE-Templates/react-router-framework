@@ -41,6 +41,7 @@ import { packagedExecutable } from "../e2e/packaged-path.ts";
 import { type BuildProfile, bundleDir } from "./build-profile.ts";
 import { buildCommand, checkWebBuild } from "./check-web-build.ts";
 import { checkPackagedFuses, describeFuses, type PackagedProfile } from "./fuses.ts";
+import { powershellOutput } from "./powershell.ts";
 
 export const desktopDir = resolve(import.meta.dirname, "..");
 
@@ -61,14 +62,9 @@ export function electronBinary(): string {
 export function appProcesses(executable: string, directory: string): number[] {
   let output: string;
   if (process.platform === "win32") {
-    output = execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        `Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $env:E2E_PROCESS_EXE, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }`,
-      ],
-      { encoding: "utf8", env: { ...process.env, E2E_PROCESS_EXE: executable } },
+    output = powershellOutput(
+      "Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $env:E2E_PROCESS_EXE, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }",
+      { E2E_PROCESS_EXE: executable },
     );
   } else {
     try {

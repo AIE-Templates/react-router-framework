@@ -1,12 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { build } from "vite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { CLIENT_DIGEST_FILE, clientDigest } from "../../../build-tools/web-client-integrity.ts";
 import {
+  checkClientDigest,
   checkWebBuild,
   recordWebServerBuild,
   referencedClientAssets,
@@ -39,6 +41,9 @@ describe("web server build record", () => {
 
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), "desktop web server record "));
+    mkdirSync(join(directory, "client"));
+    writeFileSync(join(directory, "client", "entry.js"), "original");
+    writeFileSync(join(directory, CLIENT_DIGEST_FILE), clientDigest(join(directory, "client")));
     mkdirSync(join(directory, "server"));
     writeFileSync(join(directory, "server", "index.js"), `export const answer = 42; // é\n`);
   });
@@ -60,6 +65,16 @@ describe("web server build record", () => {
 
   it("records the digest of the server entry the bundle contains", async () => {
     await bundle(`import { answer } from "./server/index.js"; console.log(answer);`);
+    const utility = readFileSync(join(directory, "dist", "utility.mjs"), "utf8");
+    const client = join(directory, "client");
+    expect(() => checkClientDigest(utility, client)).not.toThrow();
+    writeFileSync(join(client, "entry.js"), "");
+    expect(() => checkClientDigest(utility, client)).toThrow("web client digest");
+    // Rebuilding the utility alone cannot bless files corrupted since the Web build completed.
+    await bundle(`import { answer } from "./server/index.js"; console.log(answer);`);
+    expect(() => checkClientDigest(readFileSync(join(directory, "dist", "utility.mjs"), "utf8"), client)).toThrow(
+      "web client digest",
+    );
     expect(JSON.parse(readFileSync(join(directory, "dist", WEB_SERVER_RECORD), "utf8"))).toEqual({
       entry: "apps/web/build/server/index.js",
       sha256: webServerDigest(readFileSync(join(directory, "server", "index.js"), "utf8")),
@@ -94,7 +109,10 @@ describe("web build check", () => {
   const writeBuild = (utility: string, { profile = "test", serverSource = "export const v = 1;\n" } = {}) => {
     const bundles = join(desktopDir, ".vite", profile);
     mkdirSync(bundles, { recursive: true });
-    writeFileSync(join(bundles, "utility.mjs"), utility);
+    writeFileSync(
+      join(bundles, "utility.mjs"),
+      utility + "\n/*! web-client-sha256: " + clientDigest(resolve(assets, "..")) + " */\n",
+    );
     writeFileSync(join(bundles, WEB_SERVER_RECORD), JSON.stringify({ sha256: webServerDigest(serverSource) }));
     writeFileSync(server, serverSource);
   };
@@ -104,26 +122,29 @@ describe("web build check", () => {
   const utility = `m={module:"/assets/entry.client-BECgCha7.js",css:["/assets/root-CheMk1rO.css"]}`;
 
   it("passes when every referenced asset is in the client build, extra client files included", () => {
-    writeBuild(utility);
     writeAssets("entry.client-BECgCha7.js", "root-CheMk1rO.css", "font-AbCdEfGh.woff2");
+    writeBuild(utility);
     expect(() => checkWebBuild(desktopDir, "test")).not.toThrow();
   });
 
   it("fails, naming the missing files and the rebuild, when the client builds differ", () => {
+    writeAssets("entry.client-BECgCha7.js", "root-CheMk1rO.css");
     writeBuild(utility);
+    rmSync(join(assets, "entry.client-BECgCha7.js"));
     // The client from a later web build: same names, new hashes.
     writeAssets("entry.client-Zz9Yy8Xx.js", "root-CheMk1rO.css");
     expect(() => checkWebBuild(desktopDir, "test")).toThrow(
       /come from different web builds; missing from the client build: entry\.client-BECgCha7\.js\. Run `pnpm build:desktop` first\./,
     );
     // Recovers once the matching client build is back.
+    rmSync(join(assets, "entry.client-Zz9Yy8Xx.js"));
     writeAssets("entry.client-BECgCha7.js");
     expect(() => checkWebBuild(desktopDir, "test")).not.toThrow();
   });
 
   it("fails when only the server build changed, the client hashes being the same", () => {
-    writeBuild(utility, { serverSource: "export const v = 1;\n" });
     writeAssets("entry.client-BECgCha7.js", "root-CheMk1rO.css");
+    writeBuild(utility, { serverSource: "export const v = 1;\n" });
     writeFileSync(server, "export const v = 2;\n");
     expect(() => checkWebBuild(desktopDir, "test")).toThrow(
       /utility\.mjs embeds a different web server build than .*index\.js\. Run `pnpm build:desktop` first\./,
@@ -132,9 +153,23 @@ describe("web build check", () => {
     expect(() => checkWebBuild(desktopDir, "test")).not.toThrow();
   });
 
+  it("rejects changed content at the same path both before packaging and in copied resources", () => {
+    writeAssets("entry.client-BECgCha7.js", "root-CheMk1rO.css");
+    writeFileSync(join(assets, "entry.client-BECgCha7.js"), "hydrate();");
+    writeBuild(utility);
+    const resources = join(root, "resources", "client");
+    cpSync(resolve(assets, ".."), resources, { recursive: true });
+    const code = readFileSync(join(desktopDir, ".vite/test/utility.mjs"), "utf8");
+    expect(() => checkClientDigest(code, resources)).not.toThrow();
+    writeFileSync(join(assets, "entry.client-BECgCha7.js"), "");
+    writeFileSync(join(resources, "assets", "entry.client-BECgCha7.js"), "");
+    expect(() => checkWebBuild(desktopDir, "test")).toThrow("web client digest");
+    expect(() => checkClientDigest(code, resources)).toThrow("web client digest");
+  });
+
   it("checks the named profile's bundles", () => {
-    writeBuild(`m={module:"/assets/entry.client-BECgCha7.js"}`, { profile: "release" });
     writeAssets("entry.client-BECgCha7.js");
+    writeBuild(`m={module:"/assets/entry.client-BECgCha7.js"}`, { profile: "release" });
     expect(() => checkWebBuild(desktopDir, "release")).not.toThrow();
     expect(() => checkWebBuild(desktopDir, "test")).toThrow(/utility\.mjs is missing: run `pnpm build:desktop` first/);
   });
@@ -145,8 +180,8 @@ describe("web build check", () => {
     );
     writeBuild("export {};");
     expect(() => checkWebBuild(desktopDir, "test")).toThrow("references no hashed web client assets");
-    writeBuild(utility);
     writeAssets("entry.client-BECgCha7.js", "root-CheMk1rO.css");
+    writeBuild(utility);
     rmSync(join(desktopDir, ".vite", "test", WEB_SERVER_RECORD));
     expect(() => checkWebBuild(desktopDir, "test")).toThrow(/web-server\.json is missing: run `pnpm build:desktop`/);
     rmSync(assets, { recursive: true });

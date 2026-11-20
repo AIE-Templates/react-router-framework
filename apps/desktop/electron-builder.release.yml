@@ -10,11 +10,11 @@ extends: ./electron-builder.base.yml
 extraMetadata:
   main: .vite/release/main.cjs
 files:
-  - ".vite/release/**"
-  - "!.vite/release/*.map"
-  - "!.vite/release/web-server.json"
-  - "!.vite/release/*.modules.json"
+  - ".vite/release/main.cjs"
+  - ".vite/release/preload.cjs"
+  - ".vite/release/utility.mjs"
   - package.json
 directories:
   output: out/release
 afterPack: ./scripts/fuses.ts
+artifactBuildCompleted: ./scripts/installer-receipt.ts

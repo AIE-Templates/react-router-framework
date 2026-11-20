@@ -3,8 +3,10 @@ import { targetProcesses, type Target } from "./desktop.ts";
 
 const targets: Target[] = ["unpackaged", "packaged"];
 
+const running = () => targets.flatMap((target) => targetProcesses(target));
+
 /** Refuses to start while an Electron of this checkout runs: the teardown could not tell them apart. */
-export default function globalSetup(): () => void {
+export default function globalSetup(): () => Promise<void> {
   // A locked macOS session makes window-state tests fail in ways that look like app defects (no
   // `show` event, full screen never entered): stop before any test instead.
   const lock = screenLock();
@@ -15,25 +17,24 @@ export default function globalSetup(): () => void {
     );
   }
   for (const target of targets) {
-    const running = targetProcesses(target);
-    if (running.length > 0) {
-      throw new Error(`the ${target} app is already running (pids ${running.join(", ")}); quit it first`);
+    const instances = targetProcesses(target);
+    if (instances.length > 0) {
+      throw new Error(`the ${target} app is already running (pids ${instances.join(", ")}); quit it first`);
     }
   }
   // Teardown: every launched app must be gone, its helpers (renderer, GPU, utility) included.
-  return () => {
-    const left = targets.flatMap((target) => targetProcesses(target));
+  return async () => {
+    let left = running();
+    const until = Date.now() + 5000;
+    while (left.length && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      left = running();
+    }
     if (left.length === 0) {
       process.stdout.write("e2e: no Electron process left running\n");
       return;
     }
-    for (const pid of left) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Gone in the meantime.
-      }
-    }
-    throw new Error(`Electron processes outlived the e2e run and were killed: ${left.join(", ")}`);
+    // A path match may be an independently started instance. Each fixture cleans up the launch it owns.
+    throw new Error(`Electron processes still running after the e2e run: ${left.join(", ")}`);
   };
 }

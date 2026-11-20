@@ -11,7 +11,7 @@ import { MessageChannelMain, utilityProcess } from "electron";
 
 import { PORT_ACK_COALESCE } from "~/port-options";
 
-import type { Logger } from "./log.ts";
+import { type Logger, writeStderr, writeStdout } from "./log.ts";
 import { REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
 
 export interface UtilityLifecycle {
@@ -116,8 +116,8 @@ function electronDeps(options: ServerProcessOptions): ServerProcessDeps {
         env: env(),
       });
       // The utility logs JSON lines of its own; pass them through untouched.
-      child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
-      child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
+      child.stdout?.on("data", writeStdout);
+      child.stderr?.on("data", writeStderr);
       return child;
     },
     channel: () => new MessageChannelMain(),

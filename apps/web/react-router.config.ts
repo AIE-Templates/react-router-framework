@@ -1,8 +1,11 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Config } from "@react-router/dev/config";
 import { config as loadDotenv } from "dotenv";
 import { expand } from "dotenv-expand";
+
+import { CLIENT_DIGEST_FILE, clientDigest } from "../../build-tools/web-client-integrity.ts";
 
 // Load .env, if any, for `react-router dev` and `react-router build`: this file is the first thing they
 // load, so this config and server code (through Vite) see the same variables as server.ts does in
@@ -11,6 +14,9 @@ import { expand } from "dotenv-expand";
 expand(loadDotenv({ path: join(import.meta.dirname, ".env"), quiet: true }));
 
 export default {
+  buildEnd({ reactRouterConfig: { buildDirectory } }) {
+    writeFileSync(join(buildDirectory, CLIENT_DIGEST_FILE), clientDigest(join(buildDirectory, "client")) + "\n");
+  },
   appDirectory: "src/app",
   // Server-side render by default. SSR=false builds a SPA instead: a static shell that React Router
   // fills in the browser, without server rendering or server loaders (except the root route's, which

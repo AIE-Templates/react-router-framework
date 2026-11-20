@@ -66,6 +66,7 @@ it.each([
         bundle: fileName,
         sha256: createHash("sha256").update(readFileSync(output)).digest("hex"),
         modules: [moduleName(realpathSync(entry), import.meta.dirname)],
+        renderedModules: [moduleName(realpathSync(entry), import.meta.dirname)],
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });

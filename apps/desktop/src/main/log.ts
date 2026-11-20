@@ -18,7 +18,7 @@ const levels: LogLevel[] = ["debug", "info", "warn", "error"];
 
 /** What the logger writes to a stream through: `write` and the `error` event. */
 export interface LineStream {
-  write(line: string): unknown;
+  write(line: string | Uint8Array): unknown;
   on(event: "error", listener: (err: Error) => void): unknown;
 }
 
@@ -30,7 +30,7 @@ export interface LineStream {
  * never finish quitting (as after Ctrl+C on `pnpm dev:desktop`, which stops reading before the app's
  * helpers, killed with it, have been logged as gone).
  */
-export function streamSink(stream: LineStream): (line: string) => void {
+export function streamSink(stream: LineStream): (line: string | Uint8Array) => void {
   let failed = false;
   stream.on("error", () => {
     failed = true;
@@ -45,14 +45,19 @@ export function streamSink(stream: LineStream): (line: string) => void {
   };
 }
 
-/** The process's stdout sink, shared by every logger that writes there. */
-let stdoutSink: ((line: string) => void) | undefined;
+// Install one error listener per process stream, shared across loggers and utility restarts.
+let stdoutSink: ReturnType<typeof streamSink> | undefined;
+let stderrSink: ReturnType<typeof streamSink> | undefined;
+export function writeStdout(chunk: string | Uint8Array): void {
+  (stdoutSink ??= streamSink(process.stdout))(chunk);
+}
+
+export function writeStderr(chunk: string | Uint8Array): void {
+  (stderrSink ??= streamSink(process.stderr))(chunk);
+}
 
 /** `output` receives each line, newline included; by default it goes to stdout (`streamSink`). */
-export function createLogger(
-  minimum: LogLevel = "info",
-  output: (line: string) => void = (line) => (stdoutSink ??= streamSink(process.stdout))(line),
-): Logger {
+export function createLogger(minimum: LogLevel = "info", output: (line: string) => void = writeStdout): Logger {
   const threshold = levels.indexOf(minimum);
   const write = (level: LogLevel, data: Record<string, unknown>, msg: string) => {
     if (levels.indexOf(level) < threshold) return;

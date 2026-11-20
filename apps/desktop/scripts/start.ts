@@ -30,7 +30,8 @@
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 
-import { checkLaunchInputs, freshUserDataDir, launchSpec, removeUserDataDir, verifyBuildProfile } from "./launch.ts";
+import { monitorTestChild } from "./child-run.ts";
+import { checkLaunchInputs, freshUserDataDir, launchSpec, removeUserDataDir } from "./launch.ts";
 
 function fail(err: unknown): never {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
@@ -66,6 +67,7 @@ try {
 process.stderr.write(`start: user data in ${userDataDir}${removeUserData ? " (removed on exit)" : ""}\n`);
 
 const isWindows = process.platform === "win32";
+const spawnedAt = Date.now();
 const child = spawn(spec.command, [...spec.args, ...args], {
   cwd: spec.cwd,
   env: { ...process.env, ...spec.env },
@@ -73,11 +75,10 @@ const child = spawn(spec.command, [...spec.args, ...args], {
   // POSIX: its own session and process group, so signals to this launcher's group miss it.
   detached: !isWindows,
 });
-let wrongBuild = false;
-verifyBuildProfile(child.stdout, spec.profile).catch((err: unknown) => {
-  wrongBuild = true;
-  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  child.kill("SIGKILL");
+const monitor = monitorTestChild(child, spec, spawnedAt, {
+  // Only launcher-created directories are unique ownership markers.
+  userDataDir: removeUserData ? userDataDir : undefined,
+  requireSmokeResult: process.env.DESKTOP_SMOKE === "1",
 });
 child.stdout.pipe(process.stdout);
 
@@ -90,7 +91,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     if (closed) return;
     received++;
     if (isWindows) {
-      if (running()) child.kill();
+      monitor.abort(new Error(`The test launch was interrupted by ${signal}`));
       return;
     }
     const pid = child.pid!;
@@ -98,7 +99,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
       // The main process has exited, but a process of its group still holds the output open.
       if (received >= 2) {
         note(`${signal} again: the app has exited but its process group ${pid} lingers: killing it with SIGKILL`);
-        killGroup(pid, "SIGKILL");
+        monitor.abort(new Error("The test launch was force-stopped"));
       } else {
         note(`${signal}: the app has exited; waiting for its helpers, a second signal kills them`);
       }
@@ -106,7 +107,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     }
     if (received >= 3) {
       note(`${signal} again: killing the app's process group ${pid} with SIGKILL`);
-      killGroup(pid, "SIGKILL");
+      monitor.abort(new Error("The test launch was force-stopped"));
       return;
     }
     if (received === 2)
@@ -117,12 +118,6 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   });
 }
 
-function killGroup(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal);
-  } catch {}
-}
-
 // Never leave quietly while the app still runs (this launcher failing): say so, and ask the app to
 // quit. Only a launcher killed outright (SIGKILL, or a signal it does not handle) cannot.
 process.once("exit", () => {
@@ -131,22 +126,17 @@ process.once("exit", () => {
   // Its main process only, as for any signal: it takes its helpers with it.
   child.kill("SIGTERM");
 });
-child.once("error", (err) => {
-  process.stderr.write(`${err.message}\n`);
+try {
+  const code = await monitor.finished;
+  if (child.signalCode) note(`the app was ended by ${child.signalCode}`);
+  process.exitCode = code ?? 1;
+  if (code === 0 && readdirSync(userDataDir).length === 0)
+    throw new Error(`The app left nothing in its user data directory ${userDataDir}`);
+} catch (err) {
+  note(err instanceof Error ? err.message : String(err));
   process.exitCode = 1;
-});
-child.once("close", (code, signal) => {
+  await monitor.reap().catch((cleanupError: unknown) => note(String(cleanupError)));
+} finally {
   closed = true;
-  if (signal) note(`the app was ended by ${signal}`);
-  process.exitCode = wrongBuild ? 1 : (code ?? (signal ? 1 : 0));
-  // An app that ran and left nothing there did not run on it, and wrote somewhere else.
-  let entries: string[] = [];
-  try {
-    entries = readdirSync(userDataDir);
-  } catch {}
-  if (!wrongBuild && code === 0 && entries.length === 0) {
-    process.stderr.write(`The app left nothing in its user data directory ${userDataDir}\n`);
-    process.exitCode = 1;
-  }
   if (removeUserData) removeUserDataDir(userDataDir);
-});
+}

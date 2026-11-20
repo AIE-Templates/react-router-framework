@@ -70,7 +70,7 @@ export const PROFILE_ENTRIES: readonly ProfileEntry[] = [
     module: "src/debug-env.ts",
     empty: "src/debug-env.empty.ts",
     profiles: ["dev", "test"],
-    owns: [],
+    owns: ["src/debug-env.names.ts"],
     bundles: ["main.cjs", "utility.mjs"],
   },
   {

@@ -87,4 +87,22 @@ describe("asar reader", () => {
       "past the end",
     );
   });
+  it.each([
+    { size: -1, offset: "0" },
+    { size: null, offset: "0" },
+    { size: "1", offset: "0" },
+    { size: 1 },
+    { size: 1, offset: "-1" },
+    { size: 0, offset: "" },
+    { size: 0, offset: false },
+    { size: 1, offset: null },
+    { size: 1, offset: "9007199254740992" },
+  ])("rejects a malformed packed file record %j", (file) => {
+    expect(() => readAsar(makeAsar({}, { bad: file }))).toThrow("no valid size or offset");
+  });
+
+  it("accepts an empty packed file at the end of the data section", () => {
+    const archive = makeAsar({ nonempty: "data", empty: "" });
+    expect(asarFile(archive, readAsar(archive), "empty").length).toBe(0);
+  });
 });

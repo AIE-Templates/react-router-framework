@@ -14,17 +14,17 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { stripVTControlCharacters } from "node:util";
 
+import { CLIENT_DIGEST_FILE } from "../../../build-tools/web-client-integrity.ts";
 import { BUILD_PROFILE_ENV, bundleDir } from "./build-profile.ts";
 import { launchSpec, verifyBuildProfile, writeDevPackageJson } from "./launch.ts";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 const repoDir = resolve(desktopDir, "../..");
-const DEV_PORT = Number(process.env.DESKTOP_DEV_PORT ?? 5174);
+const DEV_PORT = Number(process.env.DESKTOP_DEV_PORT?.trim() || 5174);
 const devServerUrl = `http://127.0.0.1:${DEV_PORT}`;
 const buildDir = join(desktopDir, bundleDir("dev"));
 
 const children = new Set<ChildProcess>();
-let electron: ChildProcess | undefined;
 let shuttingDown = false;
 
 const log = (msg: string) => process.stdout.write(`[dev] ${msg}\n`);
@@ -53,14 +53,14 @@ function run(
   return child;
 }
 
-function kill(child: ChildProcess): void {
-  if (child.exitCode !== null || child.pid === undefined) return;
+function kill(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
+  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
   try {
     if (process.platform === "win32")
       execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-    else process.kill(-child.pid, "SIGTERM");
+    else process.kill(-child.pid, signal);
   } catch {
-    child.kill("SIGTERM");
+    child.kill(signal);
   }
 }
 
@@ -71,8 +71,6 @@ function shutdown(code: number): void {
   for (const child of children) kill(child);
   setTimeout(() => process.exit(code), 500).unref();
 }
-process.on("SIGINT", () => shutdown(0));
-process.on("SIGTERM", () => shutdown(0));
 
 /** Resolves once `child` prints a line containing `marker`; output is passed through meanwhile. */
 function waitForOutput(child: ChildProcess, marker: string, label: string): Promise<void> {
@@ -115,17 +113,48 @@ function startElectron(): ChildProcess {
   });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
   verifyBuildProfile(child.stdout!, spec.profile).catch((err: unknown) => {
-    if (shuttingDown || electron !== child) return;
+    if (shuttingDown || electron.current !== child) return;
     log(err instanceof Error ? err.message : String(err));
     shutdown(1);
   });
   child.once("exit", (code, signal) => {
-    if (shuttingDown || electron !== child) return;
+    if (shuttingDown || electron.current !== child) return;
     log(`electron exited with ${signal ?? code}`);
     shutdown(code ?? 1);
   });
   return child;
 }
+
+/** Rebuilds during shutdown are included in the next launch, which reads the latest bundles. */
+export function devElectron(start: () => ChildProcess, stop: typeof kill, closing: () => boolean) {
+  let current: ChildProcess | undefined;
+  let restarting = false;
+  return {
+    get current() {
+      return current;
+    },
+    restart() {
+      if (closing() || restarting) return;
+      const old = current;
+      if (!old || old.exitCode !== null || old.signalCode !== null) {
+        current = start();
+        return;
+      }
+      restarting = true;
+      current = undefined;
+      const timer = setTimeout(() => stop(old, "SIGKILL"), 3000);
+      timer.unref();
+      old.once("exit", () => {
+        clearTimeout(timer);
+        restarting = false;
+        if (!closing()) current = start();
+      });
+      stop(old);
+    },
+  };
+}
+
+const electron = devElectron(startElectron, kill, () => shuttingDown);
 
 async function main(): Promise<void> {
   const shellEnv = {
@@ -173,8 +202,10 @@ async function main(): Promise<void> {
   // Development never forks the utility (pages come from the dev server), and its bundle needs
   // the web production build, which a clean checkout does not have: build it only when it can be.
   const webServerBuild = join(repoDir, "apps/web/build/server/index.js");
-  const entries = existsSync(webServerBuild) ? ["main", "preload", "utility"] : ["main", "preload"];
-  if (entries.length === 2) log("no apps/web/build yet: skipping the utility build (not used in development)");
+  const clientRecord = join(repoDir, "apps/web/build", CLIENT_DIGEST_FILE);
+  const entries =
+    existsSync(webServerBuild) && existsSync(clientRecord) ? ["main", "preload", "utility"] : ["main", "preload"];
+  if (entries.length === 2) log("no complete Web build yet: skipping the utility build (not used in development)");
   log(`building ${entries.join(", ")} in watch mode`);
   const buildEnv = { [BUILD_PROFILE_ENV]: "dev", DESKTOP_DEV_SERVER_URL: devServerUrl };
   await Promise.all(
@@ -192,7 +223,7 @@ async function main(): Promise<void> {
 
   writeDevPackageJson(desktopDir);
   log("starting electron");
-  electron = startElectron();
+  electron.restart();
 
   // Vite's watch mode can rewrite an output without changing it (e.g. right after the initial
   // build); only a changed content hash counts as a rebuild, otherwise Electron would restart for
@@ -225,28 +256,20 @@ async function main(): Promise<void> {
       pendingFiles.clear();
       if (files.some((f) => f === "main.cjs" || f === "utility.mjs")) {
         log(`${files.join(", ")} rebuilt, restarting electron`);
-        const old = electron;
-        electron = undefined;
-        if (old && old.exitCode === null) {
-          // The new instance must start after the old one is gone: it would otherwise lose the
-          // single-instance lock and quit at once.
-          old.once("exit", () => {
-            if (!shuttingDown) electron = startElectron();
-          });
-          kill(old);
-          setTimeout(() => old.exitCode === null && old.kill("SIGKILL"), 3000).unref();
-        } else {
-          electron = startElectron();
-        }
+        electron.restart();
       } else if (files.includes("preload.cjs")) {
         log("preload rebuilt, reloading the window");
-        electron?.stdin?.write("reload\n");
+        electron.current?.stdin?.write("reload\n");
       }
     }, 300);
   });
 }
 
-main().catch((err: unknown) => {
-  log(err instanceof Error ? err.message : String(err));
-  shutdown(1);
-});
+if (import.meta.main) {
+  process.on("SIGINT", () => shutdown(0));
+  process.on("SIGTERM", () => shutdown(0));
+  main().catch((err: unknown) => {
+    log(err instanceof Error ? err.message : String(err));
+    shutdown(1);
+  });
+}

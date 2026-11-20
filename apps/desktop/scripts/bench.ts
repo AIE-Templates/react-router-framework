@@ -16,13 +16,14 @@
 //                         [--cases api-c1,...] [--modes off,on] [--label text] [--out file.jsonl]
 //                         [--app path/to/packaged/executable]
 //   node scripts/bench.ts compare <file.jsonl>...
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import { getCurrentFuseWire } from "@electron/fuses";
 
 import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
+import { monitorTestChild } from "./child-run.ts";
 import { describeFuses, fuseReadings } from "./fuses.ts";
 import {
   appProcesses,
@@ -34,7 +35,6 @@ import {
   launchSpec,
   type LaunchTarget,
   removeUserDataDir,
-  verifyBuildProfile,
 } from "./launch.ts";
 
 type Mode = "off" | "on";
@@ -135,39 +135,6 @@ function runProcesses(): number[] {
   return appProcesses(target.command, target.processDir);
 }
 
-/**
- * Whether any process of a run is alive. POSIX: its process group (the run is spawned detached, as a
- * group leader). Windows has no process groups to signal; there it is any process running the
- * target's executable, which the bench makes sure is only its own run.
- */
-function groupAlive(pgid: number): boolean {
-  if (isWindows) return runProcesses().length > 0;
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Kills a run's processes: its group on POSIX, its process tree and any leftover of this checkout on Windows. */
-function killGroup(pgid: number, signal: NodeJS.Signals): void {
-  if (isWindows) {
-    try {
-      execFileSync("taskkill", ["/PID", String(pgid), "/T", "/F"], { stdio: "ignore" });
-    } catch {}
-    for (const pid of runProcesses()) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {}
-    }
-    return;
-  }
-  try {
-    process.kill(-pgid, signal);
-  } catch {}
-}
-
 function parseArgs(argv: string[]) {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith("--") ? args.shift()! : "run";
@@ -191,20 +158,26 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
   return n;
 }
 
-let current: ChildProcess | undefined;
-const groups = new Set<number>();
+let current: ReturnType<typeof monitorTestChild> | undefined;
 /** The user data directories of runs not yet cleaned up, removed on any exit. */
 const userDataDirs = new Set<string>();
 
 function cleanup(): void {
-  for (const pgid of groups) killGroup(pgid, "SIGKILL");
+  current?.kill();
   for (const directory of userDataDirs) removeUserDataDir(directory);
   userDataDirs.clear();
 }
 
-function cleanupAndExit(code: number): never {
+let interruptedExit: number | undefined;
+function interrupt(code: number): void {
+  interruptedExit ??= code;
+  process.exitCode = interruptedExit;
+  if (current) {
+    current.abort(new Error("Bench interrupted"));
+    return;
+  }
   cleanup();
-  process.exit(code);
+  process.exit(interruptedExit);
 }
 
 async function runOnce(
@@ -214,6 +187,7 @@ async function runOnce(
   timeoutMs: number,
   marker: RunMarker,
 ): Promise<RunRecord> {
+  if (interruptedExit !== undefined) throw new Error("Bench interrupted");
   const started = performance.now();
   // A user data directory of its own: no single-instance clash with a running app, no state from
   // another run, nothing written to the installed app's.
@@ -235,62 +209,46 @@ async function runOnce(
   ])
     delete childEnv[key];
   const { command, args, cwd } = spec;
+  const spawnedAt = Date.now();
   const child = spawn(command, args, {
     cwd,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
-    // Its own process group: the renderer, GPU and utility processes are killed with it if needed.
-    detached: true,
+    detached: !isWindows,
   });
-  current = child;
-  const pgid = child.pid!;
-  groups.add(pgid);
   let result: RunRecord["result"];
-  // Either target must be the test profile (scripts/launch.ts); anything else ends the bench.
-  let wrongBuild: unknown;
-  verifyBuildProfile(child.stdout, target!.profile).catch((err: unknown) => {
-    wrongBuild = err;
-    killGroup(pgid, "SIGKILL");
-  });
-  let buffered = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    buffered += chunk;
-    let newline: number;
-    while ((newline = buffered.indexOf("\n")) >= 0) {
-      const line = buffered.slice(0, newline);
-      buffered = buffered.slice(newline + 1);
+  const monitor = monitorTestChild(child, spec, spawnedAt, {
+    userDataDir,
+    onLine(line) {
       if (line.startsWith("BENCH_RESULT ")) {
         const parsed: unknown = JSON.parse(line.slice("BENCH_RESULT ".length));
-        if (isBenchResult(parsed)) result = parsed;
+        if (!isBenchResult(parsed)) throw new Error("Invalid BENCH_RESULT");
+        result = parsed;
       } else if (/"level":"(warn|error)"/.test(line)) process.stderr.write(`  [app] ${line}\n`);
-    }
+    },
   });
+  current = monitor;
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
     // Chromium's own noise (e.g. GPU or task policy lines) is not ours; keep it for diagnosis only.
     if (process.env.BENCH_VERBOSE === "1") process.stderr.write(chunk);
   });
-  const timer = setTimeout(() => {
-    process.stderr.write(`  run timed out after ${timeoutMs} ms, killing it\n`);
-    killGroup(pgid, "SIGKILL");
-  }, timeoutMs);
-  const exitCode = await new Promise<number | null>((resolveExit) => child.once("exit", (code) => resolveExit(code)));
-  clearTimeout(timer);
-  current = undefined;
-  // Electron's helpers exit right after it; give them a moment, then make sure.
-  for (let i = 0; i < 50 && groupAlive(pgid); i++) await new Promise((r) => setTimeout(r, 100));
-  if (groupAlive(pgid)) {
-    process.stderr.write(`  processes of run ${round}/${mode} outlived it, killing them\n`);
-    killGroup(pgid, "SIGKILL");
+  const timer = setTimeout(() => monitor.abort(new Error(`Bench timed out after ${timeoutMs} ms`)), timeoutMs);
+  try {
+    const exitCode = await monitor.finished;
+    if (readdirSync(userDataDir).length === 0)
+      throw new Error(`run ${round}/${mode} left nothing in its user data directory ${userDataDir}`);
+    return { ...marker, round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
+  } finally {
+    clearTimeout(timer);
+    try {
+      await monitor.reap();
+    } finally {
+      current = undefined;
+      removeUserDataDir(userDataDir);
+      userDataDirs.delete(userDataDir);
+    }
   }
-  groups.delete(pgid);
-  const used = readdirSync(userDataDir).length > 0;
-  removeUserDataDir(userDataDir);
-  userDataDirs.delete(userDataDir);
-  if (wrongBuild) throw wrongBuild;
-  if (!used) throw new Error(`run ${round}/${mode} left nothing in its user data directory ${userDataDir}`);
-  return { ...marker, round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
 }
 
 async function run(options: Map<string, string>): Promise<void> {
@@ -357,14 +315,14 @@ async function run(options: Map<string, string>): Promise<void> {
       }
     }
   } finally {
-    const leftover = runProcesses();
+    let leftover = runProcesses();
+    const until = Date.now() + 5000;
+    while (leftover.length && Date.now() < until) {
+      await new Promise((done) => setTimeout(done, 100));
+      leftover = runProcesses();
+    }
     if (leftover.length > 0) {
-      process.stderr.write(`Electron processes still running after the bench: ${leftover.join(", ")}; killing them\n`);
-      for (const pid of leftover) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {}
-      }
+      process.stderr.write(`Electron processes still running after the bench: ${leftover.join(", ")}\n`);
       failures++;
     } else {
       process.stdout.write(`no Electron process left running (${isWindows ? "process list" : "pgrep"})\n`);
@@ -492,11 +450,12 @@ function compare(files: string[]): void {
 }
 
 async function main() {
-  process.on("SIGINT", () => cleanupAndExit(130));
-  process.on("SIGTERM", () => cleanupAndExit(143));
+  process.on("SIGINT", () => interrupt(130));
+  process.on("SIGTERM", () => interrupt(143));
+  process.on("SIGHUP", () => interrupt(129));
   // Piped into `head` and the like: stop quietly when the reader goes away.
   process.stdout.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EPIPE") cleanupAndExit(0);
+    if (err.code === "EPIPE") return interrupt(0);
     throw err;
   });
 
@@ -509,9 +468,8 @@ async function main() {
     } else throw new Error(`unknown command "${command}": expected run or compare`);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    if (current?.pid) killGroup(current.pid, "SIGKILL");
     cleanup();
-    process.exitCode = 1;
+    process.exitCode = interruptedExit ?? 1;
   }
 }
 

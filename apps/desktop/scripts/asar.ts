@@ -60,9 +60,15 @@ export function readAsar(archive: Buffer): Asar {
       } else if (typeof child.link === "string") {
         entries.push({ path, kind: "link", size: 0, offset: 0, unpacked: child.unpacked === true });
       } else {
-        const size = Number(child.size);
-        const offset = child.offset === undefined ? 0 : Number(child.offset);
-        if (!Number.isSafeInteger(size) || !Number.isSafeInteger(offset)) {
+        const size = child.size;
+        // Packed offsets are decimal strings. Unpacked files have no offset in this archive.
+        const offset =
+          child.unpacked === true && child.offset === undefined
+            ? 0
+            : typeof child.offset === "string" && /^\d+$/.test(child.offset)
+              ? Number(child.offset)
+              : NaN;
+        if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger(offset)) {
           throw new Error(`asar header: ${path} has no valid size or offset`);
         }
         const integrity =
@@ -81,7 +87,8 @@ export function asarFile(archive: Buffer, asar: Asar, path: string): Buffer {
   if (entry === undefined || entry.kind !== "file") throw new Error(`${path} is not a file in the archive`);
   if (entry.unpacked) throw new Error(`${path} is unpacked, outside the archive`);
   const start = asar.dataOffset + entry.offset;
-  if (start + entry.size > archive.length) throw new Error(`${path} runs past the end of the archive`);
+  if (!Number.isSafeInteger(start) || start < asar.dataOffset || entry.size < 0 || entry.size > archive.length - start)
+    throw new Error(`${path} runs past the end of the archive`);
   return archive.subarray(start, start + entry.size);
 }
 
