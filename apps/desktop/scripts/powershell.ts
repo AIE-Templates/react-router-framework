@@ -36,7 +36,11 @@ export function windowsProcesses(): ProcessInfo[] {
 }
 
 /** Pin the process object before checking its creation time, so a recycled Windows PID is never killed. */
-export function windowsProcess(process: Pick<ProcessInfo, "pid" | "startedAt">, action: "kill" | "check"): boolean {
+export function windowsProcess(
+  process: Pick<ProcessInfo, "pid" | "startedAt">,
+  action: "kill" | "check",
+  timeout = 30_000,
+): boolean {
   if (process.startedAt === undefined) return false;
   const result = powershellOutput(
     [
@@ -51,7 +55,7 @@ export function windowsProcess(process: Pick<ProcessInfo, "pid" | "startedAt">, 
       "exit 0",
     ].join("\n"),
     { REAP_HELPER_PID: String(process.pid), REAP_HELPER_CREATED: String(process.startedAt) },
-    30_000,
+    timeout,
   );
   return result.trim() === "matched";
 }

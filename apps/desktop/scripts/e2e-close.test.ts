@@ -1,3 +1,6 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+
 import { expect, it, vi } from "vitest";
 
 import { closeApplication } from "../e2e/desktop.ts";
@@ -21,26 +24,44 @@ it("waits for graceful exit without signalling a PID that may already have been 
   expect(launcher.kill).not.toHaveBeenCalled();
 });
 
-it("terminates a still-running owned child through its handle if graceful close fails", async () => {
+it("waits for the owned child to exit before propagating the graceful-close failure", async () => {
+  const child = spawn(process.execPath, ["-e", 'console.log("ready"); setInterval(() => {}, 1000)'], {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const exited = once(child, "exit");
+  const failure = new Error("driver could not close");
+  try {
+    await once(child.stdout, "data");
+    await expect(closeApplication({ close: () => Promise.reject(failure) }, child, { pid: child.pid! })).rejects.toBe(
+      failure,
+    );
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  } finally {
+    child.kill("SIGKILL");
+    await exited;
+  }
+});
+
+it("retains the profile and reports the original failure if forced exit cannot be confirmed", async () => {
+  vi.useFakeTimers();
+  const keepProfile = vi.fn<() => void>();
   const launcher = {
     pid: 101,
     exitCode: null,
     signalCode: null,
-    kill: vi.fn<(signal?: NodeJS.Signals | number) => boolean>(() => true),
+    kill: vi.fn<(signal?: NodeJS.Signals | number) => boolean>(() => false),
   };
   const failure = new Error("driver could not close");
-  await expect(
-    closeApplication(
-      {
-        close: async () => {
-          throw failure;
-        },
-      },
-      launcher,
-      { pid: 101 },
-    ),
-  ).rejects.toBe(failure);
-  expect(launcher.kill).toHaveBeenCalledWith("SIGKILL");
+  try {
+    const closed = closeApplication({ close: () => Promise.reject(failure) }, launcher, { pid: 101 }, keepProfile);
+    const outcome = closed.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await outcome).toBe(failure);
+    expect(launcher.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(keepProfile).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it.skipIf(process.platform !== "win32")(

@@ -75,6 +75,44 @@
 
 !macro customHeader
   !ifndef BUILD_UNINSTALLER
+    ; FindFirst/FindNext collapse access errors and normal exhaustion. Check the
+    ; Win32 errors directly so only an empty or missing destination is accepted.
+    Function CheckEmptyDestination
+      ; WIN32_FIND_DATAW, including cFileName and cAlternateFileName.
+      System::Call '*(i,l,l,l,i,i,i,i,&w260,&w14) p .r0'
+      ${If} $0 == 0
+        !insertmacro RejectInstallation "Cannot allocate memory to inspect the selected installation directory."
+      ${EndIf}
+      System::Call 'kernel32::FindFirstFileW(w "$INSTDIR\*", p r0) p.r1 ?e'
+      Pop $2
+      ${If} $1 == -1
+        System::Free $0
+        ${If} $2 == 2 ; ERROR_FILE_NOT_FOUND: no matching entry
+        ${OrIf} $2 == 3 ; ERROR_PATH_NOT_FOUND: the directory does not exist
+          Return
+        ${EndIf}
+        Goto cannotListDestination
+      ${EndIf}
+      ${Do}
+        System::Call '*$0(i,l,l,l,i,i,i,i,&w260 .r3,&w14)'
+        ${If} $3 != "."
+        ${AndIf} $3 != ".."
+          System::Call 'kernel32::FindClose(p r1)'
+          System::Free $0
+          !insertmacro RejectInstallation "The selected installation directory is not empty. Choose an empty directory for ${PRODUCT_NAME}."
+        ${EndIf}
+        System::Call 'kernel32::FindNextFileW(p r1, p r0) i.r3 ?e'
+        Pop $2
+      ${LoopWhile} $3 != 0
+      System::Call 'kernel32::FindClose(p r1)'
+      System::Free $0
+      ${If} $2 == 18 ; ERROR_NO_MORE_FILES
+        Return
+      ${EndIf}
+      cannotListDestination:
+      !insertmacro RejectInstallation "Cannot list '$INSTDIR' (Windows error $2). Choose a directory you can read."
+    FunctionEnd
+
     Section "-Check installation directory"
       SectionIn RO
       !insertmacro CheckDirectoryChain "$INSTDIR"
@@ -85,19 +123,8 @@
         !insertmacro CheckPreviousInstallation HKCU
       ${EndIf}
       ${If} $3 != "owned"
-        IfFileExists "$INSTDIR\*.*" 0 destinationChecked
-        FindFirst $0 $1 "$INSTDIR\*.*"
-        ${DoWhile} $1 != ""
-          ${If} $1 != "."
-          ${AndIf} $1 != ".."
-            FindClose $0
-            !insertmacro RejectInstallation "The selected installation directory is not empty. Choose an empty directory for ${PRODUCT_NAME}."
-          ${EndIf}
-          FindNext $0 $1
-        ${Loop}
-        FindClose $0
+        Call CheckEmptyDestination
       ${EndIf}
-      destinationChecked:
     SectionEnd
   !endif
 !macroend
