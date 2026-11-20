@@ -131,7 +131,9 @@ function start(): void {
   }
 
   // Not in dev: its unpackaged Electron has no EnableCookieEncryption fuse, so its cookies are stored
-  // unencrypted and need no key, and it restarts too often to pay for a writer run.
+  // unencrypted and need no key, and it restarts too often to pay for a writer run. An unpackaged
+  // test launch has no such fuse either and runs the writer all the same: one extra start on a fresh
+  // profile, and the unpackaged tests then cover the same startup path as the packaged ones.
   const cookieKey: CookieKeyOutcome =
     DESKTOP_BUILD_PROFILE === "dev"
       ? { kind: "none" }
