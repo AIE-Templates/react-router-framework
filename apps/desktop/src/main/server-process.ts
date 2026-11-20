@@ -21,7 +21,7 @@ export interface UtilityLifecycle {
 }
 
 export interface ServerProcessOptions {
-  /** `.vite/build/utility.mjs`. */
+  /** `utility.mjs`, beside the main bundle in `.vite/<build profile>`. */
   utilityPath: string;
   /** The web client build: `resources/client` when packaged, `apps/web/build/client` otherwise. */
   clientDir: string;

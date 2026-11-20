@@ -1,14 +1,21 @@
 // All supported desktop build paths use production inputs, including the web build that the
 // utility bundles. Development deliberately uses scripts/dev.ts and its own watch environment.
+//
+//   node scripts/build.ts [dev | test | release] [--with-web]   desktop bundles into .vite/<profile>
+//   node scripts/build.ts --workspace                            `pnpm -r build` (desktop: test)
+//
+// Without a profile it builds `test`, which is also what the recursive build's call of this
+// package's own `build` script gets. `--with-web` builds the web app (and what it depends on)
+// first: the utility bundles its server build, and packaging copies its client build. A one-shot
+// `dev` build only emits the bundles; scripts/dev.ts adds the manifest Electron starts it with.
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
+import { BUILD_PROFILE_ENV, parseBuildArgs } from "./build-profile.ts";
+
 const desktopDir = resolve(import.meta.dirname, "..");
 const repoDir = resolve(desktopDir, "../..");
-const mode = process.argv.slice(2);
-if (mode.length > 1 || (mode.length === 1 && mode[0] !== "--workspace" && mode[0] !== "--with-web")) {
-  throw new Error("Usage: build.ts [--workspace | --with-web]");
-}
+const { profile, mode } = parseBuildArgs(process.argv.slice(2));
 
 // pnpm ships both as a Node script and as a standalone executable. Use the invoking package
 // manager directly, without a shell or a platform-specific pnpm.cmd shim.
@@ -17,7 +24,7 @@ if (!packageManager) throw new Error("Run this build through pnpm (pnpm build or
 const isNodeScript = /\.(?:cjs|mjs|js)$/i.test(packageManager);
 const executable = isNodeScript ? process.execPath : packageManager;
 const prefix = isNodeScript ? [packageManager] : [];
-const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production" };
+const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", [BUILD_PROFILE_ENV]: profile };
 delete env.DESKTOP_WATCH;
 delete env.DESKTOP_DEV_SERVER_URL;
 delete env.DESKTOP_DEV;
@@ -28,10 +35,10 @@ function run(args: string[], cwd: string): void {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-if (mode[0] === "--workspace") {
+if (mode === "workspace") {
   run(["-r", "build"], repoDir);
 } else {
-  if (mode[0] === "--with-web") run(["--filter", "web...", "build"], repoDir);
+  if (mode === "with-web") run(["--filter", "web...", "build"], repoDir);
   for (const entry of ["main", "preload", "utility"]) {
     run(["exec", "vite", "build", "--config", `vite.${entry}.config.ts`], desktopDir);
   }

@@ -3,7 +3,7 @@
 // ack coalescing off and on (ABBA order across rounds), collects each run's BENCH_RESULT line into
 // a JSON Lines file and prints the comparison. Builds nothing: run `pnpm build:desktop` first, or
 // pass `--app` with a packaged test-profile executable (then the script needs only Node, no checkout).
-// Runs on Node directly (type stripping). See README, "Real-app benchmark".
+// Either way the app must report the test build profile (scripts/launch.ts). Runs on Node directly (type stripping). See README, "Real-app benchmark".
 //
 //   node scripts/bench.ts [run] [--rounds 5] [--measure-ms 10000] [--warmup-ms 2000]
 //                         [--cases api-c1,...] [--modes off,on] [--label text] [--out file.jsonl]
@@ -11,12 +11,10 @@
 //   node scripts/bench.ts compare <file.jsonl>...
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
 import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
-
-const desktopDir = resolve(import.meta.dirname, "..");
+import { appProcesses, checkUnpackagedBuild, desktopDir, electronBinary, verifyBuildProfile } from "./launch.ts";
 
 type Mode = "off" | "on";
 
@@ -50,12 +48,6 @@ function isRunRecord(value: unknown): value is RunRecord {
   );
 }
 
-export function electronBinary(): string {
-  const binary: unknown = createRequire(import.meta.url)("electron");
-  if (typeof binary !== "string") throw new Error("Electron did not provide an executable path");
-  return binary;
-}
-
 /**
  * What a run launches: this checkout's Electron on apps/desktop (the built, unpackaged app), or with
  * `--app <executable>` a packaged test-profile app (the release profile ignores DESKTOP_BENCH). `dist`
@@ -87,43 +79,6 @@ function resolveTarget(app: string | undefined): Target {
 }
 
 const isWindows = process.platform === "win32";
-
-/**
- * PIDs of the processes of the app under test, this script excluded. POSIX: command lines containing
- * the target's directory followed by a separator (pgrep -f), which covers a macOS bundle's helpers
- * under Contents/Frameworks. Windows: processes whose executable is exactly the target's (every
- * Electron helper there runs the same executable), so nothing else in that directory or in a
- * sibling directory sharing its prefix can match. A failed process listing throws instead of
- * reporting none.
- */
-export function appProcesses(executable: string, directory: string): number[] {
-  let output: string;
-  if (process.platform === "win32") {
-    output = execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        `Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $env:E2E_PROCESS_EXE, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }`,
-      ],
-      { encoding: "utf8", env: { ...process.env, E2E_PROCESS_EXE: executable } },
-    );
-  } else {
-    try {
-      output = execFileSync("pgrep", ["-f", "^" + directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/"], {
-        encoding: "utf8",
-      });
-    } catch (err) {
-      // pgrep exits 1 when nothing matches; anything else is a failure to list.
-      if (typeof err === "object" && err !== null && "status" in err && err.status === 1) return [];
-      throw err;
-    }
-  }
-  return output
-    .split(/\r?\n/)
-    .map(Number)
-    .filter((pid) => pid > 0 && pid !== process.pid);
-}
 
 function runProcesses(): number[] {
   if (!target) throw new Error("no target yet");
@@ -217,6 +172,12 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
   const pgid = child.pid!;
   groups.add(pgid);
   let result: RunRecord["result"];
+  // Either target must be the test profile (scripts/launch.ts); anything else ends the bench.
+  let wrongBuild: unknown;
+  verifyBuildProfile(child.stdout, "test").catch((err: unknown) => {
+    wrongBuild = err;
+    killGroup(pgid, "SIGKILL");
+  });
   let buffered = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
@@ -250,6 +211,7 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
     killGroup(pgid, "SIGKILL");
   }
   groups.delete(pgid);
+  if (wrongBuild) throw wrongBuild;
   return { round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
 }
 
@@ -268,11 +230,8 @@ async function run(options: Map<string, string>): Promise<void> {
   );
 
   target = resolveTarget(options.get("app"));
-  if (!options.has("app")) {
-    for (const file of [".vite/build/main.cjs", ".vite/build/utility.mjs", "../web/build/server/index.js"]) {
-      if (!existsSync(join(desktopDir, file))) throw new Error(`${file} is missing: run \`pnpm build:desktop\` first`);
-    }
-  }
+  // The unpackaged test bundles, matching the web build; a packaged app carries its own.
+  if (!options.has("app")) checkUnpackagedBuild("test");
   const already = runProcesses();
   if (already.length > 0) {
     throw new Error(`The app under test is already running (pids ${already.join(", ")}); quit it first`);

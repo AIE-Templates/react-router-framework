@@ -7,17 +7,66 @@ import { describe, expect, it } from "vitest";
 import { packagedExecutable } from "./packaged-path.ts";
 
 const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const builder = readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8");
-const release = readFileSync(new URL("../electron-builder.release.yml", import.meta.url), "utf8");
+const base = readFileSync(new URL("../electron-builder.base.yml", import.meta.url), "utf8");
+const leaves = {
+  test: readFileSync(new URL("../electron-builder.test.yml", import.meta.url), "utf8"),
+  release: readFileSync(new URL("../electron-builder.release.yml", import.meta.url), "utf8"),
+};
+
+/** A top-level YAML block list's items, comments left out (the configurations are plain YAML). */
+function topLevelList(config: string, key: string): string[] | undefined {
+  const lines = config.split("\n").filter((line) => !/^\s*#/.test(line));
+  const start = lines.indexOf(`${key}:`);
+  if (start < 0) return undefined;
+  const items: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const item = /^ {2}- (.+)$/.exec(line);
+    if (!item) break;
+    items.push(item[1]);
+  }
+  return items;
+}
+
+describe("builder profiles", () => {
+  it("leaves everything that differs per profile to the leaf configurations", () => {
+    for (const key of ["extends", "files", "extraMetadata", "directories", "afterPack"]) {
+      expect(base).not.toMatch(new RegExp(`^${key}:`, "m"));
+    }
+  });
+
+  it("starts the test bundles unpackaged", () => {
+    expect(metadata.main).toBe(".vite/test/main.cjs");
+  });
+
+  it.each(["test", "release"] as const)(
+    "packs only the %s bundles, from their own entry, into their own output directory",
+    (profile) => {
+      const leaf = leaves[profile];
+      expect(topLevelList(leaf, "files")).toEqual([
+        `".vite/${profile}/**"`,
+        `"!.vite/${profile}/*.map"`,
+        "package.json",
+      ]);
+      expect(leaf).toMatch(
+        new RegExp(`^extraMetadata:\\n(?: {2}.*\\n)*? {2}main: \\.vite/${profile}/main\\.cjs$`, "m"),
+      );
+      expect(leaf).toMatch(new RegExp(`^directories:\\n {2}output: out/${profile}$`, "m"));
+      // Fuses are flipped on the release package only.
+      expect(/^afterPack: \.\/scripts\/fuses\.ts$/m.test(leaf)).toBe(profile === "release");
+    },
+  );
+});
 
 describe("packaged desktop names", () => {
   it("keeps package metadata and the inherited builder profiles consistent", () => {
     expect(metadata.productName).toBeTypeOf("string");
-    expect(builder.match(/^productName:\s*(.+)$/m)?.[1]).toBe(metadata.productName);
-    expect(release).toMatch(/^extends: \.\/electron-builder\.yml$/m);
-    expect(release).not.toMatch(/^\s*productName:/m);
+    expect(base.match(/^productName:\s*(.+)$/m)?.[1]).toBe(metadata.productName);
+    for (const leaf of Object.values(leaves)) {
+      expect(leaf).toMatch(/^extends: \.\/electron-builder\.base\.yml$/m);
+      expect(leaf).not.toMatch(/^\s*productName:/m);
+    }
     // The path helper implements default filenames, not platform-specific overrides.
-    for (const config of [builder, release]) expect(config).not.toMatch(/^\s*executableName:/m);
+    for (const config of [base, ...Object.values(leaves)]) expect(config).not.toMatch(/^\s*executableName:/m);
     for (const platform of ["darwin", "win32", "linux"] as const) {
       expect(() => packagedExecutable("out", metadata, platform, "arm64")).not.toThrow();
     }

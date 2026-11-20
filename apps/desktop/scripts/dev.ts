@@ -1,7 +1,10 @@
 // Development, the way `electron-forge start` works, without Forge: `react-router dev` for the web
-// app (desktop shell, own port), the three Vite builds in watch mode with the dev server address
-// baked in, then Electron on the result. Main or utility rebuilt → Electron restarts; preload
-// rebuilt → the window reloads. Runs on Node directly (type stripping).
+// app (desktop shell, own port), the three Vite builds of the dev profile in watch mode with the dev
+// server address baked in, then Electron on their directory (`electron .vite/dev`, with a generated
+// package.json carrying apps/desktop's name, product name and version, so the app name, version and
+// userData directory are those of `electron .`). The main process must report the dev build profile
+// (scripts/launch.ts). Main or utility rebuilt → Electron restarts; preload rebuilt → the window
+// reloads. Runs on Node directly (type stripping).
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, watch } from "node:fs";
@@ -10,13 +13,14 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { stripVTControlCharacters } from "node:util";
 
-import { electronBinary } from "./bench.ts";
+import { BUILD_PROFILE_ENV, bundleDir } from "./build-profile.ts";
+import { electronBinary, verifyBuildProfile, writeDevPackageJson } from "./launch.ts";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 const repoDir = resolve(desktopDir, "../..");
 const DEV_PORT = Number(process.env.DESKTOP_DEV_PORT ?? 5174);
 const devServerUrl = `http://127.0.0.1:${DEV_PORT}`;
-const buildDir = join(desktopDir, ".vite/build");
+const buildDir = join(desktopDir, bundleDir("dev"));
 
 const children = new Set<ChildProcess>();
 let electron: ChildProcess | undefined;
@@ -97,12 +101,17 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
 }
 
 function startElectron(): ChildProcess {
-  const child = run(electronBinary(), ["."], {
+  const child = run(electronBinary(), [buildDir], {
     cwd: desktopDir,
     env: { DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev", NODE_ENV: "development" },
     stdin: true,
   });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
+  verifyBuildProfile(child.stdout!, "dev").catch((err: unknown) => {
+    if (shuttingDown || electron !== child) return;
+    log(err instanceof Error ? err.message : String(err));
+    shutdown(1);
+  });
   child.once("exit", (code, signal) => {
     if (shuttingDown || electron !== child) return;
     log(`electron exited with ${signal ?? code}`);
@@ -160,7 +169,7 @@ async function main(): Promise<void> {
   const entries = existsSync(webServerBuild) ? ["main", "preload", "utility"] : ["main", "preload"];
   if (entries.length === 2) log("no apps/web/build yet: skipping the utility build (not used in development)");
   log(`building ${entries.join(", ")} in watch mode`);
-  const buildEnv = { DESKTOP_WATCH: "1", DESKTOP_DEV_SERVER_URL: devServerUrl };
+  const buildEnv = { [BUILD_PROFILE_ENV]: "dev", DESKTOP_WATCH: "1", DESKTOP_DEV_SERVER_URL: devServerUrl };
   await Promise.all(
     entries.map((entry) =>
       waitForOutput(
@@ -174,6 +183,7 @@ async function main(): Promise<void> {
     ),
   );
 
+  writeDevPackageJson(desktopDir);
   log("starting electron");
   electron = startElectron();
 

@@ -30,6 +30,9 @@ import { portAckCoalesce } from "./port-options.ts";
 const log = createLogger(process.env.LOG_LEVEL === "debug" ? "debug" : "info");
 process.on("uncaughtException", (err) => log.error({ err }, "uncaught exception in the main process"));
 process.on("unhandledRejection", (reason) => log.error({ err: reason }, "unhandled rejection in the main process"));
+// Logged before anything else can fail: launchers read it to know they started the bundles they
+// meant to (scripts/launch.ts).
+log.info({ buildProfile: DESKTOP_BUILD_PROFILE }, "build profile");
 
 const profile = createBootProfile();
 const devServerUrl = DESKTOP_DEV_SERVER_URL;
@@ -71,8 +74,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 /**
- * The electron-builder profile a packaged app was built with (`extraMetadata.desktopProfile` in
- * electron-builder.yml: "test", or "release" in electron-builder.release.yml); undefined unpackaged.
+ * The electron-builder profile a packaged app was built with (`extraMetadata.desktopProfile`: "test"
+ * in electron-builder.test.yml, "release" in electron-builder.release.yml); undefined unpackaged.
  */
 function packagedProfile(): string | undefined {
   try {

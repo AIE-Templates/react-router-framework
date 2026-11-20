@@ -1,3 +1,8 @@
+# What both electron-builder profiles share; never used on its own. The leaf configurations,
+# electron-builder.test.yml and electron-builder.release.yml, extend it and each declare in full
+# what differs per build profile: the bundles they pack (`files`, `.vite/<profile>` only), the
+# entry (`extraMetadata.main`) and the output directory (`out/<profile>`), so neither depends on
+# how `extends` merges arrays or can pick up the other profile's bundles or packages.
 # electron-builder packages what the Vite builds emitted plus the web client build. Build-time
 # packages live in devDependencies and are already bundled, so no node_modules ship; `dependencies`
 # is reserved for native modules that must stay external (none yet).
@@ -9,18 +14,9 @@ asar: true
 asarUnpack:
   - "**/*.node"
 npmRebuild: false
-# Read by the main process: the test profile may run the real-app benchmark, the release profile not.
-extraMetadata:
-  desktopProfile: test
-files:
-  - ".vite/build/**"
-  - "!.vite/build/*.map"
-  - package.json
 extraResources:
   - from: ../web/build/client
     to: client
-directories:
-  output: out
 mac:
   target:
     - dmg

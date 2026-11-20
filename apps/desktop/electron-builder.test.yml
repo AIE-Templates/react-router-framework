@@ -1,0 +1,15 @@
+# The test profile: `pnpm package:desktop` (`pnpm --filter desktop package`) builds it unpacked into
+# out/test from the `.vite/test` bundles, for Playwright (e2e/desktop.ts), the smoke and the
+# benchmark. No fuses are flipped: Playwright's Electron driver needs the Node CLI inspect arguments.
+# Installers are built only from the release profile.
+extends: ./electron-builder.base.yml
+extraMetadata:
+  main: .vite/test/main.cjs
+  # Read by the main process: the test profile may run the real-app benchmark, the release profile not.
+  desktopProfile: test
+files:
+  - ".vite/test/**"
+  - "!.vite/test/*.map"
+  - package.json
+directories:
+  output: out/test

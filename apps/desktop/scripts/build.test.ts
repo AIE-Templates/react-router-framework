@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -68,14 +68,18 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
   }
 
   it.each([
-    { mode: [], web: false },
-    { mode: ["--with-web"], web: true },
-  ])("builds desktop with production inputs (mode $mode)", ({ mode, web }) => {
-    const result = run(mode);
+    { args: [], profile: "test", web: false },
+    { args: ["--with-web"], profile: "test", web: true },
+    { args: ["test"], profile: "test", web: false },
+    { args: ["dev"], profile: "dev", web: false },
+    { args: ["release", "--with-web"], profile: "release", web: true },
+    { args: ["--with-web", "release"], profile: "release", web: true },
+  ])("builds the $profile profile with production inputs (arguments $args)", ({ args, profile, web }) => {
+    const result = run(args, { DESKTOP_BUILD_PROFILE: "release" });
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     const calls = readInvocations();
-    expect(calls.map(({ args, cwd }) => ({ args, cwd }))).toEqual([
+    expect(calls.map((call) => ({ args: call.args, cwd: call.cwd }))).toEqual([
       ...(web ? [{ args: ["--filter", "web...", "build"], cwd: repoDir }] : []),
       ...["main", "preload", "utility"].map((entry) => ({
         args: ["exec", "vite", "build", "--config", `vite.${entry}.config.ts`],
@@ -85,6 +89,8 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
     for (const { env } of calls) {
       expect(env).toMatchObject({
         NODE_ENV: "production",
+        // The argument decides, never an inherited value.
+        DESKTOP_BUILD_PROFILE: profile,
         LOG_LEVEL: "debug",
         DESKTOP_BOOT_PROFILE: "1",
         SSR: "false",
@@ -95,10 +101,27 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
     }
   });
 
+  it.each([
+    { args: ["staging"] },
+    { args: ["test", "release"] },
+    { args: ["--with-web", "--with-web"] },
+    { args: ["release", "--workspace"] },
+    { args: ["--watch"] },
+  ])("rejects the arguments $args before building anything", ({ args }) => {
+    const result = run(args);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Usage: build.ts");
+    expect(existsSync(invocations)).toBe(false);
+  });
+
   it("normalizes the complete recursive build before any web or desktop command runs", () => {
     expect(run(["--workspace"]).status).toBe(0);
     const [call] = readInvocations();
-    expect(call).toMatchObject({ args: ["-r", "build"], cwd: repoDir, env: { NODE_ENV: "production" } });
+    expect(call).toMatchObject({
+      args: ["-r", "build"],
+      cwd: repoDir,
+      env: { NODE_ENV: "production", DESKTOP_BUILD_PROFILE: "test" },
+    });
     expect(call.env).not.toHaveProperty("DESKTOP_WATCH");
     expect(call.env).not.toHaveProperty("DESKTOP_DEV_SERVER_URL");
     expect(call.env).not.toHaveProperty("DESKTOP_DEV");
