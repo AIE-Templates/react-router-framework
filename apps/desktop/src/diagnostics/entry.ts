@@ -38,15 +38,30 @@ export const selectMainRun: SelectMainRun = (debug, { development, log }) => {
           exit: context.exit,
         });
       } else if (modes.smoke) {
-        await runSmoke(context.window, {
-          profile: context.bootProfile,
-          log: context.log,
-          development: context.development,
-          smokeRoutes: context.server !== undefined,
-          layout: debug.smokeLayout,
-          screenshot: debug.smokeScreenshot,
-          exit: context.exit,
+        // Stop through the same utility shutdown path as a completed smoke. Chromium's
+        // native signal handler can tear down the renderer while a check is evaluating JS.
+        let interrupt!: () => void;
+        const interrupted = new Promise<number>((resolve) => {
+          interrupt = () => resolve(1);
         });
+        process.once("SIGINT", interrupt);
+        process.once("SIGTERM", interrupt);
+        process.once("SIGHUP", interrupt);
+        try {
+          const result = runSmoke(context.window, {
+            profile: context.bootProfile,
+            log: context.log,
+            development: context.development,
+            smokeRoutes: context.server !== undefined,
+            layout: debug.smokeLayout,
+            screenshot: debug.smokeScreenshot,
+          });
+          await context.exit(await Promise.race([result, interrupted]));
+        } finally {
+          process.off("SIGINT", interrupt);
+          process.off("SIGTERM", interrupt);
+          process.off("SIGHUP", interrupt);
+        }
       }
     },
   };
