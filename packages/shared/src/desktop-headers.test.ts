@@ -29,6 +29,17 @@ describe("parseDesktopHeaders", () => {
     });
   });
 
+  it("enforces the shared per-value and aggregate limits on header preferences", () => {
+    const prefs = {
+      "bad key": 1,
+      oversized: "a".repeat(1025),
+      compact: true,
+      ...Object.fromEntries([1, 2, 3, 4].map((n) => ["field" + n, "x".repeat(1024)])),
+    };
+    const result = parseDesktopHeaders(new Headers({ [DESKTOP_HEADERS.prefs]: JSON.stringify(prefs) })).prefs;
+    expect(Object.keys(result)).toEqual(["compact", "field1", "field2", "field3"]);
+  });
+
   it("falls back to defaults for unknown values", () => {
     const headers = new Headers({
       [DESKTOP_HEADERS.titlebar]: "hidden",

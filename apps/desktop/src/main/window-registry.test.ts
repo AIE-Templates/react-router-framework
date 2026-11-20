@@ -124,6 +124,21 @@ it("adopts native and host-created windows and reuses only their requested ident
   expect(() => registry.open("https://example.test/settings")).toThrow("application URLs");
 });
 
+it("shares an unresponsive choice before the child commits its first document", async () => {
+  const { registry, askRecovery, choices } = setup();
+  registry.open("app://app/home");
+  const home = made[0];
+  home.commit(home.url);
+  const child = new FakeWindow();
+  home.webContents.emit("did-create-window", child, { url: "app://app/chat", options: { x: 10, y: 10 } });
+  home.emit("unresponsive");
+  child.emit("unresponsive");
+  await flush();
+  expect(askRecovery).toHaveBeenCalledExactlyOnceWith(home, "unresponsive", true, expect.any(AbortSignal));
+  choices[0]("wait");
+  await flush();
+});
+
 it("shares one choice per affected renderer and keeps its replacement when the old owner settles late", async () => {
   const { registry, choices, askRecovery } = setup();
   for (const path of ["owner", "peer", "next", "unrelated"]) registry.open("app://app/" + path);

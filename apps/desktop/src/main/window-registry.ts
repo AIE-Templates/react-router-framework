@@ -60,9 +60,12 @@ export function createWindowRegistry(options: RegistryOptions) {
       const key = kind + ":" + pid;
       const pending = dialogs.get(key);
       if (pending && !pending.owner.aborted) return pending.choice;
-      const shared = [...entries.values()].some(
-        (entry) => entry.window !== win && !entry.window.isDestroyed() && entry.pid === pid,
-      );
+      const shared = [...entries.values()].some((entry) => {
+        if (entry.window === win || entry.window.isDestroyed()) return false;
+        const peer = entry.window.webContents;
+        // A live child can share the opener's renderer before its first navigation commits.
+        return (peer.isCrashed() ? entry.pid : peer.getOSProcessId()) === pid;
+      });
       if (shared) {
         const choice = options.askRecovery(win, kind, true, signal).finally(() => {
           if (dialogs.get(key)?.owner === signal) dialogs.delete(key);
