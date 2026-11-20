@@ -3,10 +3,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { build } from "vite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { PROFILE_ENTRIES } from "./build-profile.ts";
-import { checkBundleModules, moduleName, modulesRecordName, readBundleModules, realModules } from "./bundle-modules.ts";
+import {
+  checkBundleModules,
+  recordBundleModules,
+  moduleName,
+  modulesRecordName,
+  readBundleModules,
+  realModules,
+} from "./bundle-modules.ts";
 
 const [debugEnv, diagnostics, devHost] = PROFILE_ENTRIES;
 
@@ -15,6 +23,7 @@ const shared = ["../../packages/shared/src/index.ts", "electron", "node:path", "
 const testMain = [
   ...shared,
   "src/debug-env.ts",
+  "src/debug-env.names.ts",
   "src/diagnostics/bench/bench.ts",
   "src/diagnostics/entry.ts",
   "src/diagnostics/smoke/smoke.ts",
@@ -25,6 +34,7 @@ const testMain = [
 const testUtility = [
   ...shared,
   "src/debug-env.ts",
+  "src/debug-env.names.ts",
   "src/diagnostics/bench/routes.ts",
   "src/diagnostics/e2e/routes.ts",
   "src/diagnostics/entry.ts",
@@ -43,12 +53,21 @@ const preload = ["../../packages/shared/src/index.ts", "electron", "src/preload.
 const devMain = [
   ...shared,
   "src/debug-env.ts",
+  "src/debug-env.names.ts",
   "src/diagnostics/entry.ts",
   "src/diagnostics/smoke/smoke.ts",
   "src/main.ts",
   "src/main/dev-host.ts",
   "src/main/dev-proxy.ts",
 ];
+
+function checkListedModules(
+  profile: Parameters<typeof checkBundleModules>[0],
+  bundle: Parameters<typeof checkBundleModules>[1],
+  modules: readonly string[],
+) {
+  return checkBundleModules(profile, bundle, modules, modules);
+}
 
 describe("realModules", () => {
   it("finds an entry's module and what it owns, never its empty implementation", () => {
@@ -58,7 +77,7 @@ describe("realModules", () => {
       "src/diagnostics/smoke/smoke.ts",
     ]);
     expect(realModules(diagnostics, releaseMain)).toEqual([]);
-    expect(realModules(debugEnv, testUtility)).toEqual(["src/debug-env.ts"]);
+    expect(realModules(debugEnv, testUtility)).toEqual(["src/debug-env.ts", "src/debug-env.names.ts"]);
     expect(realModules(debugEnv, releaseUtility)).toEqual([]);
     expect(realModules(devHost, devMain)).toEqual(["src/main/dev-host.ts", "src/main/dev-proxy.ts"]);
     expect(realModules(devHost, testMain)).toEqual([]);
@@ -86,7 +105,7 @@ describe("checkBundleModules", () => {
       ["test", "preload.cjs", preload],
       ["dev", "main.cjs", devMain],
     ] as const) {
-      expect({ profile, bundle, problems: checkBundleModules(profile, bundle, modules).problems }).toEqual({
+      expect({ profile, bundle, problems: checkListedModules(profile, bundle, modules).problems }).toEqual({
         profile,
         bundle,
         problems: [],
@@ -95,13 +114,13 @@ describe("checkBundleModules", () => {
   });
 
   it("reports what it established", () => {
-    expect(checkBundleModules("release", "main.cjs", releaseMain).findings).toEqual([
-      "no src/debug-env.ts; src/debug-env.empty.ts instead",
+    expect(checkListedModules("release", "main.cjs", releaseMain).findings).toEqual([
+      "no src/debug-env.ts, src/debug-env.names.ts; src/debug-env.empty.ts instead",
       "no src/diagnostics/entry.ts, src/diagnostics/; src/diagnostics/entry.empty.ts instead",
       "no src/main/dev-host.ts, src/main/dev-proxy.ts; src/main/dev-host.empty.ts instead",
     ]);
-    expect(checkBundleModules("test", "utility.mjs", testUtility).findings).toEqual([
-      "found src/debug-env.ts",
+    expect(checkListedModules("test", "utility.mjs", testUtility).findings).toEqual([
+      "found src/debug-env.ts, src/debug-env.names.ts",
       "found src/diagnostics/bench/routes.ts, src/diagnostics/e2e/routes.ts, src/diagnostics/entry.ts, src/diagnostics/smoke/routes.ts",
       "no src/main/dev-host.ts, src/main/dev-proxy.ts",
     ]);
@@ -113,6 +132,7 @@ describe("checkBundleModules", () => {
     ["src/diagnostics/e2e/routes.ts", "a route module"],
     ["src/diagnostics/new-kind/tool.ts", "anything new under the directory"],
     ["src/debug-env.ts", "the module that reads the debug variables"],
+    ["src/debug-env.names.ts", "the names of the debug variables"],
     ["src/main/dev-proxy.ts", "the development proxy"],
     ["src/main/dev-host.ts", "the development host"],
   ])("fails a release bundle that contains %s (%s)", (module) => {
@@ -121,7 +141,7 @@ describe("checkBundleModules", () => {
       ["utility.mjs", releaseUtility],
       ["preload.cjs", preload],
     ] as const) {
-      const { problems } = checkBundleModules("release", bundle, [...modules, module]);
+      const { problems } = checkListedModules("release", bundle, [...modules, module]);
       expect(problems).toEqual([
         `.vite/release/${bundle} contains ${module}, which the release profile must not bundle`,
       ]);
@@ -129,14 +149,14 @@ describe("checkBundleModules", () => {
   });
 
   it("fails a test bundle that contains development code", () => {
-    expect(checkBundleModules("test", "main.cjs", [...testMain, "src/main/dev-proxy.ts"]).problems).toEqual([
+    expect(checkListedModules("test", "main.cjs", [...testMain, "src/main/dev-proxy.ts"]).problems).toEqual([
       ".vite/test/main.cjs contains src/main/dev-proxy.ts, which the test profile must not bundle",
     ]);
   });
 
   it("fails a release bundle whose entry was not replaced by the empty implementation", () => {
     expect(
-      checkBundleModules(
+      checkListedModules(
         "release",
         "main.cjs",
         releaseMain.filter((id) => id !== "src/diagnostics/entry.empty.ts"),
@@ -146,8 +166,9 @@ describe("checkBundleModules", () => {
 
   it("fails the positive control when the test bundles do not show what the check looks for", () => {
     // The release bundles' lists, presented as test: nothing to find means the check proves nothing.
-    expect(checkBundleModules("test", "main.cjs", releaseMain).problems).toEqual([
+    expect(checkListedModules("test", "main.cjs", releaseMain).problems).toEqual([
       ".vite/test/main.cjs does not contain src/debug-env.ts: the check cannot see what it looks for",
+      ".vite/test/main.cjs contains nothing of src/debug-env.names.ts: the check cannot see what it looks for",
       ".vite/test/main.cjs contains src/debug-env.empty.ts, which the test profile must not bundle",
       ".vite/test/main.cjs does not contain src/diagnostics/entry.ts: the check cannot see what it looks for",
       ".vite/test/main.cjs contains nothing of src/diagnostics/: the check cannot see what it looks for",
@@ -155,18 +176,51 @@ describe("checkBundleModules", () => {
     ]);
     // The entry alone, with nothing of the directory behind it, is not enough either.
     expect(
-      checkBundleModules(
+      checkListedModules(
         "test",
         "utility.mjs",
         testUtility.filter((id) => !id.startsWith("src/diagnostics/") || id === "src/diagnostics/entry.ts"),
       ).problems,
     ).toEqual([".vite/test/utility.mjs contains nothing of src/diagnostics/: the check cannot see what it looks for"]);
-    expect(checkBundleModules("dev", "main.cjs", testMain).problems).toEqual([
+    expect(checkListedModules("dev", "main.cjs", testMain).problems).toEqual([
       ".vite/dev/main.cjs does not contain src/main/dev-host.ts: the check cannot see what it looks for",
       ".vite/dev/main.cjs contains nothing of src/main/dev-proxy.ts: the check cannot see what it looks for",
       ".vite/dev/main.cjs contains src/main/dev-host.empty.ts, which the dev profile must not bundle",
     ]);
   });
+});
+
+it("keeps a tree-shaken import in the release ban but excludes it from the test positive control", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "desktop tree shaking "));
+  try {
+    mkdirSync(join(directory, "src"));
+    writeFileSync(join(directory, "src", "debug-env.ts"), "export const unused = 42;");
+    writeFileSync(join(directory, "src", "main.js"), 'import "./debug-env.ts"; console.log("live");');
+    for (const profile of ["release", "test"] as const) {
+      await build({
+        root: directory,
+        configFile: false,
+        logLevel: "silent",
+        plugins: [recordBundleModules(profile, directory)],
+        build: {
+          outDir: `.vite/${profile}`,
+          lib: { entry: join(directory, "src/main.js"), formats: ["cjs"], fileName: () => "main.cjs" },
+        },
+      });
+      const { modules, renderedModules } = readBundleModules(directory, profile, "main.cjs");
+      expect(modules).toContain(debugEnv.module);
+      expect(renderedModules).toContain("src/main.js");
+      expect(renderedModules).not.toContain(debugEnv.module);
+      const check = checkBundleModules(profile, "main.cjs", modules, renderedModules, [debugEnv]);
+      expect(check.problems).toContainEqual(
+        expect.stringContaining(
+          profile === "release" ? "contains src/debug-env.ts" : "does not contain src/debug-env.ts",
+        ),
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 describe("moduleName", () => {
@@ -190,6 +244,7 @@ function record(overrides: Record<string, unknown> = {}): string {
     bundle: "main.cjs",
     sha256: createHash("sha256").update("bundle").digest("hex"),
     modules: ["src/main.ts"],
+    renderedModules: ["src/main.ts"],
     ...overrides,
   });
 }

@@ -2,13 +2,13 @@
 // that list must and must not contain per build profile (scripts/build-profile.ts, PROFILE_ENTRIES).
 // - `recordBundleModules()` is a Vite plugin (vite.base.config.ts) that writes
 //   `.vite/<profile>/<bundle>.modules.json` beside every bundle: the profile, the SHA-256 of the
-//   bundle as written, and every module of the build's module graph, tree-shaken ones included. The
+//   bundle as written, the complete module graph (including tree-shaken modules), and the modules that rendered code in this chunk. The
 //   records stay out of the packaged app (electron-builder.*.yml).
 // - `bundleModuleProblems()` is the check scripts/verify-build.ts runs on those records. It never
 //   looks at bundle text: minified output says little about where code came from.
 // Runs on Node directly (type stripping).
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import type { Plugin } from "vite";
@@ -30,6 +30,7 @@ export interface BundleModules {
   sha256: string;
   /** Module ids relative to apps/desktop, with forward slashes, sorted; virtual modules keep their id. */
   modules: string[];
+  renderedModules: string[];
 }
 
 /** The record's file name, beside the bundle. */
@@ -53,11 +54,12 @@ export function moduleName(id: string, desktopDir: string): string {
  * watch rebuild rewrites the record with the bundle.
  */
 export function recordBundleModules(profile: BuildProfile, desktopDir: string): Plugin {
+  const root = realpathSync(desktopDir);
   let modules: string[] = [];
   return {
     name: "desktop:record-bundle-modules",
     generateBundle() {
-      modules = Array.from(this.getModuleIds(), (id) => moduleName(id, desktopDir)).toSorted();
+      modules = Array.from(this.getModuleIds(), (id) => moduleName(id, root)).toSorted();
     },
     writeBundle(options, bundle) {
       const directory = options.dir ?? (options.file ? dirname(options.file) : undefined);
@@ -69,6 +71,10 @@ export function recordBundleModules(profile: BuildProfile, desktopDir: string): 
           bundle: chunk.fileName,
           sha256: sha256(readFileSync(join(directory, chunk.fileName))),
           modules,
+          renderedModules: Object.entries(chunk.modules)
+            .filter(([, module]) => module.renderedLength > 0)
+            .map(([id]) => moduleName(id, root))
+            .toSorted(),
         };
         writeFileSync(join(directory, modulesRecordName(chunk.fileName)), JSON.stringify(record, null, 2) + "\n");
       }
@@ -95,18 +101,23 @@ export function readBundleModules(desktopDir: string, profile: BuildProfile, bun
     !("profile" in record && isBuildProfile(record.profile)) ||
     !("bundle" in record && typeof record.bundle === "string") ||
     !("sha256" in record && typeof record.sha256 === "string") ||
-    !("modules" in record && Array.isArray(record.modules) && record.modules.every((id) => typeof id === "string"))
+    !("modules" in record && Array.isArray(record.modules) && record.modules.every((id) => typeof id === "string")) ||
+    !(
+      "renderedModules" in record &&
+      Array.isArray(record.renderedModules) &&
+      record.renderedModules.every((id) => typeof id === "string")
+    )
   ) {
     throw new Error(`${recordPath} is not a bundle module record: ${rebuild}`);
   }
-  const { profile: recordedProfile, bundle: recordedBundle, sha256: digest, modules } = record;
+  const { profile: recordedProfile, bundle: recordedBundle, sha256: digest, modules, renderedModules } = record;
   if (recordedProfile !== profile || recordedBundle !== bundle) {
     throw new Error(`${recordPath} describes ${recordedBundle} of the ${recordedProfile} profile: ${rebuild}`);
   }
   if (digest !== sha256(readFileSync(join(desktopDir, path)))) {
     throw new Error(`${recordPath} is stale: it was not written for the ${path} on disk; ${rebuild}`);
   }
-  return { profile, bundle, sha256: digest, modules };
+  return { profile, bundle, sha256: digest, modules, renderedModules };
 }
 
 /** The modules of `modules` that belong to an entry's real implementation: the module itself and what it owns. */
@@ -138,16 +149,18 @@ export function checkBundleModules(
   profile: BuildProfile,
   bundle: Bundle,
   modules: readonly string[],
+  renderedModules: readonly string[],
   entries: readonly ProfileEntry[] = PROFILE_ENTRIES,
 ): BundleModuleCheck {
   const problems: string[] = [];
   const findings: string[] = [];
   const where = `${bundleDir(profile)}/${bundle}`;
   for (const entry of entries) {
-    const real = realModules(entry, modules);
+    const enabled = entry.profiles.includes(profile);
+    const real = realModules(entry, enabled ? renderedModules : modules);
     const imports = entry.bundles.includes(bundle);
     const empty = modules.includes(entry.empty);
-    if (!entry.profiles.includes(profile)) {
+    if (!enabled) {
       if (real.length > 0) {
         problems.push(`${where} contains ${real.join(", ")}, which the ${profile} profile must not bundle`);
       }

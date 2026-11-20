@@ -8,10 +8,12 @@
 //
 //   node scripts/check-web-build.ts [dev | test | release]   (default test)
 //
+// - The completed Web build records its client tree digest outside the client directory. The utility
+//   embeds that digest, so desktop-only rebuilds cannot silently bless a changed client build.
 // - Client half: every hashed `/assets/<name>-<hash>.<ext>` path the utility bundle references (the
 //   route manifest, entry and route modules, stylesheets) must exist in
 //   apps/web/build/client/assets. The reverse does not hold (assets that only other assets load are
-//   not in the server build), so extra client files are fine.
+//   not in the server build), so the digest covers even the files the server does not reference.
 // - Server half: the utility build records the SHA-256 of the apps/web/build/server/index.js it
 //   bundled in `.vite/<profile>/web-server.json` (`recordWebServerBuild`, vite.utility.config.ts);
 //   that file must still have the same digest. The entry imports its chunks under content-hashed
@@ -23,6 +25,7 @@ import { join, relative, resolve } from "node:path";
 
 import type { Plugin } from "vite";
 
+import { CLIENT_DIGEST_FILE, clientDigest } from "../../../build-tools/web-client-integrity.ts";
 import { type BuildProfile, buildProfileFrom, bundleDir } from "./build-profile.ts";
 
 /** Where the utility build records the server build it bundled, beside utility.mjs. */
@@ -57,6 +60,13 @@ export function recordWebServerBuild(entry: string): Plugin {
       if (canonical(id) === canonical(entry)) digest = webServerDigest(code);
       return null;
     },
+    footer() {
+      const record = resolve(entry, "../../", CLIENT_DIGEST_FILE);
+      if (!existsSync(record)) this.error(`missing ${record}: rebuild the Web app before the utility`);
+      const expected = readFileSync(record, "utf8").trim();
+      if (!/^[a-f0-9]{64}$/.test(expected)) this.error(`invalid Web client digest in ${record}`);
+      return `/*! web-client-sha256: ${expected} */`;
+    },
     generateBundle() {
       if (digest === undefined) this.error(`the utility bundle does not contain ${entry}`);
       const source = JSON.stringify({ entry: "apps/web/build/server/index.js", sha256: digest }, null, 2) + "\n";
@@ -71,6 +81,16 @@ const HASHED_ASSET = /["'`]\/assets\/([\w.~-]+-[\w-]{8}\.[A-Za-z0-9]+)(?=["'`?#]
 /** The hashed client asset file names `code` (a bundle's source) references, sorted, without duplicates. */
 export function referencedClientAssets(code: string): string[] {
   return [...new Set(Array.from(code.matchAll(HASHED_ASSET), (match) => match[1]))].toSorted();
+}
+
+/** Check source client files or packaged resources against the digest embedded in this utility. */
+export function checkClientDigest(utility: string, clientDirectory: string): void {
+  const expected = /^\/\*! web-client-sha256: ([a-f0-9]{64}) \*\/$/m.exec(utility)?.[1];
+  if (expected === undefined || clientDigest(clientDirectory) !== expected) {
+    throw new Error(
+      `${show(clientDirectory)} does not match the web client digest in the utility bundle; rebuild the Web and desktop apps`,
+    );
+  }
 }
 
 /** A path as messages show it, relative to where the command runs. */
@@ -94,7 +114,8 @@ export function checkWebBuild(desktopDir: string, profile: BuildProfile): void {
   const rebuild = `run \`${buildCommand(profile)}\` first`;
   if (!existsSync(utility)) throw new Error(`${show(utility)} is missing: ${rebuild}`);
   if (!existsSync(assets)) throw new Error(`${show(assets)} is missing: ${rebuild}`);
-  const referenced = referencedClientAssets(readFileSync(utility, "utf8"));
+  const code = readFileSync(utility, "utf8");
+  const referenced = referencedClientAssets(code);
   if (referenced.length === 0) {
     throw new Error(`${show(utility)} references no hashed web client assets: ${rebuild}`);
   }
@@ -106,6 +127,7 @@ export function checkWebBuild(desktopDir: string, profile: BuildProfile): void {
         `${missing.join(", ")}. ${rebuild[0].toUpperCase()}${rebuild.slice(1)}.`,
     );
   }
+  checkClientDigest(code, resolve(assets, ".."));
   const record = join(desktopDir, bundleDir(profile), WEB_SERVER_RECORD);
   const server = webServerEntry(desktopDir);
   if (!existsSync(record)) throw new Error(`${show(record)} is missing: ${rebuild}`);

@@ -50,7 +50,7 @@
 // 5. Signing: by intended use (scripts/release-verdicts.ts, `judgeSigning`). A local unsigned package
 //    is skipped; `--distribution` declares the package is for distribution, where a missing or
 //    invalid signature fails (macOS: codesign deep strict verify, stapled notarization, Gatekeeper;
-//    Windows: Authenticode). Nothing here needs a signing key. Linux: nothing applies.
+//    Windows: Authenticode for the app and, for distribution, its NSIS installer). Nothing here needs a signing key. Linux: nothing applies.
 // Linux hosts where Chromium's sandbox cannot start (scripts/launch.ts, `linuxSandboxBlocker`) skip
 // checks 3 and 4 (exit status 2), saying what would open the gate there, unless `--allow-no-sandbox`
 // lets them run with `--no-sandbox`, which their result lines then state. Checks 1, 2 and 5 run
@@ -81,8 +81,10 @@ import { COOKIE_KEY_WRITER_FAILED_FILE, MAIN_WINDOW_READY_MESSAGE } from "../src
 import { asarFile, asarHeaderHash, readAsar, sha256 } from "./asar.ts";
 import { bundleDir, type Bundle, perBundle } from "./build-profile.ts";
 import { checkBundleTexts } from "./bundle-markers.ts";
-import { referencedClientAssets } from "./check-web-build.ts";
+import { checkClientDigest, referencedClientAssets } from "./check-web-build.ts";
+import { listProcesses } from "./child-run.ts";
 import { checkPackagedFuses, describeFuses } from "./fuses.ts";
+import { checkInstaller } from "./installer-receipt.ts";
 import {
   checkLaunchInputs,
   credentialStoreSwitches,
@@ -95,17 +97,20 @@ import {
   removeUserDataDir,
   windowStateSwitches,
 } from "./launch.ts";
+import { powershellOutput } from "./powershell.ts";
 import {
   ALLOW_NO_SANDBOX_FLAG,
   checkAsarContents,
   checkBundleLink,
   type CheckResult,
   type CheckStatus,
+  controlSandboxArgs,
   describeExit,
   describeProcesses,
   DISTRIBUTION_FLAG,
   judgeRefusal,
   judgeSigning,
+  judgeWindowsDistribution,
   judgeStartup,
   type LaunchDiagnostics,
   type LaunchGate,
@@ -118,8 +123,6 @@ import {
   type Manifest,
   observeCookieKey,
   parseAuthenticode,
-  parsePsListing,
-  parseWindowsListing,
   pipeReply,
   type ProcessInfo,
   requiresSigning,
@@ -197,7 +200,7 @@ function locatePackage(): Package {
 /** The installed app's userData directory: Electron's appData plus the product name. */
 function realUserDataDir(productName: string): string {
   if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", productName);
-  if (isWindows) return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), productName);
+  if (isWindows) return join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), productName);
   return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), productName);
 }
 
@@ -215,47 +218,6 @@ function fingerprint(directory: string): string {
 }
 
 // ---- processes ------------------------------------------------------------------------------------
-
-/** The environment for powershell.exe: without the caller's PSModulePath, which a PowerShell 7 parent sets for itself. */
-function powershellEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
-  delete env.PSModulePath;
-  return env;
-}
-
-/** Runs a PowerShell command whose output is UTF-8 JSON, whatever the console's code page. */
-function powershellJson(command: string, extra: Record<string, string> = {}): string {
-  return execFileSync(
-    "powershell",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`,
-    ],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: powershellEnv(extra) },
-  );
-}
-
-/** Every process on the machine, with what `launchProcesses` needs. Throws when the listing fails. */
-function listProcesses(): ProcessInfo[] {
-  if (isWindows) {
-    return parseWindowsListing(
-      powershellJson(
-        "Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine," +
-          "@{n='Created';e={if ($_.CreationDate) { [DateTimeOffset]::new($_.CreationDate).ToUnixTimeMilliseconds() } else { $null }}}" +
-          " | ConvertTo-Json -Compress",
-      ),
-    );
-  }
-  return parsePsListing(
-    execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid=,stat=,lstart=,args="], {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, LC_ALL: "C" },
-    }),
-  );
-}
 
 function kill(pid: number, signal: NodeJS.Signals = "SIGKILL"): void {
   try {
@@ -330,12 +292,22 @@ function createdBy(started: Launch): ProcessInfo[] {
 
 /** Kills everything a launch created, and nothing else. */
 function terminate(started: Launch, known: readonly ProcessInfo[] = []): void {
-  killRunningTree(started.app);
-  let created: ProcessInfo[] = [];
+  // Recheck previously seen helpers against a fresh listing before signalling their PIDs.
+  let owned: ProcessInfo[] = [];
   try {
-    created = createdBy(started);
-  } catch {}
-  for (const process of [...known, ...created]) kill(process.pid);
+    owned = leftoverProcesses(
+      listProcesses(),
+      known,
+      started.root,
+      started.preexisting,
+      started.location,
+      process.platform,
+    );
+  } catch {
+    // Listing can fail during shutdown; the live child still owns its group/tree.
+  }
+  killRunningTree(started.app);
+  for (const entry of owned) if (entry.pid !== started.root.pid) kill(entry.pid);
 }
 
 /** Tears down every launch and temporary directory still around: on interruption and unexpected exit. */
@@ -367,6 +339,7 @@ function launch(
 ): Launch {
   const preexisting = new Set(listProcesses().map((process) => process.pid));
   const spawnedAt = Date.now();
+  const userDataDir = args.find((arg) => arg.startsWith("--user-data-dir="))?.slice("--user-data-dir=".length);
   const child = spawn(command, args, {
     cwd: dirname(command),
     env,
@@ -375,6 +348,7 @@ function launch(
   });
   const { pid, stdout: out, stderr: err } = child;
   if (pid === undefined || out === null || err === null) throw new Error(`could not start ${command}`);
+  const root: LaunchRoot = { pid, spawnedAt, userDataDir };
   let stdout = "";
   let stderr = "";
   let pending = "";
@@ -419,6 +393,7 @@ function launch(
     });
     child.once("exit", (code, signal) => {
       running = false;
+      root.exitedAt = Date.now();
       exit = { code, signal };
       // The rest of the output arrives by `close`; a helper holding the pipes open (Windows hands them
       // down) must not hold this up for more than a moment.
@@ -429,7 +404,7 @@ function launch(
     });
   });
   for (const stream of app.extra) stream?.on("error", () => {});
-  const started: Launch = { app, root: { pid, spawnedAt }, preexisting, location };
+  const started: Launch = { app, root, preexisting, location };
   launches.add(started);
   return started;
 }
@@ -621,7 +596,10 @@ function checkContents(pkg: Package): CheckResult {
     problems.push(...text.problems.map((problem) => `as shipped: ${problem}`));
     if (text.problems.length === 0) findings.push("their shipped text has none of the diagnostic or debug markers");
 
-    const assets = join(pkg.resources, "client", "assets");
+    const client = join(pkg.resources, "client");
+    checkClientDigest(code["utility.mjs"], client);
+    findings.push("the packaged client resources match the Web build digest in the shipped utility");
+    const assets = join(client, "assets");
     const referenced = referencedClientAssets(code["utility.mjs"]);
     const missing = referenced.filter((file) => !existsSync(join(assets, file)));
     if (referenced.length === 0) problems.push("the shipped utility references no hashed client assets");
@@ -683,6 +661,7 @@ async function refusedLaunch(
  * Otherwise a release launch that did not answer would prove nothing.
  */
 async function testPackageAnswers(
+  gate: LaunchGate,
   remoteSwitch: "remote-debugging-port" | "remote-debugging-pipe",
 ): Promise<{ ok: boolean; reason: string }> {
   const userDataDir = tempDir("verify-release-control");
@@ -690,6 +669,7 @@ async function testPackageAnswers(
     let spec: ReturnType<typeof launchSpec>;
     try {
       spec = launchSpec("packaged", "test", { userDataDir });
+      spec.args = controlSandboxArgs(spec.args, gate);
       await checkLaunchInputs(spec);
     } catch (err) {
       return {
@@ -752,7 +732,7 @@ async function checkRefusal(pkg: Package, gate: LaunchGate): Promise<CheckResult
   for (const remoteSwitch of ["remote-debugging-port", "remote-debugging-pipe"] as const) {
     const verdict = await refusedLaunch(pkg, gate, remoteSwitch);
     (verdict.ok ? passes : failures).push(`--${remoteSwitch}: ${verdict.reason}`);
-    const control = await testPackageAnswers(remoteSwitch);
+    const control = await testPackageAnswers(gate, remoteSwitch);
     if (control.ok) passes.push(`--${remoteSwitch} positive control: ${control.reason}`);
     else failures.push(`--${remoteSwitch} positive control failed, so the refusal proves nothing: ${control.reason}`);
   }
@@ -892,17 +872,19 @@ function runTool(command: string, args: string[]): { ok: boolean; output: string
   return { ok: ran.status === 0, output: `${ran.stdout ?? ""}${ran.stderr ?? ""}`.trim() || String(ran.error ?? "") };
 }
 
+function windowsSignature(file: string): Extract<SignatureFacts, { platform: "win32" }> {
+  return parseAuthenticode(
+    powershellOutput(
+      "Get-AuthenticodeSignature -ErrorAction Stop -LiteralPath $env:VERIFY_RELEASE_EXE | Select-Object " +
+        "@{n='Status';e={[string]$_.Status}},StatusMessage,@{n='Signer';e={$_.SignerCertificate.Subject}} | ConvertTo-Json -Compress",
+      { VERIFY_RELEASE_EXE: file },
+    ),
+  );
+}
+
 function signatureFacts(pkg: Package): SignatureFacts {
   if (process.platform === "linux") return { platform: "linux" };
-  if (isWindows) {
-    return parseAuthenticode(
-      powershellJson(
-        "Get-AuthenticodeSignature -LiteralPath $env:VERIFY_RELEASE_EXE | Select-Object " +
-          "@{n='Status';e={[string]$_.Status}},StatusMessage,@{n='Signer';e={$_.SignerCertificate.Subject}} | ConvertTo-Json -Compress",
-        { VERIFY_RELEASE_EXE: pkg.executable },
-      ),
-    );
-  }
+  if (isWindows) return windowsSignature(pkg.executable);
   const bundle = pkg.bundle!;
   const display = runTool("codesign", ["-dv", "--verbose=2", bundle]);
   if (/not signed at all/.test(display.output)) return { platform: "darwin", signature: "unsigned" };
@@ -918,13 +900,30 @@ function signatureFacts(pkg: Package): SignatureFacts {
   };
 }
 
-function checkSigning(pkg: Package, distribution: boolean): CheckResult {
+async function checkSigning(pkg: Package, distribution: boolean): Promise<CheckResult> {
   const name = "signing and notarization";
   try {
-    const verdict = judgeSigning(signatureFacts(pkg), distribution);
+    const app = signatureFacts(pkg);
+    if (app.platform === "win32" && distribution) {
+      const installerName = `${pkg.manifest.productName} Setup ${pkg.manifest.version}.exe`;
+      const installer = join(desktopDir, "out", "release", installerName);
+      const verdict = judgeWindowsDistribution(
+        app,
+        installerName,
+        existsSync(installer) ? windowsSignature(installer) : undefined,
+      );
+      if (verdict.status === "pass") await checkInstaller(installer, process.arch, pkg.executable);
+      return report(5, name, verdict.status, verdict.reason);
+    }
+    const verdict = judgeSigning(app, distribution);
     return report(5, name, verdict.status, verdict.reason);
   } catch (err) {
-    return report(5, name, "fail", `could not read the signature: ${err instanceof Error ? err.message : String(err)}`);
+    return report(
+      5,
+      name,
+      "fail",
+      `could not verify distribution signing: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -982,7 +981,7 @@ async function main(): Promise<number> {
     say("building the web app, the release and test bundles, and packaging the release and test apps");
     pnpm(["run", "build", "release", "--with-web"]);
     pnpm(["run", "build", "test"]);
-    pnpm(["run", "package:release"]);
+    pnpm(["run", isWindows && distribution ? "dist:release" : "package:release"]);
     pnpm(["run", "package"]);
   }
   const pkg = locatePackage();

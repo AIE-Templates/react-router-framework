@@ -8,31 +8,36 @@ import { execFileSync } from "node:child_process";
 /** The session's state, or why it could not be read. Elsewhere than macOS, always unlocked. */
 export type ScreenLock = { locked: boolean } | { unknown: string };
 
-/**
- * Whether `ioreg -n Root -d1 -a` (an XML property list) says a session's screen is locked: its
- * `IOConsoleUsers` entries carry `CGSSessionScreenIsLocked` as `<true/>` while it is, and `<false/>` or
- * no such key otherwise. Any locked entry counts, as the console session is the one that matters and a
- * locked one elsewhere is at worst a false alarm.
- */
-export function screenLockedFromIoreg(xml: string): boolean {
-  return /<key>CGSSessionScreenIsLocked<\/key>\s*<true\s*\/>/.test(xml);
+function consoleSessions(): unknown {
+  const xml = execFileSync("ioreg", ["-n", "Root", "-d1", "-a"], { maxBuffer: 16 * 1024 * 1024 });
+  const json = execFileSync("plutil", ["-extract", "IOConsoleUsers", "json", "-o", "-", "-"], {
+    input: xml,
+    encoding: "utf8",
+  });
+  return JSON.parse(json);
 }
 
-/** The macOS screen lock, read from `ioreg` (an empty or failing listing is `unknown`). */
-export function screenLock(
-  platform: NodeJS.Platform = process.platform,
-  ioreg: () => string = () =>
-    execFileSync("ioreg", ["-n", "Root", "-d1", "-a"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }),
-): ScreenLock {
+/** Only the frontmost login session can determine whether window-state checks can run. */
+export function screenLock(platform: NodeJS.Platform = process.platform, sessions = consoleSessions): ScreenLock {
   if (platform !== "darwin") return { locked: false };
-  let xml: string;
   try {
-    xml = ioreg();
+    const listing: unknown = sessions();
+    if (Array.isArray(listing)) {
+      for (const entry of listing as unknown[]) {
+        if (
+          typeof entry === "object" &&
+          entry !== null &&
+          "kCGSSessionOnConsoleKey" in entry &&
+          entry.kCGSSessionOnConsoleKey === true
+        ) {
+          return { locked: "CGSSessionScreenIsLocked" in entry && entry.CGSSessionScreenIsLocked === true };
+        }
+      }
+    }
+    return { unknown: "ioreg listed no foreground console session" };
   } catch (err) {
-    return { unknown: `ioreg failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { unknown: `could not read IOConsoleUsers: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (!xml.includes("IOConsoleUsers")) return { unknown: "ioreg listed no IOConsoleUsers" };
-  return { locked: screenLockedFromIoreg(xml) };
 }
 
 /** The reason a window-state check cannot run now, with the key it was read from. */

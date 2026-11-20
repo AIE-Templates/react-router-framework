@@ -72,11 +72,11 @@ export function checkBuiltBundles(directory: string = desktopDir): BuildCheck {
   const release = new Map<Bundle, string>();
   for (const profile of PROFILES) {
     for (const bundle of BUNDLES) {
-      const { modules, sha256 } = readBundleModules(directory, profile, bundle);
+      const { modules, renderedModules, sha256 } = readBundleModules(directory, profile, bundle);
       if (profile === "release") release.set(bundle, sha256);
-      const check = checkBundleModules(profile, bundle, modules);
+      const check = checkBundleModules(profile, bundle, modules, renderedModules);
       problems.push(...check.problems);
-      const label = `${profile} ${bundle} (${modules.length} modules)`;
+      const label = `${profile} ${bundle} (${modules.length} loaded; ${renderedModules.length} rendered)`;
       findings.push(...check.findings.map((finding) => `${label}: ${finding}`));
     }
     const read = (bundle: Bundle) => readFileSync(join(directory, bundleDir(profile), bundle), "utf8");

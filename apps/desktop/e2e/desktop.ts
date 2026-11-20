@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
+import { killIfRunning } from "../scripts/child-run.ts";
 import {
   appProcesses,
   buildProfileMismatch,
@@ -98,7 +99,7 @@ export async function launch(target: Target, userDataDir: string): Promise<Launc
     return { app, page, pid };
   } catch (err) {
     await app.close().catch(() => {});
-    if (pid !== undefined && isAlive(pid)) process.kill(pid, "SIGKILL");
+    if (pid !== undefined) killIfRunning(pid);
     throw err;
   }
 }
@@ -158,9 +159,22 @@ export const test = base.extend<Fixtures & Options>({
       launched.push(app);
       return app;
     });
+    const failures: unknown[] = [];
     for (const app of launched) {
-      if (isAlive(app.pid)) await quit(app).catch(() => process.kill(app.pid, "SIGKILL"));
+      if (isAlive(app.pid)) {
+        try {
+          await quit(app);
+        } catch (err) {
+          failures.push(err);
+          try {
+            killIfRunning(app.pid);
+          } catch (killError) {
+            failures.push(killError);
+          }
+        }
+      }
     }
+    if (failures.length) throw new AggregateError(failures, "Could not close all test apps cleanly");
   },
   desktop: async ({ launchApp }, provide) => {
     await provide(await launchApp());

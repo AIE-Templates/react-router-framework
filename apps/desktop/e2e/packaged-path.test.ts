@@ -47,12 +47,9 @@ describe("builder profiles", () => {
     (profile) => {
       const leaf = leaves[profile];
       expect(topLevelList(leaf, "files")).toEqual([
-        `".vite/${profile}/**"`,
-        `"!.vite/${profile}/*.map"`,
-        // The utility build's record of the web server build is for launch checks, not the app.
-        `"!.vite/${profile}/web-server.json"`,
-        // Nor are the bundles' module records, which scripts/verify-build.ts reads.
-        `"!.vite/${profile}/*.modules.json"`,
+        `".vite/${profile}/main.cjs"`,
+        `".vite/${profile}/preload.cjs"`,
+        `".vite/${profile}/utility.mjs"`,
         "package.json",
       ]);
       // The bundles know their own profile (DESKTOP_BUILD_PROFILE); the package metadata does not repeat it.

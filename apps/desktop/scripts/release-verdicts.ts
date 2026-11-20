@@ -103,6 +103,13 @@ export interface LaunchGate {
 /** The flag that lets the verifier launch without Chromium's sandbox where it cannot start. */
 export const ALLOW_NO_SANDBOX_FLAG = "--allow-no-sandbox";
 
+/** Require the test control to use the same Chromium sandbox mode as its release launch. */
+export function controlSandboxArgs(args: string[], gate: LaunchGate): string[] {
+  if (args.includes("--no-sandbox") && !gate.switches.includes("--no-sandbox"))
+    throw new Error("the test package requires --no-sandbox but the release package runs with its sandbox");
+  return gate.switches.includes("--no-sandbox") && !args.includes("--no-sandbox") ? [...args, "--no-sandbox"] : args;
+}
+
 /**
  * Whether the launches of checks 3 and 4 run, given why Chromium's sandbox cannot start on this Linux
  * host (`linuxSandboxBlocker`, scripts/launch.ts; undefined when it can, and always elsewhere). The
@@ -331,7 +338,7 @@ export function judgeRefusal(
 ): { ok: boolean; reason: string } {
   const lines = mainLogLines(outcome.stdout);
   const refusals = lines.filter((line) => line.msg === REMOTE_DEBUGGING_REFUSED_MESSAGE);
-  if (endpoint.listened) return { ok: false, reason: "the remote debugging port answered /json/version" };
+  if (endpoint.listened) return { ok: false, reason: "the remote debugging port accepted a TCP connection" };
   if (endpoint.answered) return { ok: false, reason: "the remote debugging pipe answered a command" };
   if (outcome.timedOut || outcome.signal !== null || outcome.code !== REMOTE_DEBUGGING_EXIT_CODE) {
     return {
@@ -466,6 +473,9 @@ export interface ProcessLocation {
 export interface LaunchRoot {
   pid: number;
   spawnedAt: number;
+  exitedAt?: number;
+  /** Fresh directory unique to this launch, also carried by detached Chromium helpers. */
+  userDataDir?: string;
 }
 
 /**
@@ -476,6 +486,18 @@ export interface LaunchRoot {
 export function runsFrom(process: ProcessInfo, location: ProcessLocation, platform: NodeJS.Platform): boolean {
   if (platform === "win32") return process.executable?.toLowerCase() === location.command.toLowerCase();
   return process.command.startsWith(`${location.processDir}/`);
+}
+
+/** Chromium may detach Crashpad from both the tree and group. Its database is inside this launch's fresh profile. */
+function usesLaunchProfile(command: string, directory: string | undefined, platform: NodeJS.Platform): boolean {
+  if (!directory) return false;
+  // ps drops argv boundaries; include the whole known value and match the end of the switch.
+  const path = directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const child = platform === "win32" ? "\\\\" : "/";
+  return new RegExp(
+    `(?:^|\\s)"?--(?:user-data-dir="?${path}|database="?${path}${child}Crashpad)"?(?:\\s|$)`,
+    platform === "win32" ? "i" : "",
+  ).test(command);
 }
 
 /**
@@ -495,14 +517,17 @@ function createdByLaunch(
 ): boolean {
   if (process.pid <= 0 || process.zombie || preexisting.has(process.pid)) return false;
   if (process.startedAt === undefined) return platform !== "win32";
-  const earliest = Math.floor(root.spawnedAt / 1000) * 1000 - (platform === "linux" ? 1000 : 0);
+  const earliest =
+    platform === "win32"
+      ? root.spawnedAt
+      : Math.floor(root.spawnedAt / 1000) * 1000 - (platform === "linux" ? 1000 : 0);
   return process.startedAt >= earliest;
 }
 
 /**
  * The processes of one launch in a listing, each created by it (`createdByLaunch`): the main process,
  * its descendants, on POSIX the members of its process group (it is started as a group leader), and
- * new processes of the package, which catches helpers started outside the tree, such as a crash
+ * processes of the package that carry its fresh profile, which catches a crash
  * handler that detaches from its parent. A process that holds the main process's PID but started
  * after it had already exited (Windows reuses PIDs) is not the main process, and what it started is
  * not the launch's.
@@ -518,7 +543,9 @@ export function launchProcesses(
   // A process with the root's PID is a later one when its start is clearly after the spawn.
   const impostor = created.find(
     (process) =>
-      process.pid === root.pid && process.startedAt !== undefined && process.startedAt > root.spawnedAt + 5_000,
+      process.pid === root.pid &&
+      process.startedAt !== undefined &&
+      process.startedAt > Math.min(root.exitedAt ?? Infinity, root.spawnedAt + 5_000),
   );
   const ours = new Set<number>([root.pid]);
   let grew = true;
@@ -526,6 +553,13 @@ export function launchProcesses(
     grew = false;
     for (const process of created) {
       if (ours.has(process.pid) || !ours.has(process.ppid)) continue;
+      if (
+        process.ppid === root.pid &&
+        root.exitedAt !== undefined &&
+        process.startedAt !== undefined &&
+        process.startedAt > root.exitedAt
+      )
+        continue;
       // Started after the impostor appeared, under the root's PID: the impostor's child.
       if (
         impostor &&
@@ -543,8 +577,8 @@ export function launchProcesses(
     (process) =>
       process !== impostor &&
       (ours.has(process.pid) ||
-        (process.pgid !== undefined && process.pgid === root.pid) ||
-        runsFrom(process, location, platform)),
+        (!impostor && process.pgid === root.pid) ||
+        (runsFrom(process, location, platform) && usesLaunchProfile(process.command, root.userDataDir, platform))),
   );
 }
 
@@ -552,7 +586,7 @@ export function launchProcesses(
  * The processes of a launch still running in `after`, a listing taken once its main process exited:
  * any process seen as part of it (`launched`) still there with the same command line and start (so a
  * reused PID is not mistaken for it), and anything `launchProcesses` would count now (an orphan in its
- * group or tree, a new process of the package). Never anything the launch did not create.
+ * group or tree, or a detached helper carrying its fresh profile). Never anything the launch did not create.
  */
 export function leftoverProcesses(
   after: readonly ProcessInfo[],
@@ -980,4 +1014,17 @@ export function judgeSigning(facts: SignatureFacts, distribution: boolean): { st
     status: "pass",
     reason: `signed${facts.authority ? ` by ${facts.authority}` : ""}, verified deep and strict, notarized and stapled, accepted by Gatekeeper`,
   };
+}
+
+/** A published Windows distribution contains the application and its separately signed installer. */
+export function judgeWindowsDistribution(
+  application: Extract<SignatureFacts, { platform: "win32" }>,
+  installerName: string,
+  installer: Extract<SignatureFacts, { platform: "win32" }> | undefined,
+): { status: CheckStatus; reason: string } {
+  const app = judgeSigning(application, true);
+  if (app.status !== "pass") return { status: "fail", reason: `application: ${app.reason}` };
+  if (!installer) return { status: "fail", reason: `missing distribution installer: ${installerName}` };
+  const setup = judgeSigning(installer, true);
+  return { status: setup.status, reason: `application: ${app.reason}; ${installerName}: ${setup.reason}` };
 }

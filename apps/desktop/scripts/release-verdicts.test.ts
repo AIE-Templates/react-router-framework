@@ -26,9 +26,11 @@ import {
   INCOMPLETE_EXIT,
   judgeRefusal,
   judgeSigning,
+  judgeWindowsDistribution,
   judgeStartup,
   launchGate,
   type LaunchOutcome,
+  controlSandboxArgs,
   launchProcesses,
   type LaunchRoot,
   leftoverProcesses,
@@ -320,7 +322,7 @@ describe("remote debugging refusal", () => {
   it("fails whenever the endpoint answered, even after a proper refusal, and when processes outlive it", () => {
     expect(judgeRefusal(outcome({}), "remote-debugging-port", { listened: true })).toEqual({
       ok: false,
-      reason: "the remote debugging port answered /json/version",
+      reason: "the remote debugging port accepted a TCP connection",
     });
     expect(judgeRefusal(outcome({}), "remote-debugging-pipe", { listened: false, answered: true }).ok).toBe(false);
     const straggler: ProcessInfo = { pid: 7, ppid: 1, command: "helper --type=gpu-process" };
@@ -353,7 +355,7 @@ describe("process accounting", () => {
     `${bundle}/Contents/Frameworks/Desktop Helper.app/Contents/MacOS/Desktop Helper ${type}`;
   // Spawned at 10:00:00.500; `ps` reports whole seconds.
   const spawnedAt = Date.UTC(2026, 10, 20, 10, 0, 0, 500);
-  const root: LaunchRoot = { pid: 100, spawnedAt };
+  const root: LaunchRoot = { pid: 100, spawnedAt, userDataDir: "/tmp/run space.42" };
   const main: ProcessInfo = { pid: 100, ppid: 1, pgid: 100, command: location.command, startedAt: at(0) };
   const listing: ProcessInfo[] = [
     main,
@@ -378,7 +380,7 @@ describe("process accounting", () => {
       pid: 105,
       ppid: 1,
       pgid: 105,
-      command: `${bundle}/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler`,
+      command: `${bundle}/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler --database=/tmp/run space.42/Crashpad`,
       startedAt: at(0),
     },
     // A child of a renderer, and a member of the group that is not in the tree.
@@ -395,7 +397,7 @@ describe("process accounting", () => {
   ];
   const preexisting = new Set([200, 300, 301]);
 
-  it("counts the tree, the process group and new processes of the package, nothing else", () => {
+  it("counts the tree, process group and detached helpers carrying the launch profile", () => {
     const launched = launchProcesses(listing, root, preexisting, location, "darwin");
     expect(launched.map((process) => process.pid)).toEqual([100, 101, 102, 103, 104, 105, 106, 107]);
     expect(describeProcesses(launched, 100)).toBe(
@@ -403,6 +405,19 @@ describe("process accounting", () => {
     );
     expect(missingKinds(launched, 100)).toEqual([]);
     expect(missingKinds(launched.slice(0, 3), 100)).toEqual(["renderer", "utility (node)"]);
+  });
+
+  it("leaves a parallel instance and its helpers alone throughout cleanup", () => {
+    const other = [
+      { pid: 900, ppid: 1, pgid: 900, command: location.command + " --user-data-dir=/tmp/other", startedAt: at(1) },
+      { pid: 901, ppid: 900, pgid: 900, command: helper("--type=renderer"), startedAt: at(2) },
+      { pid: 902, ppid: 1, pgid: 902, command: helper("--database=/tmp/run space.420/Crashpad"), startedAt: at(2) },
+    ];
+    const owned = launchProcesses([...listing, ...other], root, preexisting, location, "darwin");
+    expect(owned.some((p) => p.pid >= 900)).toBe(false);
+    expect(leftoverProcesses([...other, listing[5]], owned, root, preexisting, location, "darwin")).toEqual([
+      listing[5],
+    ]);
   });
 
   it("never counts a process that started before the launch, even one missing from the earlier listing", () => {
@@ -511,7 +526,7 @@ describe("process accounting", () => {
       { pid: 101, ppid: 1, pgid: 101, command: "/usr/bin/unrelated", startedAt: at(20) },
       // Still in the group.
       { pid: 400, ppid: 1, pgid: 100, command: "/bin/sleep 100", startedAt: at(3) },
-      // A new process of the package started during the quit.
+      // A same-package helper of another launch started during the quit.
       { pid: 401, ppid: 1, pgid: 401, command: helper("--type=gpu-process"), startedAt: at(4) },
       // Exited, not yet reaped.
       { ...listing[2], ppid: 1, zombie: true },
@@ -519,7 +534,7 @@ describe("process accounting", () => {
     ];
     expect(
       leftoverProcesses(after, launched, root, preexisting, location, "darwin").map((process) => process.pid),
-    ).toEqual([104, 400, 401]);
+    ).toEqual([104, 400]);
   });
 
   it("parses ps and the Windows listing, and refuses output that is not one", () => {
@@ -806,6 +821,17 @@ describe("signing", () => {
     });
   });
 
+  it("requires an existing, separately signed NSIS installer for Windows distribution", () => {
+    const app = { platform: "win32", status: "Valid", message: "" } as const;
+    expect(judgeWindowsDistribution(app, "Setup.exe", undefined)).toMatchObject({
+      status: "fail",
+      reason: expect.stringContaining("missing distribution installer"),
+    });
+    expect(judgeWindowsDistribution(app, "Setup.exe", { ...app, status: "NotSigned" }).status).toBe("fail");
+    expect(judgeWindowsDistribution(app, "Setup.exe", app).status).toBe("pass");
+    expect(judgeWindowsDistribution({ ...app, status: "HashMismatch" }, "Setup.exe", app).status).toBe("fail");
+  });
+
   it("reads Get-AuthenticodeSignature's answer, and refuses one it cannot read", () => {
     expect(
       parseAuthenticode('\uFEFF{"Status":"NotSigned","StatusMessage":"Die Datei ist nicht signiert.","Signer":null}'),
@@ -825,5 +851,18 @@ describe("signing", () => {
       reason: expect.stringContaining("repository"),
     });
     expect(judgeSigning({ platform: "linux" }, true).reason).toContain("changes nothing here");
+  });
+});
+
+describe("the remote-debugging positive control's sandbox", () => {
+  it("inherits an explicitly disabled sandbox and rejects test-only fallback", () => {
+    expect(controlSandboxArgs(["--other"], { run: true, switches: ["--no-sandbox"] })).toEqual([
+      "--other",
+      "--no-sandbox",
+    ]);
+    expect(() => controlSandboxArgs(["--no-sandbox"], { run: true, switches: [] })).toThrow(
+      "release package runs with its sandbox",
+    );
+    expect(controlSandboxArgs([], { run: true, switches: [] })).toEqual([]);
   });
 });

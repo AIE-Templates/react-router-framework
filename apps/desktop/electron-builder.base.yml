@@ -21,7 +21,7 @@ mac:
   target:
     - dmg
     - zip
-  # Unsigned for now: signing identity and notarization come with certificates (VAL-04).
+  # Unsigned for now: signing identity and notarization come with certificates.
   identity: null
 win:
   target:
@@ -29,6 +29,8 @@ win:
 # An assisted installer: it shows its pages and lets the user choose the installation directory and
 # whether to install for this user or for all users (the latter asks for elevation).
 nsis:
+  include: nsis/installer.nsh
+  artifactName: "${productName} Setup ${version}.${ext}"
   oneClick: false
   allowToChangeInstallationDirectory: true
 linux:

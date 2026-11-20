@@ -8,10 +8,9 @@ extends: ./electron-builder.base.yml
 extraMetadata:
   main: .vite/test/main.cjs
 files:
-  - ".vite/test/**"
-  - "!.vite/test/*.map"
-  - "!.vite/test/web-server.json"
-  - "!.vite/test/*.modules.json"
+  - ".vite/test/main.cjs"
+  - ".vite/test/preload.cjs"
+  - ".vite/test/utility.mjs"
   - package.json
 directories:
   output: out/test

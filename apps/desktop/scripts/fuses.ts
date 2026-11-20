@@ -16,6 +16,7 @@ import { FuseState, FuseV1Options, FuseVersion, flipFuses, getCurrentFuseWire } 
 import type { AfterPackContext } from "electron-builder";
 
 import { type BuildProfile, bundleDir } from "./build-profile.ts";
+import { writeNsisFileList } from "./nsis-files.ts";
 
 /** The build profiles that are packaged; the dev profile only ever runs unpackaged. */
 export type PackagedProfile = Exclude<BuildProfile, "dev">;
@@ -147,9 +148,12 @@ export default async function afterPack(context: AfterPackContext): Promise<void
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: fuses.EnableEmbeddedAsarIntegrityValidation,
     [FuseV1Options.OnlyLoadAppFromAsar]: fuses.OnlyLoadAppFromAsar,
   });
+  if (electronPlatformName === "win32" && profile === "release") {
+    writeNsisFileList(appOutDir, packager.projectDir, Arch[context.arch]);
+  }
 }
 
-/** The Linux packager knows its executable name (lowercased product name unless configured). */
+/** The Linux packager knows its executable name (lowercased package name unless configured). */
 function linuxExecutableName(packager: AfterPackContext["packager"]): string | undefined {
   return "executableName" in packager && typeof packager.executableName === "string"
     ? packager.executableName

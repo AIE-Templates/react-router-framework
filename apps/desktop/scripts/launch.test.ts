@@ -5,6 +5,7 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clientDigest } from "../../../build-tools/web-client-integrity.ts";
 import { packagedExecutable } from "../e2e/packaged-path.ts";
 import { WEB_SERVER_RECORD, webServerDigest } from "./check-web-build.ts";
 import { FUSE_NAMES, FUSES } from "./fuses.ts";
@@ -464,12 +465,19 @@ describe("files on disk", () => {
     );
     writeFileSync(join(bundles, "main.cjs"), "");
     writeFileSync(join(bundles, "preload.cjs"), "");
-    writeFileSync(join(bundles, "utility.mjs"), `m={module:"/assets/entry.client-BECgCha7.js"}`);
+
     writeFileSync(join(bundles, WEB_SERVER_RECORD), JSON.stringify({ sha256: webServerDigest("server") }));
     mkdirSync(join(directory, "apps", "web", "build", "server"), { recursive: true });
     writeFileSync(join(directory, "apps", "web", "build", "server", "index.js"), "server");
     const assets = join(directory, "apps", "web", "build", "client", "assets");
     mkdirSync(assets, { recursive: true });
+    const asset = join(assets, "entry.client-BECgCha7.js");
+    writeFileSync(asset, "");
+    writeFileSync(
+      join(bundles, "utility.mjs"),
+      `m={module:"/assets/entry.client-BECgCha7.js"}\n/*! web-client-sha256: ${clientDigest(resolve(assets, ".."))} */\n`,
+    );
+    rmSync(asset);
     expect(() => checkUnpackagedBuild("test", desktopDir)).toThrow("come from different web builds");
     writeFileSync(join(assets, "entry.client-BECgCha7.js"), "");
     expect(() => checkUnpackagedBuild("test", desktopDir)).not.toThrow();
