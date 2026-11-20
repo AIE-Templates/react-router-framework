@@ -26,7 +26,7 @@ export const handleError: HandleErrorFunction = (error, { request, context }) =>
   // React Router rejects actions submitted from another origin with a plain Error (400). That is
   // the client's doing, which anyone can trigger, so log it as a warning without the stack.
   if (isCrossOriginMutation(request)) {
-    const origin = request.headers.get("origin");
+    const origin = request.headers.get("origin")?.slice(0, 256);
     context.get(loggerContext).warn({ path: new URL(request.url).pathname, origin }, "cross-origin action rejected");
     return;
   }
@@ -120,7 +120,7 @@ function isCrossOriginMutation(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (!origin || request.method === "GET" || request.method === "HEAD") return false;
   try {
-    return new URL(origin).host !== new URL(request.url).host;
+    return new URL(origin).origin !== new URL(request.url).origin;
   } catch {
     return true; // e.g. Origin: null
   }

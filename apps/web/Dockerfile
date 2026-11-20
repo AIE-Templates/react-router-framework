@@ -20,6 +20,7 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile
 COPY . .
 # SSR=false builds a SPA instead (see react-router.config.ts): docker build --build-arg SSR=false ...
+ARG VITE_API_ORIGIN
 ARG SSR=true
 ENV SSR=$SSR
 RUN pnpm --filter web run build
