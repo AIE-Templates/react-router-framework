@@ -242,7 +242,8 @@ async function runOnce(
   } finally {
     clearTimeout(timer);
     try {
-      await monitor.reap();
+      const killed = await monitor.reap();
+      if (killed.length) process.stderr.write(`  stopped lingering helpers of this run: ${killed.join(", ")}\n`);
     } finally {
       current = undefined;
       removeUserDataDir(userDataDir);

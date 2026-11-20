@@ -32,3 +32,22 @@ export function windowsProcesses(): ProcessInfo[] {
     ),
   );
 }
+
+/** Pin the process object before checking its creation time, so a recycled Windows PID is never killed. */
+export function windowsProcess(process: ProcessInfo, action: "kill" | "check"): boolean {
+  if (process.startedAt === undefined) return false;
+  const result = powershellOutput(
+    [
+      "$ErrorActionPreference = 'Stop'",
+      "try { $p = [Diagnostics.Process]::GetProcessById([int]$env:REAP_HELPER_PID) } catch [ArgumentException] { return }",
+      "try {",
+      "  $null = $p.Handle",
+      "  if ($p.HasExited -or [DateTimeOffset]::new($p.StartTime).ToUnixTimeMilliseconds() -ne [long]$env:REAP_HELPER_CREATED) { return }",
+      ...(action === "kill" ? ["  $p.Kill()"] : []),
+      "  'matched'",
+      "} catch { if (!$p.HasExited) { throw } } finally { $p.Dispose() }",
+    ].join("\n"),
+    { REAP_HELPER_PID: String(process.pid), REAP_HELPER_CREATED: String(process.startedAt) },
+  );
+  return result.trim() === "matched";
+}
