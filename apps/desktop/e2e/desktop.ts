@@ -32,6 +32,9 @@ export type Target = LaunchTarget;
 
 export { desktopDir, electronBinary, packagedBinary };
 
+// A failed termination must not race the fixture that removes the app's data directory.
+const removableProfiles = new Set<string>();
+
 /** Includes macOS helpers under Contents/Frameworks beside the main executable. */
 export function targetProcesses(target: Target): number[] {
   const { command, processDir } = launchLocation(target, "test");
@@ -76,7 +79,11 @@ export async function launch(target: Target, userDataDir: string): Promise<Launc
   });
   const launcher = app.process();
   let main: { pid: number; startedAt?: number } | undefined;
-  const close = () => closeApplication(app, launcher, main);
+  const close = () =>
+    closeApplication(app, launcher, main, () => {
+      removableProfiles.delete(userDataDir);
+      process.stderr.write(`e2e: exit unconfirmed; keeping user data in ${userDataDir}\n`);
+    });
   try {
     // On Windows Playwright may launch Electron through a separate launcher process.
     main = await app.evaluate(() => {
@@ -131,10 +138,11 @@ export async function closeApplication(
   app: Pick<ElectronApplication, "close">,
   launcher: Pick<ChildProcess, "pid" | "exitCode" | "signalCode" | "kill">,
   main?: { pid: number; startedAt?: number },
+  onExitUnconfirmed?: () => void,
 ): Promise<void> {
   const separateMain = process.platform === "win32" && main && main.pid !== launcher.pid ? main : undefined;
   const launcherRunning = () => launcher.exitCode === null && launcher.signalCode === null;
-  const mainRunning = () => {
+  const mainRunning = (timeout: number) => {
     if (!separateMain || separateMain.startedAt === undefined) return false;
     try {
       // Cheap probe after normal shutdown. Only the pinned process object can confirm identity or kill.
@@ -143,27 +151,41 @@ export async function closeApplication(
       if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
       throw error;
     }
-    return windowsProcess(separateMain, "check");
+    return windowsProcess(separateMain, "check", timeout);
   };
-  if (!launcherRunning() && !mainRunning()) return;
+  const waitForExit = async (deadline: number) => {
+    while (launcherRunning() || mainRunning(Math.max(1, deadline - Date.now()))) {
+      if (Date.now() >= deadline) throw new Error("the owned process did not exit before the deadline");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
   const until = Date.now() + 10_000;
   let timer: NodeJS.Timeout | undefined;
   try {
+    if (!launcherRunning() && !mainRunning(10_000)) return;
     await Promise.race([
       app.close(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("the app did not close within 10 seconds")), 10_000);
       }),
     ]);
-    while (launcherRunning() || mainRunning()) {
-      if (Date.now() >= until) throw new Error("the main process is still running after quit");
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await waitForExit(until);
   } catch (err) {
+    const deadline = Date.now() + 5_000;
     try {
-      if (separateMain) windowsProcess(separateMain, "kill");
-    } finally {
-      if (launcherRunning()) launcher.kill("SIGKILL");
+      try {
+        if (separateMain) windowsProcess(separateMain, "kill", 5_000);
+      } finally {
+        if (launcherRunning()) launcher.kill("SIGKILL");
+      }
+    } catch (killError) {
+      process.stderr.write(`e2e: could not stop the owned process: ${String(killError)}\n`);
+    }
+    try {
+      await waitForExit(deadline);
+    } catch (waitError) {
+      process.stderr.write(`e2e: could not confirm process exit: ${String(waitError)}\n`);
+      onExitUnconfirmed?.();
     }
     throw err;
   } finally {
@@ -189,10 +211,11 @@ export const test = base.extend<Fixtures & Options>({
   // oxlint-disable-next-line no-empty-pattern -- Playwright fixtures destructure their dependencies
   userDataDir: async ({}, provide) => {
     const directory = freshUserDataDir("e2e");
+    removableProfiles.add(directory);
     try {
       await provide(directory);
     } finally {
-      removeUserDataDir(directory);
+      if (removableProfiles.delete(directory)) removeUserDataDir(directory);
     }
   },
   launchApp: async ({ target, userDataDir }, provide) => {
