@@ -11,14 +11,11 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  button,
-  input,
-  select {
+  :where(button, input, select, textarea)[data-native-control] {
     font: inherit;
   }
 
-  button,
-  select {
+  :where(button, select)[data-native-control]:enabled {
     cursor: pointer;
   }
 
@@ -27,7 +24,7 @@
     color: var(--app-color-background);
   }
 
-  :where(a, button, input, select):focus-visible {
+  [data-native-control]:focus-visible {
     outline: 2px solid var(--app-color-ring);
     outline-offset: 3px;
   }

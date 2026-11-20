@@ -69,6 +69,8 @@ Larger text and wrapping content must remain accessible. A title sharing the nat
 | Above 40rem, at most 60rem | Sidebar can be inline; auxiliary remains a drawer |
 | Above 60rem                | Sidebar, workspace and auxiliary can be inline    |
 
+Floating module panels occupy the second grid row below the actual workspace header, including when its actions wrap. The navigation drawer aligns to the same header in the adjacent module.
+
 Application navigation becomes a drawer at a viewport width of at most 48em. These are configurable layout defaults, not device identities. Responsive changes must not recreate business state. Device safe areas and WCO constraints are distinct inputs and must be combined deliberately.
 
 ## Required behavior
