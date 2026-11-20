@@ -39,6 +39,7 @@ export function monitorTestChild(
     onLine,
     userDataDir,
     requireSmokeResult = false,
+    // A bounded cleanup grace period, not a measured upper limit for Electron to drain.
     drainMs = 3_000,
   }: { onLine?: (line: string) => void; userDataDir?: string; requireSmokeResult?: boolean; drainMs?: number } = {},
 ) {

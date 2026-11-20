@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { expect, it, vi } from "vitest";
 
 import { closeApplication } from "../e2e/desktop.ts";
+import { listProcesses } from "./child-run.ts";
 
 it("waits for graceful exit without signalling a PID that may already have been reused", async () => {
   const launcher = {
@@ -46,14 +47,14 @@ it("retains the profile and reports the original failure if forced exit cannot b
   vi.useFakeTimers();
   const keepProfile = vi.fn<() => void>();
   const launcher = {
-    pid: 101,
+    pid: undefined,
     exitCode: null,
     signalCode: null,
     kill: vi.fn<(signal?: NodeJS.Signals | number) => boolean>(() => false),
   };
   const failure = new Error("driver could not close");
   try {
-    const closed = closeApplication({ close: () => Promise.reject(failure) }, launcher, { pid: 101 }, keepProfile);
+    const closed = closeApplication({ close: () => Promise.reject(failure) }, launcher, undefined, keepProfile);
     const outcome = closed.catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(await outcome).toBe(failure);
@@ -79,4 +80,28 @@ it.skipIf(process.platform !== "win32")(
     expect(close).not.toHaveBeenCalled();
     expect(launcher.kill).not.toHaveBeenCalled();
   },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reaps the Playwright group after close times out and leaves an independent launch alive",
+  async () => {
+    const awake = "setTimeout(() => {}, 30000)";
+    const fixture = `const cp = require("node:child_process"); console.log(cp.spawn(process.execPath, ["-e", ${JSON.stringify(awake)}], {stdio:"ignore"}).pid)`;
+    const other = spawn(process.execPath, ["-e", awake], { detached: true, stdio: "ignore" });
+    const child = spawn(process.execPath, ["-e", fixture], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      const [line] = await once(child.stdout, "data");
+      const helper = Number(String(line).trim());
+      expect(helper).toBeGreaterThan(0);
+      await expect(closeApplication({ close: () => new Promise<void>(() => {}) }, child)).rejects.toThrow(
+        "within 10 seconds",
+      );
+      expect(listProcesses().some((item) => item.pid === helper && !item.zombie)).toBe(false);
+      expect(process.kill(other.pid!, 0)).toBe(true);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) process.kill(-child.pid!, "SIGKILL");
+      other.kill("SIGKILL");
+    }
+  },
+  20000,
 );

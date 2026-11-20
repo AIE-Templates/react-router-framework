@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
+import { listProcesses } from "../scripts/child-run.ts";
 import {
   appProcesses,
   buildProfileMismatch,
@@ -153,8 +154,13 @@ export async function closeApplication(
     }
     return windowsProcess(separateMain, "check", timeout);
   };
+  let forcedGroup: number | undefined;
   const waitForExit = async (deadline: number) => {
-    while (launcherRunning() || mainRunning(Math.max(1, deadline - Date.now()))) {
+    while (
+      launcherRunning() ||
+      mainRunning(Math.max(1, deadline - Date.now())) ||
+      (forcedGroup !== undefined && listProcesses().some((item) => !item.zombie && item.pgid === forcedGroup))
+    ) {
       if (Date.now() >= deadline) throw new Error("the owned process did not exit before the deadline");
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -175,6 +181,16 @@ export async function closeApplication(
     try {
       try {
         if (separateMain) windowsProcess(separateMain, "kill", 5_000);
+        // Playwright spawns Electron as a dedicated POSIX process-group leader.
+        if (
+          process.platform !== "win32" &&
+          launcherRunning() &&
+          launcher.pid &&
+          listProcesses().some((item) => item.pid === launcher.pid && item.pgid === launcher.pid && !item.zombie)
+        ) {
+          forcedGroup = launcher.pid;
+          process.kill(-launcher.pid, "SIGKILL");
+        }
       } finally {
         if (launcherRunning()) launcher.kill("SIGKILL");
       }
