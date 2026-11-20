@@ -435,31 +435,44 @@ export async function launch(
   return started;
 }
 
-/**
- * Once its main process has exited: what the launch created that is still running, after a moment
- * for helpers to follow it, killed and returned. Afterwards the launch is no longer tracked.
- */
-export async function finish(started: Launch, launched: readonly ProcessInfo[] = []): Promise<ProcessInfo[]> {
+/** Wait for natural exit, then stop and verify any helpers that linger. Return those that needed
+ * intervention for the release verdict. An unconfirmed launch stays tracked and keeps its profile. */
+export async function finish(
+  started: Launch,
+  launched: readonly ProcessInfo[] = [],
+  graceMs = LEFTOVER_GRACE_MS,
+): Promise<ProcessInfo[]> {
   if (started.app.isRunning())
     throw new Error(`Could not confirm exit of process ${started.app.pid} after termination`);
-  const left = () =>
-    leftoverProcesses(
-      listProcesses(),
-      launched,
-      started.root,
-      started.preexisting,
-      started.location,
-      process.platform,
-    ).filter((process) => process.pid !== started.root.pid || started.app.isRunning());
-  let leftovers = left();
-  const until = Date.now() + LEFTOVER_GRACE_MS;
-  while (leftovers.length > 0 && Date.now() < until) {
-    await sleep(100);
-    leftovers = left();
+  const seen = new Map(launched.map((item) => [item.pid, item]));
+  async function waitForHelpers(): Promise<ProcessInfo[]> {
+    const until = Date.now() + graceMs;
+    for (;;) {
+      const left = leftoverProcesses(
+        listProcesses(),
+        [...seen.values()],
+        started.root,
+        started.preexisting,
+        started.location,
+        process.platform,
+      ).filter((item) => item.pid !== started.root.pid);
+      for (const item of left) seen.set(item.pid, item);
+      if (!left.length || Date.now() >= until) return left;
+      await sleep(100);
+    }
   }
-  terminate(started, leftovers);
+
+  const lingering = await waitForHelpers();
+  if (lingering.length) {
+    terminate(started, lingering);
+    const remaining = (await waitForHelpers()).filter((item) => !isWindows || windowsProcess(item, "check"));
+    if (remaining.length)
+      throw new Error(
+        `Could not confirm exit of helpers after termination: ${remaining.map((item) => item.pid).join(", ")}`,
+      );
+  }
   launches.delete(started);
-  return leftovers;
+  return lingering;
 }
 
 function freePort(): Promise<number> {
