@@ -1,6 +1,7 @@
 import type { BrowserWindow } from "electron";
 
 import { isAppUrl } from "./app-url.ts";
+import { safeUrl } from "./log-url.ts";
 import { createWindowRecovery, type RecoveryChoice, type RecoveryDialog } from "./recovery.ts";
 import type { UtilityLifecycle } from "./server-process.ts";
 import { configureWindow, createAppWindow, type WindowOptions } from "./window.ts";
@@ -143,9 +144,40 @@ export function createWindowRegistry(options: RegistryOptions) {
       if (isMainFrame && errorCode !== -3) committed = succeeded = loaded = false;
       recovery.didFailLoad({ errorCode, isMainFrame });
     });
-    contents.on("render-process-gone", (_event, details) => recovery.rendererGone(details.reason));
-    win.on("unresponsive", recovery.unresponsive);
-    win.on("responsive", recovery.responsive);
+    // A close in progress (a user's, or every window's when the app quits) waits for the renderer to
+    // run the page's beforeunload and unload. A renderer that is gone by then can neither finish the
+    // close nor veto it: Electron would keep the window open for good, recovery would reload it and,
+    // once the reloaded page does not answer the pending close, ask about an unresponsive window, and
+    // a quit would never get past it (a signal to the whole process group kills the renderer while the
+    // main process starts quitting). Such a window is destroyed instead. A page that vetoes the close
+    // (`will-prevent-unload`) keeps it, and its recovery.
+    let closing = false;
+    win.on("close", (event: Electron.Event) => {
+      // Another `close` listener may still prevent it: decide once all of them ran.
+      queueMicrotask(() => (closing = !event.defaultPrevented));
+    });
+    contents.on("will-prevent-unload", () => (closing = false));
+    contents.on("render-process-gone", (_event, details) => {
+      if (closing && !win.isDestroyed()) {
+        options.log.warn(
+          { reason: details.reason },
+          "renderer gone while its window was closing; destroying the window",
+        );
+        win.destroy();
+        return;
+      }
+      recovery.rendererGone(details.reason);
+    });
+    // Logged, since what follows can be a native sheet waiting for a click: a run that stalls on one
+    // shows why in its log.
+    win.on("unresponsive", () => {
+      options.log.warn({ path: safeUrl(contents.getURL()) }, "window unresponsive");
+      recovery.unresponsive();
+    });
+    win.on("responsive", () => {
+      options.log.info({}, "window responsive again");
+      recovery.responsive();
+    });
     win.once("closed", () => {
       recovery.shutdown();
       entries.delete(id);

@@ -222,8 +222,14 @@ export function startServerProcess(
     }, STARTUP_TIMEOUT_MS);
 
     inst.child.on("spawn", () => {
-      // Once stopping, the spawn changes nothing: `shutdown()` kills an unspawned child.
-      if (!current() || inst.exited || isStopping()) return;
+      if (inst.exited) return;
+      // Electron's `kill()` does nothing before the process exists, so a child retired or stopped
+      // before it spawned is still starting: kill it now that it can be. Otherwise it would run until
+      // the shutdown grace period ran out, or, retired at a startup timeout, for good.
+      if (!current() || isStopping()) {
+        inst.child.kill();
+        return;
+      }
       inst.spawned = true;
       options.onSpawn?.();
       try {
@@ -349,7 +355,8 @@ export function startServerProcess(
         finish();
       }, SHUTDOWN_GRACE_MS);
       inst.child.on("exit", finish);
-      // Before `spawn` the child cannot receive messages; kill it outright.
+      // Before `spawn` the child can neither receive messages nor be killed yet: its spawn handler
+      // kills it as soon as it exists, and its exit ends the wait.
       if (inst.spawned) {
         // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a utility process port, not a window
         inst.child.postMessage({ type: "shutdown" });

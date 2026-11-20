@@ -38,6 +38,11 @@ export function bundleDir(profile: BuildProfile): string {
 export const BUNDLES = ["main.cjs", "preload.cjs", "utility.mjs"] as const;
 export type Bundle = (typeof BUNDLES)[number];
 
+/** A record with one value per bundle. */
+export function perBundle<T>(value: (bundle: Bundle) => T): Record<Bundle, T> {
+  return { "main.cjs": value("main.cjs"), "preload.cjs": value("preload.cjs"), "utility.mjs": value("utility.mjs") };
+}
+
 /**
  * A source module only some profiles bundle. In the others the build puts `empty`, an implementation
  * of the same contract that does nothing, in its place (`resolve.alias` in vite.base.config.ts), so

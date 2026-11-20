@@ -285,3 +285,39 @@ it("does not report a window ready for a successful document an error document h
   primary.webContents.emit("did-finish-load");
   expect(onReady).toHaveBeenCalledOnce();
 });
+
+it("destroys a closing window whose renderer is gone instead of reloading it, unless the page vetoed the close", async () => {
+  const { registry, askRecovery } = setup();
+  registry.open("app://app/", "primary");
+  const home = made[0];
+  home.commit(home.url);
+  // A quit asks every window to close; the renderer is killed before it answers.
+  home.emit("close", { defaultPrevented: false });
+  await flush();
+  home.crashed = true;
+  home.webContents.emit("render-process-gone", {}, { reason: "killed", exitCode: 15 });
+  expect(home.destroyed).toBe(true);
+  expect(home.loadURL).toHaveBeenCalledOnce(); // the initial load only
+  expect(registry.find("primary")).toBeUndefined();
+
+  // A close another listener prevented, or one the page vetoed, leaves the window to recovery.
+  registry.open("app://app/settings", "settings");
+  const prevented = made[1];
+  prevented.commit(prevented.url);
+  prevented.emit("close", { defaultPrevented: true });
+  await flush();
+  prevented.crashed = true;
+  prevented.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 11 });
+  expect(prevented.destroyed).toBe(false);
+
+  registry.open("app://app/chat", "chat");
+  const vetoed = made[2];
+  vetoed.commit(vetoed.url);
+  vetoed.emit("close", { defaultPrevented: false });
+  await flush();
+  vetoed.webContents.emit("will-prevent-unload", {});
+  vetoed.crashed = true;
+  vetoed.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 11 });
+  expect(vetoed.destroyed).toBe(false);
+  expect(askRecovery).not.toHaveBeenCalled();
+});

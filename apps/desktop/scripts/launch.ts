@@ -121,7 +121,8 @@ function processDirOf(executable: string): string {
  * Where `target` of `profile` is: this checkout's Electron for the unpackaged test and dev bundles,
  * the packaged test app (`out/test` unless `executable` names another packaged test-profile
  * executable). The release profile is not launched by these tools: its fuses stop the inspector-based
- * driver, and it contains none of the diagnostics they run.
+ * driver, and it contains none of the diagnostics they run. The one place that launches a release
+ * package is scripts/verify-release.ts, which does so itself.
  */
 export function launchLocation(
   target: LaunchTarget,
