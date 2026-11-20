@@ -61,9 +61,8 @@ export function VisualCookieProvider({
         if (seed) manager.actions.setPreferences(seed);
       }
     }
-    // Commands mirror synchronously, including same-value retries. This effect covers initialization
-    // and external storage changes that did not pass through a local command.
-    if (mirrored.current !== manager.getSnapshot().preferences) sync();
+    // Commands mirror synchronously. Seeding above can already have replaced this render's preferences.
+    if (mirrored.current !== preferences && preferences === manager.getSnapshot().preferences) sync();
   }, [enabled, initialized, manager, preferences, requestSeed, sync]);
   return (
     <VisualCookieContext.Provider value={{ status: enabled ? status : "disabled", retry: sync }}>
