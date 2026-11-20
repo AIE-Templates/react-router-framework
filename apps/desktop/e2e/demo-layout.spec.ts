@@ -7,6 +7,30 @@ test.describe("demo layout", { tag: "@demo" }, () => {
     await expect(page.getByText("Host: desktop.")).toBeVisible();
   });
 
+  test("all three drawers start below a wrapping workspace header", async ({ desktop: { page } }) => {
+    await page.setViewportSize({ width: 600, height: 720 });
+    await page.getByRole("button", { name: "Sidebar", exact: true }).click();
+    await page.getByRole("button", { name: "Auxiliary", exact: true }).click();
+    await page.getByRole("button", { name: "Modules", exact: true }).click();
+    const positions = await page.evaluate(() => {
+      const header = document.querySelector<HTMLElement>(".module-workspace > .module-header")!;
+      const action = document.createElement("button");
+      action.textContent = "Additional workspace action";
+      action.style.flexBasis = "100%";
+      header.append(action);
+      const rect = header.getBoundingClientRect();
+      return {
+        height: rect.height,
+        bottom: rect.bottom,
+        drawers: [".shell-nav", ".module-sidebar", ".module-auxiliary"].map(
+          (selector) => document.querySelector(selector)!.getBoundingClientRect().top,
+        ),
+      };
+    });
+    expect(positions.height).toBeGreaterThan(50);
+    for (const top of positions.drawers) expect(Math.abs(top - positions.bottom)).toBeLessThanOrEqual(1);
+  });
+
   test("real input drives client-side navigation and React state", async ({ desktop: { page } }) => {
     await page.getByRole("combobox", { name: "App shell" }).selectOption("basic");
     await expect(page).toHaveURL("app://app/?shell=basic");
