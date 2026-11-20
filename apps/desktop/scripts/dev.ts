@@ -32,7 +32,7 @@ const log = (msg: string) => process.stdout.write(`[dev] ${msg}\n`);
 function run(
   command: string,
   args: string[],
-  options: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: boolean },
+  options: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: boolean; windows?: boolean },
 ): ChildProcess {
   const manager = command === "pnpm" ? process.env.npm_execpath : undefined;
   const nodeScript = manager && /\.(?:cjs|mjs|js)$/i.test(manager);
@@ -42,7 +42,11 @@ function run(
     stdio: [options.stdin ? "pipe" : "ignore", "pipe", "inherit"],
     // Its own process group, so the whole tree (pnpm → react-router → vite) dies with it.
     detached: process.platform !== "win32",
-    windowsHide: true,
+    // Windows: no console window flashing up for the console programs (pnpm, react-router, vite).
+    // Never for Electron (`windows`): the option starts a process with SW_HIDE, which Windows applies
+    // to the first window it shows, so the app's main window stayed hidden or blank and never logged
+    // MAIN_WINDOW_READY_MESSAGE.
+    windowsHide: !options.windows,
   });
   children.add(child);
   child.once("exit", () => children.delete(child));
@@ -104,6 +108,7 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
 function startElectron(): ChildProcess {
   const spec = launchSpec("unpackaged", "dev");
   const child = run(spec.command, spec.args, {
+    windows: true,
     cwd: spec.cwd,
     env: { ...spec.env, DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev" },
     stdin: true,
