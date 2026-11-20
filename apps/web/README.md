@@ -53,7 +53,7 @@ For separate static/client hosting, build with VITE_API_ORIGIN and list the clie
 
 ## Host identity
 
-The entry supplies createWebApp({ shell }); requests cannot select identity. Trusted desktop request data is distinct from stable shell facts. Web strips X-Desktop-* before Router; desktop accepts injected state. Development getHostApp reads WEB_SHELL* for the desktop dev entry. Components use useAppEnvironment; document attributes mirror it. SSR seeds hydration, then valid preload bootstrap supplies runtime identity; later root revalidation cannot overwrite it.
+This template serves the Web application with `createWebApp()`. Components read the Web environment through `useAppEnvironment()`.
 
 ## Layout
 
@@ -117,4 +117,4 @@ Colors use Core semantic variables; viewport media widths come from `~/config/br
 
 `src/host/api.integration.test.ts` exercises the real in-process BFF; the fake-client component test remains beside `src/app/lib/api.ts`. `src/host/root.integration.test.tsx` exercises the actual root loader and CSP nonce handoff. Host tests explicitly select Node or jsdom and import application code through `~/`; generated route argument types are inferred from the exported function. Pure component tests remain colocated.
 
-The fullstack Core host root suite also verifies web document attributes and hydration. The no-loader safety/bootstrap fallback test stays beside `root.tsx`. Visual cookie names come from `cookieName("visual")` in `@repo/shared`; the build-time `VITE_VISUAL_COOKIE=true` opt-in and cookie lifetime remain unchanged.
+The fullstack Core host root suite also verifies web document attributes and hydration. The no-loader safety/bootstrap fallback test stays beside `root.tsx`. Visual cookie names come from `cookieName("visual")` in `@repo/shared`; enable the cookie mirror at build time with `VITE_VISUAL_COOKIE=true` or `docker build --build-arg VITE_VISUAL_COOKIE=true -f apps/web/Dockerfile .`.
