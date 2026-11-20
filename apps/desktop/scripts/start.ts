@@ -135,8 +135,14 @@ try {
 } catch (err) {
   note(err instanceof Error ? err.message : String(err));
   process.exitCode = 1;
-  await monitor.reap().catch((cleanupError: unknown) => note(String(cleanupError)));
 } finally {
   closed = true;
-  if (removeUserData) removeUserDataDir(userDataDir);
+  try {
+    const killed = await monitor.reap();
+    if (killed.length) note(`stopped lingering helpers: ${killed.join(", ")}`);
+    if (removeUserData) removeUserDataDir(userDataDir);
+  } catch (err) {
+    note(`cleanup failed: ${String(err)}; user data kept in ${userDataDir}`);
+    process.exitCode = 1;
+  }
 }

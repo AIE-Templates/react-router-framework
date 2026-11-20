@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { dirname, join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { monitorTestChild } from "./child-run.ts";
 import type { LaunchLocation } from "./launch.ts";
@@ -52,6 +52,62 @@ describe("test child output and cleanup", () => {
     });
     await expect(monitor.finished).rejects.toBeInstanceOf(SyntaxError);
   });
+  it("settles an abort and releases its pipes even when the owned child cannot be stopped", async () => {
+    const at = Date.now();
+    // No private POSIX group; on Windows a missing taskkill exercises the same fallback.
+    const child = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1000)"], { stdio: ["pipe", "pipe", "pipe"] });
+    const closed = once(child, "close");
+    const stop = vi.spyOn(child, "kill").mockReturnValue(false);
+    const monitor = monitorTestChild(child, location, at, { drainMs: 50 });
+    try {
+      if (process.platform === "win32") vi.stubEnv("PATH", "");
+      monitor.abort(new Error("interrupted launch"));
+      await expect(monitor.finished).rejects.toThrow("interrupted launch");
+      vi.unstubAllEnvs();
+      expect(stop).toHaveBeenCalledWith("SIGKILL");
+      expect([child.stdin, child.stdout, child.stderr].every((pipe) => pipe.destroyed)).toBe(true);
+      await expect(monitor.reap()).rejects.toThrow(`Main process ${child.pid} is still running after cleanup`);
+    } finally {
+      vi.unstubAllEnvs();
+      stop.mockRestore();
+      child.kill("SIGKILL");
+      await closed;
+    }
+  }, 30_000);
+  it.runIf(process.platform === "win32")(
+    "recovers the owned main and its detached helper when taskkill is missing",
+    async () => {
+      const helperScript = "setTimeout(()=>{}, 60000)";
+      const script =
+        `const helper = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(helperScript)}], {stdio:["ignore",1,2], detached:true});` +
+        'console.log("helper=" + helper.pid); helper.unref();' +
+        'console.log(JSON.stringify({process:"main",buildProfile:"release"})); setInterval(()=>{}, 1000)';
+      let helperPid: number | undefined;
+      const at = Date.now();
+      const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+      const closed = once(child, "close");
+      const monitor = monitorTestChild(child, location, at, {
+        drainMs: 200,
+        onLine(line) {
+          if (line.startsWith("helper=")) helperPid = Number(line.slice(7));
+        },
+      });
+      try {
+        vi.stubEnv("PATH", "");
+        await expect(monitor.finished).rejects.toThrow(/profile/i);
+        vi.unstubAllEnvs();
+        await closed;
+        expect(helperPid).toBeGreaterThan(0);
+        expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+        await expect(monitor.reap()).resolves.toEqual([helperPid]);
+      } finally {
+        vi.unstubAllEnvs();
+        child.kill("SIGKILL");
+        await monitor.reap();
+      }
+    },
+    30_000,
+  );
   it("reads the final output of helpers before settling, even after the main process exits", async () => {
     // A helper waits for its parent's exit, then writes the result on its inherited output pipe.
     const helper = 'process.stdin.resume(); process.stdin.on("end",()=>console.log(\'SMOKE_RESULT {"ok":true}\'))';
@@ -129,6 +185,8 @@ describe("test child output and cleanup", () => {
     const script =
       profile +
       `require("node:child_process").spawn(process.execPath, ["-e","setTimeout(()=>{}, 10000)"], {stdio:["ignore",1,2], detached:${helperDetached}}).unref();`;
-    await expect(run(script, { drainMs: 150 }).finished).rejects.toThrow("helpers kept its output open");
+    const monitor = run(script, { drainMs: 150 });
+    await expect(monitor.finished).rejects.toThrow("helpers kept its output open");
+    await monitor.reap();
   }, 15000);
 });

@@ -9,12 +9,31 @@
 
 !macro CheckDirectory PATH
   StrCpy $R8 "${PATH}"
-  System::Call 'kernel32::GetFileAttributesW(w R8) i.r2'
-  ${If} $2 != -1
+  System::Call 'kernel32::GetFileAttributesW(w R8) i.r2 ?e'
+  Pop $R9
+  ${If} $2 == -1
+    ${If} $R9 != 2 ; ERROR_FILE_NOT_FOUND
+    ${AndIf} $R9 != 3 ; ERROR_PATH_NOT_FOUND
+      !insertmacro RejectInstallation "Cannot inspect '$R8' (Windows error $R9). Check its permissions and retry."
+    ${EndIf}
+  ${Else}
     IntOp $2 $2 & 0x400
     ${If} $2 != 0
       !insertmacro RejectInstallation "This installation contains a linked directory: $R8. Move the link aside before continuing."
     ${EndIf}
+  ${EndIf}
+!macroend
+
+; DeleteFileW distinguishes an already removed file from a permission or sharing error.
+; Stop before removing the uninstaller or registration when the user needs to retry.
+!macro RemoveInstalledFile PATH
+  StrCpy $R8 "${PATH}"
+  System::Call 'kernel32::DeleteFileW(w R8) i.r2 ?e'
+  Pop $R9
+  ${If} $2 == 0
+  ${AndIf} $R9 != 2 ; ERROR_FILE_NOT_FOUND
+  ${AndIf} $R9 != 3 ; ERROR_PATH_NOT_FOUND
+    !insertmacro RejectInstallation "Cannot remove '$R8' (Windows error $R9). Close applications using it, check its permissions, and retry."
   ${EndIf}
 !macroend
 
@@ -97,6 +116,7 @@
     !insertmacro RejectInstallation "The uninstaller directory does not match the registered installation."
   ${EndIf}
   !insertmacro CheckDirectoryChain "$INSTDIR"
+  !insertmacro CheckDirectory "$INSTDIR\resources"
   ReadRegStr $1 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" PayloadArch
   SetOutPath "$TEMP"
   !ifdef APP_ARM64
@@ -120,9 +140,8 @@
   !insertmacro RejectInstallation "Cannot determine which installed files belong to this application."
   removedPayload:
   ; electron-builder adds this helper to the NSIS archive after afterPack.
-  !insertmacro CheckDirectory "$INSTDIR\resources"
-  Delete "$INSTDIR\resources\elevate.exe"
+  !insertmacro RemoveInstalledFile "$INSTDIR\resources\elevate.exe"
   RMDir "$INSTDIR\resources"
-  Delete "$INSTDIR\${UNINSTALL_FILENAME}"
+  !insertmacro RemoveInstalledFile "$INSTDIR\${UNINSTALL_FILENAME}"
   RMDir "$INSTDIR"
 !macroend

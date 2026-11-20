@@ -1,4 +1,4 @@
-import { execFileSync, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 
@@ -15,6 +15,7 @@ export function listProcesses(): ProcessInfo[] {
     execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid=,stat=,lstart=,args="], {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
+      timeout: 30_000,
       env: { ...process.env, LC_ALL: "C" },
     }),
   );
@@ -26,26 +27,6 @@ export function killIfRunning(pid: number): boolean {
   } catch (err) {
     if (!(err instanceof Error && "code" in err && err.code === "ESRCH")) throw err;
     return false;
-  }
-}
-
-/** Kill only this launch's process group (POSIX) or descendants (Windows). */
-function killChildTree(child: ChildProcess, root: LaunchRoot, location: LaunchLocation): void {
-  if (child.pid === undefined) return;
-  if (process.platform !== "win32") {
-    killIfRunning(-child.pid);
-    return;
-  }
-  if (child.exitCode === null && child.signalCode === null) {
-    try {
-      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", timeout: 5_000 });
-      return;
-    } catch {
-      // It may have just exited. Windows retains the parent PID on surviving helpers.
-    }
-  }
-  for (const item of launchProcesses(windowsProcesses(), root, new Set(), location, "win32")) {
-    if (item.pid !== root.pid) windowsProcess(item, "kill");
   }
 }
 
@@ -62,16 +43,69 @@ export function monitorTestChild(
   }: { onLine?: (line: string) => void; userDataDir?: string; requireSmokeResult?: boolean; drainMs?: number } = {},
 ) {
   const root: LaunchRoot = { pid: child.pid ?? 0, spawnedAt, userDataDir };
+  let resolve!: (code: number | null) => void;
+  let reject!: (error: unknown) => void;
+  const finished = new Promise<number | null>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
   let failure: Error | undefined;
   let drain: NodeJS.Timeout | undefined;
-  const kill = () => killChildTree(child, root, location);
+  let closed = false;
+  let taskkill: ChildProcess | undefined;
+  const running = () => child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+  // child.kill uses the handle of the process actually spawned, even if Windows has reused its PID.
+  const killRoot = () => {
+    if (!running()) return;
+    try {
+      child.kill("SIGKILL");
+    } catch (err) {
+      process.stderr.write(`Could not stop the app's main process: ${String(err)}\n`);
+    }
+  };
+  const stopTree = () => {
+    // Once the main process has exited, reap() checks the identity of each survivor.
+    if (!child.pid || !running()) return;
+    if (process.platform === "win32") {
+      if (taskkill) return;
+      taskkill = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      taskkill.on("error", killRoot);
+      taskkill.once("exit", (code) => {
+        if (code !== 0) killRoot();
+      });
+    } else if (!killIfRunning(-child.pid)) killRoot();
+  };
+  const stopTaskkill = () => {
+    if (!taskkill) return;
+    try {
+      if (taskkill.exitCode === null && taskkill.signalCode === null) taskkill.kill();
+    } catch (err) {
+      process.stderr.write(`Could not stop taskkill: ${String(err)}\n`);
+    } finally {
+      taskkill.unref();
+    }
+  };
   const abort = (reason: unknown) => {
     if (failure) return;
     failure = reason instanceof Error ? reason : new Error(String(reason));
+    if (closed) return;
+    clearTimeout(drain);
+    // Neither a failed tree kill nor a child with undrainable pipes may make the caller wait for
+    // exit or close forever. reap() separately checks that the main process and its helpers are gone.
+    drain = setTimeout(() => {
+      stopTaskkill();
+      killRoot();
+      child.stdin?.destroy();
+      child.stdout.destroy();
+      child.stderr?.destroy();
+      child.unref();
+      reject(failure);
+    }, drainMs);
     try {
-      kill();
+      stopTree();
     } catch (err) {
       process.stderr.write(`Could not terminate the app's processes: ${String(err)}\n`);
+      killRoot();
     }
   };
   let smokePassed = false;
@@ -93,26 +127,28 @@ export function monitorTestChild(
     });
   }
   const profile = verifyBuildProfile(child.stdout, location.profile).catch(abort);
-  const finished = new Promise<number | null>((resolve, reject) => {
-    child.once("error", (err) => {
-      failure ??= err;
-    });
-    child.once("exit", () => {
-      root.exitedAt = Date.now();
+  child.on("error", (err) => {
+    if (child.pid) abort(err);
+    else failure ??= err; // An unsuccessful spawn still emits close.
+  });
+  child.once("exit", () => {
+    root.exitedAt = Date.now();
+    if (!failure && !closed)
       drain = setTimeout(() => {
         abort(new Error("The app exited but its helpers kept its output open"));
         child.stdout.destroy();
         child.stderr?.destroy();
       }, drainMs);
-    });
-    child.once("close", (code) => {
-      clearTimeout(drain);
-      void profile.then(() => {
-        if (failure) return reject(failure);
-        else if (code === 0 && requireSmokeResult && !smokePassed)
-          return reject(new Error("The app exited without a successful SMOKE_RESULT"));
-        return resolve(code);
-      });
+  });
+  child.once("close", (code) => {
+    closed = true;
+    clearTimeout(drain);
+    stopTaskkill();
+    void profile.then(() => {
+      if (failure) return reject(failure);
+      else if (code === 0 && requireSmokeResult && !smokePassed)
+        return reject(new Error("The app exited without a successful SMOKE_RESULT"));
+      else return resolve(code);
     });
   });
   const owned = () =>
@@ -123,7 +159,7 @@ export function monitorTestChild(
   async function waitForHelpers(): Promise<ProcessInfo[]> {
     const until = Date.now() + drainMs;
     let leftovers = owned();
-    while (leftovers.length && Date.now() < until) {
+    while ((leftovers.length || running()) && Date.now() < until) {
       await new Promise((done) => setTimeout(done, 100));
       leftovers = owned();
     }
@@ -134,7 +170,7 @@ export function monitorTestChild(
   async function reap(): Promise<number[]> {
     if (!child.pid) return [];
     const lingering = await waitForHelpers();
-    if (!lingering.length) return [];
+    if (!lingering.length && !running()) return [];
     const killed: number[] = [];
     for (const item of lingering) {
       if (process.platform === "win32") {
@@ -151,9 +187,10 @@ export function monitorTestChild(
     const remaining = (await waitForHelpers()).filter(
       (item) => process.platform !== "win32" || windowsProcess(item, "check"),
     );
+    if (running()) throw new Error(`Main process ${child.pid} is still running after cleanup`);
     if (remaining.length)
       throw new Error(`Helpers still running after cleanup: ${remaining.map((item) => item.pid).join(", ")}`);
     return killed;
   }
-  return { abort, finished, kill, reap };
+  return { abort, finished, kill: () => abort(new Error("The test launch was stopped")), reap };
 }
