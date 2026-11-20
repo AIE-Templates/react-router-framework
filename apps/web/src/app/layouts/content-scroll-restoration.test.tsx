@@ -57,6 +57,18 @@ describe("container scroll restoration", () => {
     expect(pane().scrollTop).toBe(90);
   });
 
+  it("retains sibling pane positions through a fragment and restores that entry on POP", async () => {
+    const { router, root, pane } = fixture();
+    scroll(root, 220);
+    scroll(pane(), 85);
+    await act(() => router.navigate("/one#section"));
+    expect([root.scrollTop, pane().scrollTop]).toEqual([220, 85]);
+    await act(() => router.navigate("/two"));
+    expect(root.scrollTop).toBe(0);
+    await act(() => router.navigate(-1));
+    expect([root.scrollTop, pane().scrollTop]).toEqual([220, 85]);
+  });
+
   it("keeps separate entries for the same URL and handles replace navigation", async () => {
     const { router, root } = fixture();
     scroll(root, 140);

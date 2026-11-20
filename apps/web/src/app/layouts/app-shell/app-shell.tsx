@@ -1,5 +1,5 @@
 import type { OverlayAppearance } from "@repo/shared";
-import { useEffect, useId, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
 import { getInteractiveProps } from "~/managers/environment/dom-props";
@@ -45,6 +45,7 @@ function Shell({
   ...navigationProps
 }: BasicShellProps & Partial<NavigationShellProps>) {
   const chrome = useWindowChrome();
+  const body = useRef<HTMLDivElement>(null);
   const navigationId = useId();
   const navigation = usePanelState(
     navigationProps.navigationOpen,
@@ -53,6 +54,37 @@ function Shell({
     `${navigationId}-trigger`,
   );
   usePanelEscape(navigation.open, navigation.setOpen, navigationId);
+  useLayoutEffect(() => {
+    const element = body.current;
+    if (
+      !element ||
+      !navigation.open ||
+      typeof ResizeObserver === "undefined" ||
+      (CSS.supports("anchor-scope: --header") && CSS.supports("top: anchor(--header bottom)"))
+    )
+      return;
+    // Older engines cannot anchor the navigation drawer to its sibling module's header.
+    let header: HTMLElement | null;
+    const measure = () => {
+      const top = header ? header.getBoundingClientRect().bottom - element.getBoundingClientRect().top : 0;
+      element.style.setProperty("--app-layout-navigation-top", top + "px");
+    };
+    const resize = new ResizeObserver(measure);
+    const bind = () => {
+      resize.disconnect();
+      header = element.querySelector(":scope > .module-layout > .module-columns > .module-workspace > .module-header");
+      if (header) resize.observe(header);
+      measure();
+    };
+    bind();
+    const modules = new MutationObserver(bind);
+    modules.observe(element, { childList: true });
+    return () => {
+      modules.disconnect();
+      resize.disconnect();
+      element.style.removeProperty("--app-layout-navigation-top");
+    };
+  }, [navigation.open]);
   const ready = !chrome.diagnostic || chrome.diagnostic === "host-mismatch";
   const { color, symbolColor, height } = overlayAppearance ?? {};
   const updateAppearance = chrome.declareOverlayAppearance;
@@ -85,12 +117,17 @@ function Shell({
             </div>
           </header>
         )}
-        <div className="shell-body">
+        <div className="shell-body" ref={body}>
           {navigationProps.navigation && (
             <nav id={navigationId} className="shell-nav" aria-label={navigationProps.navigationLabel ?? "Modules"}>
               <div className="shell-nav-chrome" data-window-drag="" aria-hidden="true" />
               <div className="shell-nav-content" {...getInteractiveProps()}>
-                <button type="button" className="shell-navigation-toggle" onClick={() => navigation.setOpen(false)}>
+                <button
+                  data-native-control=""
+                  type="button"
+                  className="shell-navigation-toggle"
+                  onClick={() => navigation.setOpen(false)}
+                >
                   Close navigation
                 </button>
                 {navigationProps.navigation}
@@ -101,6 +138,7 @@ function Shell({
         </div>
         {navigationProps.navigation && (
           <button
+            data-native-control=""
             id={`${navigationId}-trigger`}
             type="button"
             className="shell-navigation-toggle shell-navigation-trigger"

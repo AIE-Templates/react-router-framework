@@ -65,7 +65,7 @@ AppRoot owns environment/providers; BasicShell or NavigationShell owns applicati
 
 Global CSS enters through `styles/index.css`. Prefer colocated CSS Modules in the `components` cascade layer; Tailwind utilities remain available. Use `~/` for app-root imports and `./` within a directory or its children. See the root and directory-level AGENTS.md files for conventions.
 
-Core removes starter system-color and background rules from `styles/base.css`: manual visual preferences must win over the OS preference. Core global rules now live in `styles/base.css`, `tokens.css` and `shell.css`; `ui.css` is the UI-library integration slot, empty in Core and populated by UI-library layers. Demo smoke selectors use `data-demo-controls` and `data-demo-draft`, independently of CSS class names.
+Core removes starter system-color and background rules from `styles/base.css`: manual visual preferences must win over the OS preference. Core global rules now live in `styles/base.css`, `tokens.css` and `shell.css`; `styles/ui.css` imports Mantine styles and defines the app’s focus, reduced-motion and desktop drag-region overrides. Demo smoke selectors use `data-demo-controls` and `data-demo-draft`, independently of CSS class names.
 
 ## Core development
 
@@ -118,3 +118,7 @@ Colors use Core semantic variables; viewport media widths come from `~/config/br
 `src/host/api.integration.test.ts` exercises the real in-process BFF; the fake-client component test remains beside `src/app/lib/api.ts`. `src/host/root.integration.test.tsx` exercises the actual root loader and CSP nonce handoff. Host tests explicitly select Node or jsdom and import application code through `~/`; generated route argument types are inferred from the exported function. Pure component tests remain colocated.
 
 The fullstack Core host root suite also verifies web document attributes and hydration. The no-loader safety/bootstrap fallback test stays beside `root.tsx`. Visual cookie names come from `cookieName("visual")` in `@repo/shared`; the build-time `VITE_VISUAL_COOKIE=true` opt-in and cookie lifetime remain unchanged.
+
+## Mantine UI
+
+`AppUiProvider` composes the Mantine providers. Extend the adapters in `src/app/managers/visual/mantine` to map application tokens to component themes. The appearance panel in `src/app/components/appearance-settings.tsx` demonstrates Select, Button and portalled surfaces.

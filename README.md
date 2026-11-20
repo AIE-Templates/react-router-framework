@@ -47,3 +47,7 @@ The head initializer applies saved preferences before paint. Core uses `data-col
 ## Source structure
 
 Feature routes and demo code live under `apps/web/src/app/features`; shared appearance controls live in `components/appearance-settings.tsx`. Environment contracts are consumed through `managers/environment/hooks` and `dom-props`, with the runtime owned by AppRoot. Global CSS enters through `styles/index.css`; component CSS Modules remain colocated. See the [structure specification](docs/specs/structure.spec.md) for boundaries, naming and migration rules.
+
+## Mantine UI
+
+The web app includes Mantine controls, modals and notifications. See the Web README for the provider, theme and stylesheet entry points.
