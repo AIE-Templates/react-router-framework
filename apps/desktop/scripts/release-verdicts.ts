@@ -990,6 +990,7 @@ export function judgeSigning(facts: SignatureFacts, distribution: boolean): { st
         reason: `unsigned local package (Authenticode: NotSigned); ${DISTRIBUTION_FLAG} makes this a failure`,
       };
     }
+    if (facts.status === "NotSigned") return { status: "fail", reason: "Authenticode: NotSigned" };
     return { status: "fail", reason: `Authenticode status ${facts.status}: ${facts.message}` };
   }
   if (facts.signature !== "identity") {
@@ -1023,8 +1024,9 @@ export function judgeWindowsDistribution(
   installer: Extract<SignatureFacts, { platform: "win32" }> | undefined,
 ): { status: CheckStatus; reason: string } {
   const app = judgeSigning(application, true);
-  if (app.status !== "pass") return { status: "fail", reason: `application: ${app.reason}` };
-  if (!installer) return { status: "fail", reason: `missing distribution installer: ${installerName}` };
-  const setup = judgeSigning(installer, true);
-  return { status: setup.status, reason: `application: ${app.reason}; ${installerName}: ${setup.reason}` };
+  const setup = installer ? judgeSigning(installer, true) : undefined;
+  return {
+    status: app.status === "pass" && setup?.status === "pass" ? "pass" : "fail",
+    reason: `application: ${app.reason}; ${setup ? `${installerName}: ${setup.reason}` : `missing distribution installer: ${installerName}`}`,
+  };
 }

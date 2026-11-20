@@ -790,7 +790,7 @@ describe("signing", () => {
     expect(judgeSigning(unsigned, false).status).toBe("skipped");
     expect(judgeSigning(unsigned, true)).toEqual({
       status: "fail",
-      reason: "Authenticode status NotSigned: The file is not digitally signed.",
+      reason: "Authenticode: NotSigned",
     });
   });
 
@@ -823,6 +823,14 @@ describe("signing", () => {
 
   it("requires an existing, separately signed NSIS installer for Windows distribution", () => {
     const app = { platform: "win32", status: "Valid", message: "" } as const;
+    const unsigned = { ...app, status: "NotSigned", message: "generic execution policy text" };
+    expect(judgeWindowsDistribution(unsigned, "Setup.exe", unsigned)).toEqual({
+      status: "fail",
+      reason: "application: Authenticode: NotSigned; Setup.exe: Authenticode: NotSigned",
+    });
+    expect(judgeWindowsDistribution(unsigned, "Setup.exe", undefined).reason).toBe(
+      "application: Authenticode: NotSigned; missing distribution installer: Setup.exe",
+    );
     expect(judgeWindowsDistribution(app, "Setup.exe", undefined)).toMatchObject({
       status: "fail",
       reason: expect.stringContaining("missing distribution installer"),

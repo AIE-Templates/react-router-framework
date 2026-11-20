@@ -326,7 +326,33 @@ function terminate(started: Launch, known: readonly ProcessInfo[] = []): void {
 
 /** Tears down every launch and temporary directory still around: on interruption and unexpected exit. */
 function cleanUpEverything(): void {
-  for (const started of launches) terminate(started);
+  for (const started of launches) {
+    try {
+      const before = createdBy(started);
+      terminate(started, before);
+      // Signal/exit handlers run synchronously: the child exit event cannot run here.
+      const until = Date.now() + OUTPUT_GRACE_MS;
+      for (;;) {
+        const left = leftoverProcesses(
+          listProcesses(),
+          before,
+          started.root,
+          started.preexisting,
+          started.location,
+          process.platform,
+        );
+        if (!left.some((item) => !isWindows || windowsProcess(item, "check"))) {
+          launches.delete(started);
+          break;
+        }
+        if (Date.now() >= until) break;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+      }
+    } catch (error) {
+      killRunningTree(started.app);
+      say(`could not confirm interrupted launch cleanup: ${String(error)}`);
+    }
+  }
   for (const directory of tempDirs) dropTempDir(directory);
   launches.clear();
 }
