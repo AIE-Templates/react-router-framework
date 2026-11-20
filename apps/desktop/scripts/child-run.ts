@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 
 import { verifyBuildProfile, type LaunchLocation } from "./launch.ts";
-import { windowsProcesses } from "./powershell.ts";
+import { windowsProcess, windowsProcesses } from "./powershell.ts";
 import { launchProcesses, parsePsListing, type LaunchRoot, type ProcessInfo } from "./release-verdicts.ts";
 
 /** Every process on the machine, with what `launchProcesses` needs. Throws when the listing fails. */
@@ -20,11 +20,12 @@ export function listProcesses(): ProcessInfo[] {
   );
 }
 
-export function killIfRunning(pid: number): void {
+export function killIfRunning(pid: number): boolean {
   try {
-    process.kill(pid, "SIGKILL");
+    return process.kill(pid, "SIGKILL");
   } catch (err) {
     if (!(err instanceof Error && "code" in err && err.code === "ESRCH")) throw err;
+    return false;
   }
 }
 
@@ -44,7 +45,7 @@ function killChildTree(child: ChildProcess, root: LaunchRoot, location: LaunchLo
     }
   }
   for (const item of launchProcesses(windowsProcesses(), root, new Set(), location, "win32")) {
-    if (item.pid !== root.pid) killIfRunning(item.pid);
+    if (item.pid !== root.pid) windowsProcess(item, "kill");
   }
 }
 
@@ -119,19 +120,40 @@ export function monitorTestChild(
       (item) => item.pid !== root.pid,
     );
 
-  /** After the pipes close, a helper can still be exiting or have detached from the group. */
-  async function reap(): Promise<void> {
-    if (!child.pid) return;
-    let leftovers = owned();
+  async function waitForHelpers(): Promise<ProcessInfo[]> {
     const until = Date.now() + drainMs;
+    let leftovers = owned();
     while (leftovers.length && Date.now() < until) {
       await new Promise((done) => setTimeout(done, 100));
       leftovers = owned();
     }
-    if (leftovers.length) {
-      for (const item of leftovers) killIfRunning(item.pid);
-      throw new Error(`Helpers outlived this launch and were killed: ${leftovers.map((item) => item.pid).join(", ")}`);
+    return leftovers;
+  }
+
+  /** Report forced stops separately from helpers that survived cleanup and invalidate the run. */
+  async function reap(): Promise<number[]> {
+    if (!child.pid) return [];
+    const lingering = await waitForHelpers();
+    if (!lingering.length) return [];
+    const killed: number[] = [];
+    for (const item of lingering) {
+      if (process.platform === "win32") {
+        if (windowsProcess(item, "kill")) killed.push(item.pid);
+      } else {
+        // Refresh the identity immediately before signalling; ps times are only precise to a second.
+        const same = owned().some(
+          (p) => p.pid === item.pid && p.startedAt === item.startedAt && p.command === item.command,
+        );
+        if (same && killIfRunning(item.pid)) killed.push(item.pid);
+      }
     }
+    // CIM can retain an exited process in its listing for seconds, even with no executable or command line.
+    const remaining = (await waitForHelpers()).filter(
+      (item) => process.platform !== "win32" || windowsProcess(item, "check"),
+    );
+    if (remaining.length)
+      throw new Error(`Helpers still running after cleanup: ${remaining.map((item) => item.pid).join(", ")}`);
+    return killed;
   }
   return { abort, finished, kill, reap };
 }

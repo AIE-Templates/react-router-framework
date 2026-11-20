@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { monitorTestChild } from "./child-run.ts";
 import type { LaunchLocation } from "./launch.ts";
+import { windowsProcess, windowsProcesses } from "./powershell.ts";
 
 const location: LaunchLocation = {
   command: process.execPath,
@@ -94,7 +95,8 @@ describe("test child output and cleanup", () => {
       child.stdin.end();
       await expect(monitor.finished).resolves.toBe(0);
       expect(helperPid).toBeGreaterThan(0);
-      await expect(monitor.reap()).rejects.toThrow(`Helpers outlived this launch and were killed: ${helperPid}`);
+      await expect(monitor.reap()).resolves.toEqual([helperPid]);
+      await expect(monitor.reap()).resolves.toEqual([]);
       expect(other.exitCode).toBeNull();
       expect(other.signalCode).toBeNull();
       expect(() => process.kill(other.pid!, 0)).not.toThrow();
@@ -103,6 +105,26 @@ describe("test child output and cleanup", () => {
       await closed;
     }
   }, 20000);
+  it.runIf(process.platform === "win32")(
+    "does not stop a reused or already exited Windows PID",
+    async () => {
+      const child = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 20000)"], { stdio: "ignore" });
+      const closed = once(child, "close");
+      try {
+        const entry = windowsProcesses().find((p) => p.pid === child.pid)!;
+        expect(windowsProcess(entry, "check")).toBe(true);
+        expect(windowsProcess({ ...entry, startedAt: 1 }, "kill")).toBe(false);
+        expect(() => process.kill(child.pid!, 0)).not.toThrow();
+        child.kill();
+        await closed;
+        expect(windowsProcess(entry, "kill")).toBe(false);
+      } finally {
+        child.kill();
+        await closed;
+      }
+    },
+    20000,
+  );
   it("bounds draining when a helper holds stdout after its parent exits", async () => {
     const script =
       profile +

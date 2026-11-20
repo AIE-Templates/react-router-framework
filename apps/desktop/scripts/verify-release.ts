@@ -97,7 +97,7 @@ import {
   removeUserDataDir,
   windowStateSwitches,
 } from "./launch.ts";
-import { powershellOutput } from "./powershell.ts";
+import { powershellOutput, windowsProcess } from "./powershell.ts";
 import {
   ALLOW_NO_SANDBOX_FLAG,
   checkAsarContents,
@@ -307,7 +307,16 @@ function terminate(started: Launch, known: readonly ProcessInfo[] = []): void {
     // Listing can fail during shutdown; the live child still owns its group/tree.
   }
   killRunningTree(started.app);
-  for (const entry of owned) if (entry.pid !== started.root.pid) kill(entry.pid);
+  for (const entry of owned) {
+    if (entry.pid === started.root.pid) continue;
+    if (isWindows) {
+      try {
+        windowsProcess(entry, "kill");
+      } catch (err) {
+        say(`could not stop helper ${entry.pid}: ${String(err)}`);
+      }
+    } else kill(entry.pid);
+  }
 }
 
 /** Tears down every launch and temporary directory still around: on interruption and unexpected exit. */
