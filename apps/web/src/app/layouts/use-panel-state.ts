@@ -25,10 +25,16 @@ export function usePanelEscape(open: boolean, close: (open: boolean) => void, pa
   const previouslyOpen = useRef(open);
   useEffect(() => {
     if (open && !previouslyOpen.current) {
-      document
+      const controls = document
         .getElementById(panelId)
-        ?.querySelector<HTMLElement>("button,a[href],input,select,[tabindex='0']")
-        ?.focus();
+        ?.querySelectorAll<HTMLElement>(
+          "button, a[href], input, select, textarea, [tabindex], [contenteditable='true']",
+        );
+      for (const control of controls ?? []) {
+        if (control.tabIndex < 0 && !control.isContentEditable) continue;
+        control.focus();
+        if (document.activeElement === control) break;
+      }
     }
     previouslyOpen.current = open;
   }, [open, panelId]);
@@ -36,6 +42,7 @@ export function usePanelEscape(open: boolean, close: (open: boolean) => void, pa
     if (!open) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (
+        !event.defaultPrevented &&
         event.key === "Escape" &&
         event.target instanceof Node &&
         document.getElementById(panelId)?.contains(event.target)

@@ -12,6 +12,7 @@ export function VisualSettings() {
       <label>
         Color scheme
         <select
+          data-native-control=""
           value={preferences.colorScheme}
           onChange={(event) =>
             actions.setColorSchemePreference(visualCodec.parse({ colorScheme: event.target.value }).colorScheme)
@@ -25,6 +26,7 @@ export function VisualSettings() {
       <label>
         Direction
         <select
+          data-native-control=""
           value={preferences.direction}
           onChange={(event) => actions.setDirection(event.target.value === "rtl" ? "rtl" : "ltr")}
         >
@@ -35,6 +37,7 @@ export function VisualSettings() {
       <label>
         Motion
         <select
+          data-native-control=""
           value={preferences.reducedMotion}
           onChange={(event) =>
             actions.setReducedMotionPreference(visualCodec.parse({ reducedMotion: event.target.value }).reducedMotion)
@@ -45,7 +48,7 @@ export function VisualSettings() {
           <option value="full">Full</option>
         </select>
       </label>
-      <button type="button" onClick={actions.resetVisualPreferences}>
+      <button data-native-control="" type="button" onClick={actions.resetVisualPreferences}>
         Reset appearance
       </button>
       {(status.persistence === "failed" ||
