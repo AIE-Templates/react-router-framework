@@ -20,6 +20,7 @@ import {
   COOKIE_KEY_PROBE_TEXT,
   cookieKeyProbeLine,
   type CookieKeyOutcome,
+  cookieKeyWriterCrashHandler,
   storeCookieKeyFirst,
 } from "./main/cookie-key.ts";
 import { createLogger, type Logger } from "./main/log.ts";
@@ -37,7 +38,11 @@ import { isTrustedSender } from "./main/window.ts";
 import {
   COOKIE_KEY_CHECKED_MESSAGE,
   COOKIE_KEY_MISMATCH_MESSAGE,
+  COOKIE_KEY_NO_PROBE_MESSAGE,
+  COOKIE_KEY_NOT_STORED_MESSAGE,
+  COOKIE_KEY_SKIPPED_MESSAGE,
   COOKIE_KEY_STORED_MESSAGE,
+  COOKIE_KEY_UNKNOWN_MESSAGE,
   COOKIE_KEY_WRITER_SWITCH,
   MAIN_WINDOW_READY_MESSAGE,
 } from "./startup-signals.ts";
@@ -46,8 +51,10 @@ import {
 // 1. Release builds: a launch with a Chromium remote debugging switch ends here, before this process
 //    starts anything (src/main/remote-debugging.ts). Cookie key writers are launches like any other.
 // 2. Windows, test and release builds: a cookie key writer (COOKIE_KEY_WRITER_SWITCH, started by step
-//    5 of another launch) does nothing but let Chromium make the cookie key and quit at `ready`
-//    (`runCookieKeyWriter`): no log, no userData change, no scheme, no lock, no window, no utility.
+//    5 of another launch) lets Chromium make the cookie key, prints its probe and quits at `ready`
+//    (`runCookieKeyWriter`): no log, no scheme, no lock, no window, no utility, and nothing of the app's
+//    own in userData. Chromium itself writes there what any start of it writes: Local State (which is
+//    the point) and directories of its own, such as Crashpad and caches.
 // 3. Logging, the build profile line, the debug variables, the userData directory.
 // 4. The single-instance lock; a second instance quits here.
 // 5. Windows, test and release builds: a profile whose Local State has no cookie key yet gets one from
@@ -84,9 +91,13 @@ if (
 /**
  * Step 2: a cookie key writer. It draws nothing, so no GPU; by `ready` Chromium has made the key,
  * and quitting cleanly writes it to Local State. Before quitting it prints the probe its launch checks
- * (src/main/cookie-key.ts), synchronously, as the only line on its stdout.
+ * (src/main/cookie-key.ts), synchronously, as the only line on its stdout. An uncaught error ends it
+ * at once with a non-zero status: Electron's error dialog would block it, and the launch waiting for it.
  */
 function runCookieKeyWriter(): void {
+  const crash = cookieKeyWriterCrashHandler((code) => process.exit(code));
+  process.on("uncaughtException", crash);
+  process.on("unhandledRejection", crash);
   app.disableHardwareAcceleration();
   void app.whenReady().then(finishCookieKeyWriter);
 }
@@ -142,7 +153,9 @@ function start(): void {
           userData,
           execPath: process.execPath,
           appPath: process.defaultApp ? app.getAppPath() : undefined,
+          appVersion: app.getVersion(),
         });
+  if (cookieKey.kind === "ran") profile.note("cookie-key-writer-ms", cookieKey.ms);
   logCookieKey(log, cookieKey);
 
   // Before `ready`: the scheme behaves like https (standard origin, fetch and streams, CORS, code cache).
@@ -172,34 +185,46 @@ function start(): void {
     });
 }
 
+/**
+ * What an unstored key costs: a packaged app (EnableCookieEncryption fuse) encrypts its cookies, an
+ * unpackaged launch (`electron <dir>`, no fuses) stores them in the clear and loses nothing.
+ */
+function unstoredKeyRisk(): string {
+  return app.isPackaged
+    ? "a crash in this launch's first ~10 s loses its persistent cookies"
+    : "this unpackaged launch does not encrypt its cookies, so they are not at risk";
+}
+
 function logCookieKey(log: Logger, cookieKey: CookieKeyOutcome): void {
-  if (cookieKey.kind === "ran" && cookieKey.stored) {
+  if (cookieKey.kind === "ran" && cookieKey.key === "stored") {
     log.info({ ms: cookieKey.ms }, COOKIE_KEY_STORED_MESSAGE);
-  } else if (cookieKey.kind === "ran") {
+  } else if (cookieKey.kind === "ran" && cookieKey.key === "missing") {
+    // Recorded: later launches of this version skip the writer for a day while the key is missing.
     log.warn(
-      { ms: cookieKey.ms, status: cookieKey.status, error: cookieKey.error },
-      "the cookie key writer did not store the cookie key; starting anyway, and later launches skip it while " +
-        "the key is missing: a crash in this launch's first ~10 s loses its persistent cookies",
+      { ms: cookieKey.ms, status: cookieKey.status, error: cookieKey.error, risk: unstoredKeyRisk() },
+      COOKIE_KEY_NOT_STORED_MESSAGE,
+    );
+  } else if (cookieKey.kind === "ran") {
+    // Local State could not be read after the writer: nothing recorded, the next launch checks again.
+    log.warn(
+      { ms: cookieKey.ms, status: cookieKey.status, error: cookieKey.error, reason: cookieKey.readError },
+      COOKIE_KEY_UNKNOWN_MESSAGE,
     );
   } else if (cookieKey.kind === "skipped") {
-    log.warn(
-      { failedAt: cookieKey.failedAt },
-      "the cookie key is still not stored and an earlier cookie key writer run failed, so it was not run again: " +
-        "a crash in this launch's first ~10 s loses its persistent cookies",
-    );
+    log.warn({ failedAt: cookieKey.failedAt, risk: unstoredKeyRisk() }, COOKIE_KEY_SKIPPED_MESSAGE);
   }
 }
 
 /** Once ready: whether this launch runs on the key its writer stored (src/main/cookie-key.ts). */
 function checkCookieKey(log: Logger, cookieKey: CookieKeyOutcome): void {
-  if (cookieKey.kind !== "ran" || !cookieKey.stored) return;
+  if (cookieKey.kind !== "ran" || cookieKey.key !== "stored") return;
   if (cookieKey.probe === undefined) {
-    log.warn({}, "the cookie key writer printed no probe; this launch cannot check it uses the stored key");
+    log.warn({}, COOKIE_KEY_NO_PROBE_MESSAGE);
     return;
   }
   const checked = checkCookieKeyProbe(cookieKey.probe, (encrypted) => safeStorage.decryptString(encrypted));
   if (checked.ok) log.info({}, COOKIE_KEY_CHECKED_MESSAGE);
-  else log.error({ reason: checked.reason }, COOKIE_KEY_MISMATCH_MESSAGE);
+  else log.error({ reason: checked.reason, risk: unstoredKeyRisk() }, COOKIE_KEY_MISMATCH_MESSAGE);
 }
 
 async function askRecovery(

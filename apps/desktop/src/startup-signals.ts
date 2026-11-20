@@ -37,11 +37,36 @@ export const COOKIE_KEY_STORED_MESSAGE = "cookie key stored before start";
 /**
  * After COOKIE_KEY_STORED_MESSAGE, once the main window is on its way, exactly one of: the `msg` of
  * an `info` line saying the launch runs on the key its writer stored (it decrypted the writer's
- * probe), or the `msg` of an `error` line, with `reason`, saying it does not.
+ * probe), or the `msg` of an `error` line, with `reason` and `risk` (what it costs: a packaged app's
+ * persistent cookies, if it crashes in its first ~10 s), saying it does not.
  */
 export const COOKIE_KEY_CHECKED_MESSAGE = "cookie key checked: this launch uses the stored key";
-export const COOKIE_KEY_MISMATCH_MESSAGE =
-  "this launch does not use the cookie key its key writer stored: a crash in its first ~10 s loses its persistent cookies";
+export const COOKIE_KEY_MISMATCH_MESSAGE = "this launch does not use the cookie key its key writer stored";
+
+/**
+ * The `msg`s of the main-process warnings (Windows, test and release builds) about a cookie key writer
+ * run that did not end with the key stored and checked (src/main.ts): Local State has no key after it;
+ * Local State could not be read after it (nothing recorded); it was skipped after a recent failed run;
+ * it printed no probe, so the launch cannot check its key. Each carries what it costs as `risk` where
+ * that applies.
+ */
+export const COOKIE_KEY_NOT_STORED_MESSAGE = "the cookie key writer did not store the cookie key";
+export const COOKIE_KEY_UNKNOWN_MESSAGE = "could not tell whether the cookie key writer stored the cookie key";
+export const COOKIE_KEY_SKIPPED_MESSAGE = "cookie key writer skipped: a run of this version failed within a day";
+export const COOKIE_KEY_NO_PROBE_MESSAGE = "the cookie key writer printed no probe; the key in use is not checked";
+/**
+ * The file a cookie key writer run that left no key behind writes into userData, so later launches of
+ * the same version skip the writer for a while (src/main/cookie-key.ts). A launch on a fresh profile
+ * whose writer worked never has one.
+ */
+export const COOKIE_KEY_WRITER_FAILED_FILE = "cookie-key-writer-failed.json";
+
+export const COOKIE_KEY_WRITER_WARNINGS = [
+  COOKIE_KEY_NOT_STORED_MESSAGE,
+  COOKIE_KEY_UNKNOWN_MESSAGE,
+  COOKIE_KEY_SKIPPED_MESSAGE,
+  COOKIE_KEY_NO_PROBE_MESSAGE,
+] as const;
 
 /**
  * The switch, without its `--` prefix, that makes a test or release launch on Windows a cookie key
