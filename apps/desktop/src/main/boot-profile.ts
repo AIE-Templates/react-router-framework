@@ -1,7 +1,7 @@
 /**
  * Startup segments, in milliseconds since the process started, printed as one JSON line
- * (`BOOT_PROFILE {...}`) when `DESKTOP_BOOT_PROFILE=1`. Every startup optimization is judged
- * against these numbers.
+ * (`BOOT_PROFILE {...}`) when enabled (`DESKTOP_BOOT_PROFILE=1` in dev and test builds, ~/debug-env.ts).
+ * Every startup optimization is judged against these numbers.
  */
 export type BootMark =
   | "ready"
@@ -23,7 +23,7 @@ export interface BootProfile {
   report(): void;
 }
 
-export function createBootProfile(enabled = process.env.DESKTOP_BOOT_PROFILE === "1"): BootProfile {
+export function createBootProfile(enabled: boolean): BootProfile {
   const marks: Partial<Record<BootMark, number>> = {};
   const notes: Record<string, number> = {};
   let reported = false;

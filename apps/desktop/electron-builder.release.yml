@@ -1,17 +1,18 @@
 # The release profile, from the `.vite/release` bundles into out/release, with Electron fuses
 # flipped after packing (and, once certificates exist, signing and notarization).
 # `pnpm release:desktop` builds it unpacked for local checks, `pnpm dist:desktop` builds the
-# installers; both build the release bundles first. The in-app smoke (DESKTOP_SMOKE=1) still works
-# on it. Playwright's Electron driver does not: it needs the Node inspect arguments the fuses turn
-# off, so automated UI tests run against the test profile.
+# installers; both build the release bundles first. The release bundles contain no diagnostics (the
+# in-app smoke, the benchmark, the end-to-end endpoints) and read no debug environment variables, and
+# Playwright's Electron driver needs the Node inspect arguments the fuses turn off: the smoke, the
+# benchmark and the automated UI tests run against the test profile.
 extends: ./electron-builder.base.yml
 extraMetadata:
   main: .vite/release/main.cjs
-  desktopProfile: release
 files:
   - ".vite/release/**"
   - "!.vite/release/*.map"
   - "!.vite/release/web-server.json"
+  - "!.vite/release/*.modules.json"
   - package.json
 directories:
   output: out/release

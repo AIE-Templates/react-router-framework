@@ -20,7 +20,8 @@
     "start": "pnpm --filter web start",
     "test": "vitest",
     "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
-    "typegen": "pnpm --filter web exec react-router typegen"
+    "typegen": "pnpm --filter web exec react-router typegen",
+    "verify:build": "pnpm --filter desktop verify:build"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",

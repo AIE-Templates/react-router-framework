@@ -14,6 +14,12 @@ interface RegistryOptions extends WindowOptions {
     shared: boolean,
     signal: AbortSignal,
   ): Promise<RecoveryChoice>;
+  /**
+   * Called once per window, the first time it both holds a successfully loaded document and is
+   * visible, whichever comes last; never for a failed load or a hidden window. `fixedKey` is the
+   * identity the window was opened with (`open`'s), undefined for route-keyed and child windows.
+   */
+  onReady?(window: BrowserWindow, fixedKey: string | undefined): void;
 }
 
 type Recovery = ReturnType<typeof createWindowRecovery>;
@@ -104,15 +110,28 @@ export function createWindowRegistry(options: RegistryOptions) {
       entry.pid = contents.getOSProcessId();
       updateRouteKey(target);
     });
+    // Whether the document the window holds loaded; an error document is not one.
+    let loaded = false;
+    let ready = false;
+    const settleReady = (shown: boolean) => {
+      if (ready || !loaded || win.isDestroyed() || !shown) return;
+      ready = true;
+      options.onReady?.(win, fixedKey);
+    };
+    // The event itself says the window is shown, whatever a platform reports while it is delivered.
+    win.on("show", () => settleReady(true));
     contents.on("did-finish-load", () => {
-      if (committed) recovery.documentLoaded(contents.getURL());
+      if (!committed) return;
+      recovery.documentLoaded(contents.getURL());
+      loaded = true;
+      settleReady(win.isVisible());
     });
     contents.on("did-navigate-in-page", (_event, target, isMainFrame) => {
       if (isMainFrame) updateRouteKey(target);
       recovery.sameDocumentNavigated(target, isMainFrame);
     });
     contents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) => {
-      if (isMainFrame && errorCode !== -3) committed = false;
+      if (isMainFrame && errorCode !== -3) committed = loaded = false;
       recovery.didFailLoad({ errorCode, isMainFrame });
     });
     contents.on("render-process-gone", (_event, details) => recovery.rendererGone(details.reason));

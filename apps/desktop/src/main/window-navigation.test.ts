@@ -119,6 +119,37 @@ it("explicitly disables sub-frame Node integration and webviews", () => {
   );
 });
 
+/** What the host creates a window with, and what it lets the renderer open one with. */
+function windowOptions() {
+  const { contents } = setup();
+  const details: Electron.HandlerDetails = {
+    url: "app://app/settings",
+    features: "",
+    frameName: "",
+    disposition: "new-window",
+    referrer: { url: "", policy: "default" },
+  };
+  return {
+    created: native.createWindow.mock.calls.at(-1)?.[0],
+    opened: contents.setWindowOpenHandler.mock.calls[0][0](details),
+  };
+}
+
+it("keeps DevTools in dev and test builds and turns them off in release builds, for every window", () => {
+  const test = windowOptions();
+  expect(test.created).not.toHaveProperty("webPreferences.devTools");
+  expect(test.opened).not.toHaveProperty("overrideBrowserWindowOptions.webPreferences.devTools");
+
+  vi.stubGlobal("DESKTOP_BUILD_PROFILE", "release");
+  try {
+    const release = windowOptions();
+    expect(release.created).toHaveProperty("webPreferences.devTools", false);
+    expect(release.opened).toHaveProperty("overrideBrowserWindowOptions.webPreferences.devTools", false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 it("logs only main-frame console messages and redacts source and message URLs", () => {
   const { contents, log } = setup(true);
   const event = {

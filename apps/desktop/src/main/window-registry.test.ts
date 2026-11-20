@@ -59,7 +59,7 @@ vi.mock("electron", () => ({
   session: { defaultSession: {} },
 }));
 
-function setup() {
+function setup(onReady?: Parameters<typeof createWindowRegistry>[0]["onReady"]) {
   const choices: ((choice: RecoveryChoice) => void)[] = [];
   const askRecovery = vi.fn<Parameters<typeof createWindowRegistry>[0]["askRecovery"]>(
     () => new Promise((resolve) => choices.push(resolve)),
@@ -77,6 +77,7 @@ function setup() {
     },
     keyForUrl: (url) => (url.pathname === "/settings" ? "settings" : undefined),
     askRecovery,
+    onReady,
   });
   return { registry, choices, askRecovery };
 }
@@ -188,4 +189,51 @@ it("uses the last committed PID after a crash and ignores the finish of Chromium
   choices[1]("wait");
   await flush();
   expect([...registry.windows()]).toEqual([made[1]]);
+});
+
+it("reports a window ready once, when it both holds a loaded document and is visible", () => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  const { window } = registry.open("app://app/", "primary");
+  const primary = made[0];
+  primary.visible = false;
+  // Visible without a document, then a document without being visible: neither is ready.
+  primary.emit("show");
+  primary.commit("app://app/");
+  expect(onReady).not.toHaveBeenCalled();
+  primary.visible = true;
+  primary.emit("show");
+  expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+  primary.commit("app://app/next");
+  primary.emit("show");
+  expect(onReady).toHaveBeenCalledOnce();
+
+  // Shown first, loaded second; a window opened without a fixed identity reports none.
+  const settings = registry.open("app://app/settings").window;
+  made[1].commit("app://app/settings");
+  expect(onReady).toHaveBeenCalledTimes(2);
+  expect(onReady).toHaveBeenLastCalledWith(settings, undefined);
+});
+
+it("never reports a window ready for a failed load, and does once a later load succeeds", () => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  const { window } = registry.open("app://app/", "primary");
+  const primary = made[0];
+  // Chromium finishes loading its error document after the failure; the window may be shown for recovery.
+  primary.webContents.emit("did-fail-load", {}, -102, "ERR_CONNECTION_REFUSED", "app://app/", true);
+  primary.webContents.emit("did-finish-load");
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+
+  // A document that loaded while hidden and then failed to reload is not ready when shown either.
+  primary.visible = false;
+  primary.commit("app://app/");
+  primary.webContents.emit("did-fail-load", {}, -102, "ERR_CONNECTION_REFUSED", "app://app/", true);
+  primary.visible = true;
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+
+  primary.commit("app://app/");
+  expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
 });

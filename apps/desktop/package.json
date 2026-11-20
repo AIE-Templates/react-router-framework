@@ -21,7 +21,8 @@
     "test:e2e": "playwright test",
     "test:e2e:demo": "playwright test --grep @demo",
     "test:e2e:host": "playwright test --grep-invert @demo",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "verify:build": "node scripts/verify-build.ts"
   },
   "dependencies": {},
   "devDependencies": {

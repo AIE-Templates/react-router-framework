@@ -37,8 +37,8 @@ export interface ServerProcessOptions {
   onReady?: () => void;
   /**
    * Ack coalescing on the main end of the port; `false` turns it off. Defaults to
-   * `PORT_ACK_COALESCE`. The utility end follows `DESKTOP_PORT_ACK_COALESCE` in `env`, which the
-   * caller sets to match.
+   * `PORT_ACK_COALESCE`. The utility end follows what the caller passes in `env` to match
+   * (`utilityDebugEnv`, ~/debug-env.ts); release builds keep the default on both ends.
    */
   ackCoalesce?: AckCoalesceOptions | false;
   /** Extra variables over the inherited ones. NODE_ENV stays production for the built web host. */

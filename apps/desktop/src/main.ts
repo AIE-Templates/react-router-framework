@@ -1,29 +1,35 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { PortFetch } from "@repo/port-fetch";
 import { DESKTOP_PREFS_IPC, shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
 import { app, type BrowserWindow, dialog, nativeTheme, protocol, session } from "electron";
 
-import { benchConfigFromEnv, runBench } from "./diagnostics/bench/bench.ts";
-import { runSmoke } from "./diagnostics/smoke/smoke.ts";
+// These three are replaced per build profile (vite.base.config.ts): import them by exactly these names.
+import { readDebugEnv, utilityDebugEnv } from "~/debug-env.ts";
+import { selectMainRun } from "~/diagnostics/entry.ts";
+import { developmentHost } from "~/main/dev-host.ts";
+
 import { APP_ORIGIN, APP_SCHEME, isAppUrl } from "./main/app-url.ts";
 import { createBootProfile } from "./main/boot-profile.ts";
 import { resolveChromePolicy } from "./main/chrome-policy.ts";
 import { COOKIE_JAR_ORIGIN, createCookieJar, flushForQuit } from "./main/cookie-jar.ts";
-import { createDevProxyFetch } from "./main/dev-proxy.ts";
 import { createLogger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
 import { createPrefsStore, installPrefsIpc } from "./main/prefs.ts";
 import { registerAppProtocol } from "./main/protocol.ts";
 import type { RecoveryChoice, RecoveryDialog } from "./main/recovery.ts";
-import { resolveRunModes } from "./main/run-modes.ts";
+import { refuseRemoteDebugging } from "./main/remote-debugging.ts";
 import { startServerProcess } from "./main/server-process.ts";
 import { configureUserData } from "./main/user-data.ts";
 import { createVisualThemeStore } from "./main/visual-theme.ts";
 import { createWindowRegistry } from "./main/window-registry.ts";
 import { isTrustedSender } from "./main/window.ts";
-import { portAckCoalesce } from "./port-options.ts";
+import { MAIN_WINDOW_READY_MESSAGE } from "./startup-signals.ts";
+
+// First of all, and only in release builds: a launch with a Chromium remote debugging switch ends
+// here, before this process starts anything (src/main/remote-debugging.ts).
+if (DESKTOP_BUILD_PROFILE === "release") refuseRemoteDebugging();
 
 // The main process must never die of an uncaught exception: Electron shows a blocking dialog for
 // those, which stalls the whole app. Log and carry on.
@@ -37,11 +43,15 @@ process.on("unhandledRejection", (reason) => log.error({ err: reason }, "unhandl
 log.info({ buildProfile: DESKTOP_BUILD_PROFILE }, "build profile");
 if (DESKTOP_BUILD_PROFILE !== "release") globalThis.desktopBuildProfile = DESKTOP_BUILD_PROFILE;
 
-const profile = createBootProfile();
-const devServerUrl = DESKTOP_DEV_SERVER_URL;
+// The debug variables of dev and test builds; a release build reads none of them (~/debug-env.ts).
+const debug = readDebugEnv();
+const profile = createBootProfile(debug.bootProfile);
+// The dev build's host, whose pages come from `react-router dev`. The build profile decides, and the
+// other builds do not even bundle the module (~/main/dev-host.ts).
+const dev = DESKTOP_BUILD_PROFILE === "dev" ? developmentHost : undefined;
 
-// A development instance keeps its own storage, apart from the installed app's.
-const { compileCacheDir } = configureUserData(app, process.env.DESKTOP_USER_DATA_SUFFIX);
+// A development or test instance keeps its own storage, apart from the installed app's.
+const { compileCacheDir } = configureUserData(app, debug.userDataSuffix);
 
 // Before `ready`: the scheme behaves like https (standard origin, fetch and streams, CORS, code cache).
 protocol.registerSchemesAsPrivileged([
@@ -74,21 +84,6 @@ if (!app.requestSingleInstanceLock()) {
       await server?.shutdown().catch(() => {});
       app.exit(1);
     });
-}
-
-/**
- * The electron-builder profile a packaged app was built with (`extraMetadata.desktopProfile`: "test"
- * in electron-builder.test.yml, "release" in electron-builder.release.yml); undefined unpackaged.
- */
-function packagedProfile(): string | undefined {
-  try {
-    const metadata: unknown = JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8"));
-    return typeof metadata === "object" && metadata !== null && "desktopProfile" in metadata
-      ? String(metadata.desktopProfile)
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 async function askRecovery(
@@ -124,6 +119,8 @@ async function askRecovery(
 
 async function main(): Promise<void> {
   profile.mark("ready");
+  const development = dev !== undefined;
+  let mainWindowReady = false;
   const appSession = session.fromPartition("persist:app");
   installPermissionPolicy(appSession, log);
   // Preferences the page writes through the preload; every request carries the current ones.
@@ -155,9 +152,15 @@ async function main(): Promise<void> {
     appVersion: app.getVersion(),
     log,
     profile,
-    logRendererConsole: devServerUrl !== undefined || process.env.DESKTOP_SMOKE === "1",
+    logRendererConsole: DESKTOP_BUILD_PROFILE !== "release" && (development || debug.smoke),
     keyForUrl: (url) => (/^\/settings\/*$/i.test(url.pathname) ? "settings" : undefined),
     askRecovery,
+    // What an external verifier waits for: logged once, at info, in every build profile.
+    onReady(_window, fixedKey) {
+      if (fixedKey !== "primary" || mainWindowReady) return;
+      mainWindowReady = true;
+      log.info({}, MAIN_WINDOW_READY_MESSAGE);
+    },
   });
   installPrefsIpc(
     prefsStore,
@@ -177,48 +180,40 @@ async function main(): Promise<void> {
     prefs: prefsStore.current(),
   });
 
-  // Ack coalescing on the main↔utility port, the same on both ends (DESKTOP_PORT_ACK_COALESCE=0
-  // turns it off, for the benchmark's comparison).
-  const ackCoalesce = portAckCoalesce(process.env.DESKTOP_PORT_ACK_COALESCE);
-  // The bench and the e2e run (and their endpoints) only unpackaged or on the packaged test profile,
-  // never on the release profile; the smoke on any build (src/main/run-modes.ts).
-  const { bench, smoke, e2e, ignored } = resolveRunModes({
-    env: process.env,
-    development: devServerUrl !== undefined,
-    packaged: app.isPackaged,
-    profile: packagedProfile,
-  });
-  for (const { variable, reason } of ignored) log.warn({ reason }, `${variable} ignored`);
-  const benchConfig = bench ? benchConfigFromEnv(process.env) : undefined;
+  // Ack coalescing on the main↔utility port, the same on both ends (dev and test builds can turn it
+  // off, for the benchmark's comparison).
+  const ackCoalesce = debug.ackCoalesce();
+  // The benchmark, the smoke and the end-to-end run (and their endpoints) exist only in dev and test
+  // builds; in a release build this selects nothing (~/diagnostics/entry.ts).
+  const run = selectMainRun(debug, { development, log });
 
-  // Where pages come from: the utility process in production, `react-router dev` in development.
-  const internalOrigin = devServerUrl ?? INTERNAL_ORIGIN;
+  // Where pages come from: the utility process, or `react-router dev` in the dev build.
+  const internalOrigin = dev?.serverUrl ?? INTERNAL_ORIGIN;
   const clientDir = app.isPackaged
     ? join(process.resourcesPath, "client")
     : join(__dirname, "../../../web/build/client");
-  server = devServerUrl
-    ? undefined
-    : startServerProcess({
-        utilityPath: join(__dirname, "utility.mjs"),
-        clientDir,
-        compileCacheDir,
-        log,
-        onUtilityBoot: (ms) => profile.note("utility-boot-ms", ms),
-        onSpawn: () => profile.mark("utility-spawn"),
-        onReady: () => profile.mark("utility-ready"),
-        ackCoalesce,
-        // The utility's end follows this end; DESKTOP_BENCH, DESKTOP_SMOKE and DESKTOP_E2E reach it
-        // only when the bench, the smoke or the end-to-end run is this one.
-        env: {
-          DESKTOP_PORT_ACK_COALESCE: ackCoalesce ? "1" : "0",
-          DESKTOP_BENCH: bench ? "1" : "",
-          DESKTOP_SMOKE: smoke ? "1" : "",
-          DESKTOP_E2E: e2e ? "1" : "",
-        },
-        onLifecycle: registry.utilityChanged,
-      });
+  let upstream: PortFetch;
+  if (dev) {
+    upstream = dev.createFetch();
+  } else {
+    server = startServerProcess({
+      utilityPath: join(__dirname, "utility.mjs"),
+      clientDir,
+      compileCacheDir,
+      log,
+      onUtilityBoot: (ms) => profile.note("utility-boot-ms", ms),
+      onSpawn: () => profile.mark("utility-spawn"),
+      onReady: () => profile.mark("utility-ready"),
+      ackCoalesce,
+      // Dev and test builds: the utility's end follows this end, and learns which run, if any, is
+      // this one. A release build passes nothing on.
+      env: utilityDebugEnv({ ackCoalesce, ...run.modes }),
+      onLifecycle: registry.utilityChanged,
+    });
+    upstream = server.fetch;
+  }
   registerAppProtocol(appSession, {
-    upstream: server ? server.fetch : createDevProxyFetch(),
+    upstream,
     internalOrigin,
     desktop,
     // A `Domain` attribute may name the jar's host or the host the server sees (the dev server's).
@@ -230,11 +225,10 @@ async function main(): Promise<void> {
     log,
     profile,
   });
-  if (devServerUrl) {
-    log.info({ devServerUrl }, "development: forwarding app:// to react-router dev");
-    // scripts/dev.ts writes "reload" on stdin when the preload script was rebuilt.
-    process.stdin.on("data", (chunk: Buffer) => {
-      if (chunk.toString().includes("reload")) for (const win of registry.windows()) win.webContents.reload();
+  if (dev) {
+    log.info({ devServerUrl: dev.serverUrl }, "development: forwarding app:// to react-router dev");
+    dev.onReloadRequest(() => {
+      for (const win of registry.windows()) win.webContents.reload();
     });
   }
 
@@ -271,39 +265,22 @@ async function main(): Promise<void> {
   // did-fail-load is handled by recovery; startup failure must not bypass the native retry path.
   await initialLoad.catch((err: unknown) => {
     log.warn({ err }, "initial document failed; recovery owns retry");
-    if (process.env.DESKTOP_SMOKE === "1" || benchConfig) throw err;
+    if (debug.smoke || run.modes.bench) throw err;
   });
-  if (benchConfig && server) {
-    const utility = server;
-    await runBench({
-      win: first.window,
-      config: benchConfig,
-      ackCoalesce,
-      log,
-      getAppMetrics: () => app.getAppMetrics(),
-      utilityFetch: utility.fetch,
-      internalOrigin,
-      clientStats: () => utility.stats(),
-      exit: async (code) => {
-        quitting = true;
-        registry.shutdown();
-        await utility.shutdown();
-        app.exit(code);
-      },
-    });
-  } else if (smoke) {
-    await runSmoke(first.window, {
-      profile,
-      log,
-      development: devServerUrl !== undefined,
-      smokeRoutes: server !== undefined,
-      layout: process.env.DESKTOP_SMOKE_LAYOUT === "1",
-      exit: async (code) => {
-        quitting = true;
-        registry.shutdown();
-        await server?.shutdown();
-        app.exit(code);
-      },
-    });
-  }
+  await run.start({
+    window: first.window,
+    log,
+    bootProfile: profile,
+    development,
+    ackCoalesce,
+    internalOrigin,
+    server,
+    getAppMetrics: () => app.getAppMetrics(),
+    exit: async (code) => {
+      quitting = true;
+      registry.shutdown();
+      await server?.shutdown();
+      app.exit(code);
+    },
+  });
 }

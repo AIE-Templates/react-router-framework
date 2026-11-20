@@ -34,6 +34,65 @@ export function bundleDir(profile: BuildProfile): string {
   return `.vite/${profile}`;
 }
 
+/** The bundles of one profile, in `.vite/<profile>`: the main process, the preload script, the utility process. */
+export const BUNDLES = ["main.cjs", "preload.cjs", "utility.mjs"] as const;
+export type Bundle = (typeof BUNDLES)[number];
+
+/**
+ * A source module only some profiles bundle. In the others the build puts `empty`, an implementation
+ * of the same contract that does nothing, in its place (`resolve.alias` in vite.base.config.ts), so
+ * neither `module` nor what only it imports (`owns`) is in their bundles. That is decided by the
+ * build configuration, not left to tree-shaking, and scripts/verify-build.ts checks the result
+ * against the bundler's own module lists. Paths are relative to apps/desktop.
+ */
+export interface ProfileEntry {
+  /** How source imports the module; it must be exactly this, since the alias matches the specifier. */
+  specifier: string;
+  module: string;
+  empty: string;
+  /** The profiles that bundle `module`; the rest bundle `empty`. */
+  profiles: readonly BuildProfile[];
+  /** Source that reaches a bundle only through `module`: files, or directories with a trailing slash. */
+  owns: readonly string[];
+  /** The bundles that import the entry. */
+  bundles: readonly Bundle[];
+}
+
+export const PROFILE_ENTRIES: readonly ProfileEntry[] = [
+  {
+    // The debug environment variables: read in dev and test, not even named in release.
+    specifier: "~/debug-env.ts",
+    module: "src/debug-env.ts",
+    empty: "src/debug-env.empty.ts",
+    profiles: ["dev", "test"],
+    owns: [],
+    bundles: ["main.cjs", "utility.mjs"],
+  },
+  {
+    // The smoke, the benchmark and the end-to-end endpoints.
+    specifier: "~/diagnostics/entry.ts",
+    module: "src/diagnostics/entry.ts",
+    empty: "src/diagnostics/entry.empty.ts",
+    profiles: ["dev", "test"],
+    owns: ["src/diagnostics/"],
+    bundles: ["main.cjs", "utility.mjs"],
+  },
+  {
+    // The development server proxy and preload reload.
+    specifier: "~/main/dev-host.ts",
+    module: "src/main/dev-host.ts",
+    empty: "src/main/dev-host.empty.ts",
+    profiles: ["dev"],
+    owns: ["src/main/dev-proxy.ts"],
+    bundles: ["main.cjs"],
+  },
+];
+
+/** The entries whose `empty` implementation `profile` bundles. */
+export function emptyEntries(profile: BuildProfile): ProfileEntry[] {
+  return PROFILE_ENTRIES.filter((entry) => !entry.profiles.includes(profile));
+}
+
 export type BuildMode = "desktop" | "with-web" | "workspace";
 
 /** What scripts/build.ts builds; the dev profile is built only by scripts/dev.ts, in watch mode. */

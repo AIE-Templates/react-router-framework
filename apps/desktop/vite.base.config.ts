@@ -1,8 +1,17 @@
 import { builtinModules } from "node:module";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { defaultServerConditions, type UserConfig } from "vite";
 
-import { BUILD_PROFILE_ENV, type BuildProfile, buildProfileFrom, bundleDir } from "./scripts/build-profile.ts";
+import {
+  BUILD_PROFILE_ENV,
+  type BuildProfile,
+  buildProfileFrom,
+  bundleDir,
+  emptyEntries,
+} from "./scripts/build-profile.ts";
+import { recordBundleModules } from "./scripts/bundle-modules.ts";
 
 /** Left to the runtime: Electron itself and Node's built-in modules. Everything else is bundled. */
 export const external = [
@@ -18,28 +27,45 @@ export interface EntryOptions {
   format: "cjs" | "es";
 }
 
+/** apps/desktop, where this file is. */
+const desktopDir = fileURLToPath(new URL(".", import.meta.url));
+
+/**
+ * The `resolve.alias` entries of one profile: every source module the profile does not bundle
+ * (PROFILE_ENTRIES in scripts/build-profile.ts) resolves to its empty implementation. The match is on
+ * the import specifier, exactly as source writes it.
+ */
+export function emptyEntryAliases(profile: BuildProfile): { find: RegExp; replacement: string }[] {
+  return emptyEntries(profile).map((entry) => ({
+    find: new RegExp(`^${entry.specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+    replacement: resolve(desktopDir, entry.empty),
+  }));
+}
+
 /**
  * One Vite lib build per entry, the way the Electron Forge Vite template does it, for one build
  * profile (scripts/build-profile.ts; DESKTOP_BUILD_PROFILE, `test` when unset): output in
- * `.vite/<profile>`, the profile compiled in as DESKTOP_BUILD_PROFILE. The dev profile is unminified
- * and leaves NODE_ENV to the runtime; test and release are minified and replace NODE_ENV so
- * dependencies such as React select their production branches. The dev profile is always a watch
- * build (`DESKTOP_WATCH=1`, while `scripts/dev.ts` runs) and only watch builds embed the development
- * server address.
+ * `.vite/<profile>`, the profile compiled in as DESKTOP_BUILD_PROFILE. Everything that differs
+ * between profiles follows from the profile alone:
+ * - dev is unminified, leaves NODE_ENV to the runtime, is always a watch build and embeds the
+ *   development server address, which it therefore requires (DESKTOP_DEV_SERVER_URL; scripts/dev.ts
+ *   sets it, and is the only build of this profile);
+ * - test and release are minified and replace NODE_ENV so dependencies such as React select their
+ *   production branches;
+ * - the source modules a profile does not bundle are replaced by empty implementations
+ *   (`emptyEntryAliases`): the development host outside dev; the diagnostics and the debug
+ *   environment variables in release.
+ * Each bundle's module list is recorded beside it for scripts/verify-build.ts.
  */
 export function entryConfig(
   { entry, fileName, format }: EntryOptions,
   profile: BuildProfile = buildProfileFrom(process.env[BUILD_PROFILE_ENV]),
 ): UserConfig {
-  const watch = process.env.DESKTOP_WATCH === "1";
-  // The dev profile exists only as scripts/dev.ts's watch build, against its development server.
-  if (watch !== (profile === "dev")) {
-    throw new Error(
-      watch ? `Watch builds use the dev profile, not ${profile}` : "The dev profile is built in watch mode only",
-    );
-  }
   const development = profile === "dev";
-  const devServerUrl = watch ? process.env.DESKTOP_DEV_SERVER_URL : undefined;
+  const devServerUrl = development ? process.env.DESKTOP_DEV_SERVER_URL : undefined;
+  if (development && !devServerUrl) {
+    throw new Error("The dev profile is built by scripts/dev.ts only: it needs DESKTOP_DEV_SERVER_URL");
+  }
   return {
     publicDir: false,
     define: {
@@ -48,18 +74,20 @@ export function entryConfig(
       ...(!development ? { "process.env.NODE_ENV": JSON.stringify("production") } : {}),
     },
     resolve: {
+      alias: emptyEntryAliases(profile),
       // Workspace packages from source; Node's own export conditions, not the browser's, so
       // packages such as react-dom/server resolve to their Node builds.
       conditions: ["@repo/source", ...defaultServerConditions],
       mainFields: ["module", "main"],
       tsconfigPaths: true,
     },
+    plugins: [recordBundleModules(profile, desktopDir)],
     build: {
       outDir: bundleDir(profile),
       emptyOutDir: false,
       minify: !development,
       sourcemap: true,
-      watch: watch ? {} : null,
+      watch: development ? {} : null,
       lib: { entry, formats: [format], fileName: () => fileName },
       rollupOptions: { external, platform: "node", output: { codeSplitting: false } },
     },

@@ -1,17 +1,19 @@
 import type { PortStats } from "@repo/port-fetch";
 import type { BrowserWindow, ProcessMetric } from "electron";
 
+import type { DebugEnv } from "~/debug-env.contract.ts";
 import type { Logger } from "~/main/log.ts";
 
 import { type PageCaseResult, type PageCaseSpec, type PageOp, runPageCase } from "./bench-page.ts";
 import type { BenchProc } from "./routes";
 
 /**
- * `DESKTOP_BENCH=1` (unpackaged or the packaged test profile): the real-app transport benchmark. Once the page has hydrated,
- * runs each case in the renderer (closed-loop `fetch` from page JavaScript through `app://`, the
- * protocol handler, port-fetch and the utility's web app), measures CPU and memory of every process
- * over each measure window, prints one `BENCH_RESULT {...}` line and exits. `scripts/bench.ts`
- * launches it in fresh processes and compares the modes; see the README, "Real-app benchmark".
+ * `DESKTOP_BENCH=1` (the test build: release builds do not contain the benchmark, and the dev build has
+ * no utility to measure): the real-app transport benchmark. Once the page has hydrated, runs each
+ * case in the renderer (closed-loop `fetch` from page JavaScript through `app://`, the protocol
+ * handler, port-fetch and the utility's web app), measures CPU and memory of every process over each
+ * measure window, prints one `BENCH_RESULT {...}` line and exits. `scripts/bench.ts` launches it in
+ * fresh processes and compares the modes; see the README, "Real-app benchmark".
  */
 
 const MiB = 1024 * 1024;
@@ -53,16 +55,19 @@ export interface BenchConfig {
   label?: string;
 }
 
-/** The configuration from `DESKTOP_BENCH_*` (read by the main entry and passed in). */
-export function benchConfigFromEnv(env: Record<string, string | undefined>): BenchConfig {
-  const ms = (name: string, fallback: number): number => {
-    const value = env[name];
-    if (value === undefined || value === "") return fallback;
-    const n = Number(value);
-    if (!Number.isSafeInteger(n) || n < 0) throw new Error(`Invalid ${name} "${value}": expected milliseconds`);
-    return n;
-  };
-  const names = env.DESKTOP_BENCH_CASES?.split(",")
+function milliseconds(name: string, value: string | undefined, fallback: number): number {
+  if (value === undefined || value === "") return fallback;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`Invalid ${name} "${value}": expected milliseconds`);
+  return n;
+}
+
+/** The configuration from `DESKTOP_BENCH_*`, as ~/debug-env.ts read them. */
+export function benchConfigFrom(
+  debug: Pick<DebugEnv, "benchCases" | "benchWarmupMs" | "benchMeasureMs" | "benchLabel">,
+): BenchConfig {
+  const names = debug.benchCases
+    ?.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
   const cases = names?.length
@@ -74,10 +79,10 @@ export function benchConfigFromEnv(env: Record<string, string | undefined>): Ben
       })
     : BENCH_CASES;
   return {
-    warmupMs: ms("DESKTOP_BENCH_WARMUP_MS", 1000),
-    measureMs: ms("DESKTOP_BENCH_MEASURE_MS", 5000),
+    warmupMs: milliseconds("DESKTOP_BENCH_WARMUP_MS", debug.benchWarmupMs, 1000),
+    measureMs: milliseconds("DESKTOP_BENCH_MEASURE_MS", debug.benchMeasureMs, 5000),
     cases,
-    label: env.DESKTOP_BENCH_LABEL || undefined,
+    label: debug.benchLabel || undefined,
   };
 }
 

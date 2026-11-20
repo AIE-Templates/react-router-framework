@@ -20,7 +20,10 @@ export interface WindowOptions {
   appVersion: string;
   log: Logger;
   profile: BootProfile;
-  /** Development: forward the page's console to the main log, so Vite's HMR messages show up. */
+  /**
+   * Forward the page's console to the main log: in development, so Vite's HMR messages show up, and
+   * for the smoke. Never in a release build.
+   */
   logRendererConsole?: boolean;
   chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualThemeStore?: VisualThemeStore };
 }
@@ -81,6 +84,8 @@ function nativeOptions({ session, preloadPath, chrome, appVersion }: WindowOptio
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       webviewTag: false,
+      // Release builds have no DevTools. Every window gets these options, renderer-opened ones too.
+      ...(DESKTOP_BUILD_PROFILE === "release" ? { devTools: false } : {}),
       additionalArguments: [
         `--desktop-app-version=${appVersion}`,
         ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify(chrome.bootstrap)}`] : []),

@@ -25,7 +25,6 @@ const isNodeScript = /\.(?:cjs|mjs|js)$/i.test(packageManager);
 const executable = isNodeScript ? process.execPath : packageManager;
 const prefix = isNodeScript ? [packageManager] : [];
 const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", [BUILD_PROFILE_ENV]: profile };
-delete env.DESKTOP_WATCH;
 delete env.DESKTOP_DEV_SERVER_URL;
 delete env.DESKTOP_DEV;
 

@@ -58,7 +58,7 @@ function isRunRecord(value: unknown): value is RunRecord {
 
 /**
  * What a run launches (scripts/launch.ts): this checkout's Electron on the unpackaged test bundles,
- * or with `--app <executable>` a packaged test-profile app (the release profile ignores DESKTOP_BENCH).
+ * or with `--app <executable>` a packaged test-profile app (release builds do not contain the benchmark).
  */
 let target: LaunchSpec | undefined;
 

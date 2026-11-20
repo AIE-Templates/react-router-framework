@@ -1,27 +1,29 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runPageCase } from "./bench-page.ts";
-import { BENCH_CASES, benchConfigFromEnv, counterDelta, processRole, UTILITY_SERVICE_NAME } from "./bench.ts";
+import { BENCH_CASES, benchConfigFrom, counterDelta, processRole, UTILITY_SERVICE_NAME } from "./bench.ts";
 
-describe("benchConfigFromEnv", () => {
+describe("benchConfigFrom", () => {
+  const unset = { benchCases: undefined, benchWarmupMs: undefined, benchMeasureMs: undefined, benchLabel: undefined };
+
   it("defaults to every case", () => {
-    expect(benchConfigFromEnv({})).toMatchObject({ warmupMs: 1000, measureMs: 5000, cases: BENCH_CASES });
+    expect(benchConfigFrom(unset)).toMatchObject({ warmupMs: 1000, measureMs: 5000, cases: BENCH_CASES });
   });
 
   it("reads durations, a case list and a label", () => {
-    const config = benchConfigFromEnv({
-      DESKTOP_BENCH_WARMUP_MS: "0",
-      DESKTOP_BENCH_MEASURE_MS: "2500",
-      DESKTOP_BENCH_CASES: "api-c8, download-4m",
-      DESKTOP_BENCH_LABEL: "quiet",
+    const config = benchConfigFrom({
+      benchWarmupMs: "0",
+      benchMeasureMs: "2500",
+      benchCases: "api-c8, download-4m",
+      benchLabel: "quiet",
     });
     expect(config).toMatchObject({ warmupMs: 0, measureMs: 2500, label: "quiet" });
     expect(config.cases.map((c) => c.name)).toEqual(["api-c8", "download-4m"]);
   });
 
   it("rejects unknown cases and bad durations", () => {
-    expect(() => benchConfigFromEnv({ DESKTOP_BENCH_CASES: "nope" })).toThrow(/Unknown bench case/);
-    expect(() => benchConfigFromEnv({ DESKTOP_BENCH_MEASURE_MS: "5s" })).toThrow(/DESKTOP_BENCH_MEASURE_MS/);
+    expect(() => benchConfigFrom({ ...unset, benchCases: "nope" })).toThrow(/Unknown bench case/);
+    expect(() => benchConfigFrom({ ...unset, benchMeasureMs: "5s" })).toThrow(/DESKTOP_BENCH_MEASURE_MS/);
   });
 });
 

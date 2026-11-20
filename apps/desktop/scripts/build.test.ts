@@ -49,7 +49,6 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
         npm_execpath: packageManager,
         BUILD_INVOCATIONS: invocations,
         NODE_ENV: "development",
-        DESKTOP_WATCH: "1",
         DESKTOP_DEV_SERVER_URL: "http://localhost:5174",
         DESKTOP_DEV: "1",
         LOG_LEVEL: "debug",
@@ -94,7 +93,6 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
         DESKTOP_BOOT_PROFILE: "1",
         SSR: "false",
       });
-      expect(env).not.toHaveProperty("DESKTOP_WATCH");
       expect(env).not.toHaveProperty("DESKTOP_DEV_SERVER_URL");
       expect(env).not.toHaveProperty("DESKTOP_DEV");
     }
@@ -122,7 +120,6 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
       cwd: repoDir,
       env: { NODE_ENV: "production", DESKTOP_BUILD_PROFILE: "test" },
     });
-    expect(call.env).not.toHaveProperty("DESKTOP_WATCH");
     expect(call.env).not.toHaveProperty("DESKTOP_DEV_SERVER_URL");
     expect(call.env).not.toHaveProperty("DESKTOP_DEV");
   });

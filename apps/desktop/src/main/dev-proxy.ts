@@ -8,8 +8,8 @@ const RETRY_MS = 250;
 const RETRY_FOR_MS = 5_000;
 
 /**
- * Development: requests go to `react-router dev` instead of the utility process, so server code
- * hot-reloads. Node's own `fetch` with `redirect: "manual"` returns 30x responses as they are;
+ * Development (the dev build only, through ~/main/dev-host.ts): requests go to `react-router dev`
+ * instead of the utility process, so server code hot-reloads. Node's own `fetch` with `redirect: "manual"` returns 30x responses as they are;
  * `net.fetch` would follow them and hand the target page back under the original URL.
  *
  * The dev server restarts itself (once at startup, with `--conditions=development`, and whenever

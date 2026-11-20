@@ -12,7 +12,10 @@ declare const DESKTOP_BUILD_PROFILE: "dev" | "test" | "release";
  */
 declare var desktopBuildProfile: "dev" | "test" | undefined;
 
-/** The `react-router dev` address, defined by the Vite build in development; `undefined` in a production build. */
+/**
+ * The `react-router dev` address, defined by the Vite build: the address in the dev build, `undefined`
+ * in test and release builds. Read by src/main/dev-host.ts only, which only the dev build bundles.
+ */
 declare const DESKTOP_DEV_SERVER_URL: string | undefined;
 
 interface Window {

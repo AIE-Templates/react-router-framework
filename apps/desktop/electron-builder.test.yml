@@ -5,12 +5,11 @@
 extends: ./electron-builder.base.yml
 extraMetadata:
   main: .vite/test/main.cjs
-  # Read by the main process: the test profile may run the real-app benchmark, the release profile not.
-  desktopProfile: test
 files:
   - ".vite/test/**"
   - "!.vite/test/*.map"
   - "!.vite/test/web-server.json"
+  - "!.vite/test/*.modules.json"
   - package.json
 directories:
   output: out/test

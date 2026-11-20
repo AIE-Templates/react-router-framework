@@ -171,7 +171,7 @@ async function main(): Promise<void> {
   const entries = existsSync(webServerBuild) ? ["main", "preload", "utility"] : ["main", "preload"];
   if (entries.length === 2) log("no apps/web/build yet: skipping the utility build (not used in development)");
   log(`building ${entries.join(", ")} in watch mode`);
-  const buildEnv = { [BUILD_PROFILE_ENV]: "dev", DESKTOP_WATCH: "1", DESKTOP_DEV_SERVER_URL: devServerUrl };
+  const buildEnv = { [BUILD_PROFILE_ENV]: "dev", DESKTOP_DEV_SERVER_URL: devServerUrl };
   await Promise.all(
     entries.map((entry) =>
       waitForOutput(

@@ -16,12 +16,16 @@ export interface Logger {
 
 const levels: LogLevel[] = ["debug", "info", "warn", "error"];
 
-export function createLogger(minimum: LogLevel = "info"): Logger {
+/** `output` receives each line, newline included; by default it goes to stdout. */
+export function createLogger(
+  minimum: LogLevel = "info",
+  output: (line: string) => void = (line) => void process.stdout.write(line),
+): Logger {
   const threshold = levels.indexOf(minimum);
   const write = (level: LogLevel, data: Record<string, unknown>, msg: string) => {
     if (levels.indexOf(level) < threshold) return;
     const line = JSON.stringify({ level, time: new Date().toISOString(), process: "main", ...serializable(data), msg });
-    process.stdout.write(line + "\n");
+    output(line + "\n");
   };
   return {
     debug: (data, msg) => write("debug", data, msg),

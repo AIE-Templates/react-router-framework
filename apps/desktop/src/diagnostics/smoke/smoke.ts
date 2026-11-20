@@ -49,6 +49,7 @@ export async function runSmoke(
     development = false,
     smokeRoutes = false,
     layout = false,
+    screenshot,
   }: {
     profile: BootProfile;
     log: Logger;
@@ -58,6 +59,8 @@ export async function runSmoke(
     smokeRoutes?: boolean;
     /** Explicit template fixture suite; application smoke never depends on the demo route. */
     layout?: boolean;
+    /** `DESKTOP_SMOKE_SCREENSHOT=<file.png>`: where to save what the window shows after the checks. */
+    screenshot?: string;
   },
 ): Promise<void> {
   const js = (code: string): Promise<unknown> =>
@@ -328,8 +331,7 @@ export async function runSmoke(
     checks.routeErrorSafety = { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
 
-  // `DESKTOP_SMOKE_SCREENSHOT=<file.png>`: what the window shows at this point, for a human to look at.
-  const screenshot = process.env.DESKTOP_SMOKE_SCREENSHOT;
+  // What the window shows at this point, for a human to look at.
   if (screenshot) {
     try {
       await writeFile(screenshot, (await win.capturePage()).toPNG());

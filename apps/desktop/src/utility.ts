@@ -2,44 +2,34 @@ import { fromElectronPort, type PortServer, servePort } from "@repo/port-fetch";
 import { shellFromEnv } from "@repo/shared";
 import { createWebApp, logStreamFailure, rethrowNonErrors } from "web/build/server/index.js";
 
-import { withBenchRoutes } from "./diagnostics/bench/routes.ts";
-import { E2E_PREFIX, e2eRoutes } from "./diagnostics/e2e/routes.ts";
-import { SMOKE_PREFIX, smokeRoutes } from "./diagnostics/smoke/routes.ts";
-import { portAckCoalesce } from "./port-options.ts";
+// These two are replaced in release builds (vite.base.config.ts): import them by exactly these names.
+import { readDebugEnv } from "~/debug-env.ts";
+import { selectUtilityDiagnostics } from "~/diagnostics/entry.ts";
 
 // The utility process: the whole web app (createWebApp(): the API, static files, React Router SSR)
 // served over the MessagePortMain the main process sends, no TCP port. Everything is bundled into
 // this one ES module; only Node built-ins are external.
 
 const shell = shellFromEnv(process.env);
-// The main process sets DESKTOP_SMOKE only when it runs the smoke and DESKTOP_E2E only for a
-// Playwright run (it clears both otherwise), which add the /__smoke/* or /__e2e/* endpoints inside
-// the web app's chain.
-const smoke = process.env.DESKTOP_SMOKE === "1";
-const e2e = process.env.DESKTOP_E2E === "1";
+// Dev and test builds: the main process sets the debug variables that concern this process (it
+// clears the run flags it did not select): which of the /__smoke/*, /__e2e/* and /__bench/*
+// endpoints to add, and the same ack coalescing as its end. A release build reads none of them and
+// has no such endpoints (~/debug-env.ts, ~/diagnostics/entry.ts).
+const debug = readDebugEnv();
+const diagnostics = selectUtilityDiagnostics(debug, { rethrowNonErrors, logStreamFailure });
+// The smoke's and the end-to-end tests' endpoints go inside the web app's chain, the benchmark's in
+// front of it.
 const web = createWebApp({
   shell,
   clientDir: process.env.CLIENT_DIR,
-  ...(smoke || e2e
-    ? {
-        extend: (app) => {
-          if (smoke) app.route(SMOKE_PREFIX, smokeRoutes({ rethrowNonErrors, logStreamFailure }));
-          if (e2e) app.route(E2E_PREFIX, e2eRoutes());
-        },
-      }
-    : {}),
+  ...(diagnostics.extend ? { extend: diagnostics.extend } : {}),
 });
-// The main process sets both: the same ack coalescing as its end, and DESKTOP_BENCH only for an
-// unpackaged benchmark run (it clears it otherwise), which adds the /__bench/* endpoints.
-const ackCoalesce = portAckCoalesce(process.env.DESKTOP_PORT_ACK_COALESCE);
+const ackCoalesce = debug.ackCoalesce();
 let server: PortServer | undefined;
-const handler =
-  process.env.DESKTOP_BENCH === "1"
-    ? withBenchRoutes(
-        (request) => web.fetch(request),
-        () => server?.stats(),
-      )
-    : (request: Request) => web.fetch(request);
+const handler = diagnostics.wrap(
+  (request) => web.fetch(request),
+  () => server?.stats(),
+);
 
 process.parentPort.on("message", (event) => {
   const message: unknown = event.data;

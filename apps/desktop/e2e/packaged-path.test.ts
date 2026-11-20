@@ -51,8 +51,12 @@ describe("builder profiles", () => {
         `"!.vite/${profile}/*.map"`,
         // The utility build's record of the web server build is for launch checks, not the app.
         `"!.vite/${profile}/web-server.json"`,
+        // Nor are the bundles' module records, which scripts/verify-build.ts reads.
+        `"!.vite/${profile}/*.modules.json"`,
         "package.json",
       ]);
+      // The bundles know their own profile (DESKTOP_BUILD_PROFILE); the package metadata does not repeat it.
+      expect(leaf).not.toContain("desktopProfile");
       expect(leaf).toMatch(
         new RegExp(`^extraMetadata:\\n(?: {2}.*\\n)*? {2}main: \\.vite/${profile}/main\\.cjs$`, "m"),
       );
