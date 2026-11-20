@@ -42,6 +42,15 @@ describe("handleError", () => {
     expect(lines[0]).not.toContain("stack");
   });
 
+  it.each(["https://localhost", "https://" + "x".repeat(320) + ".example"])(
+    "bounds the warning for a different origin",
+    (origin) => {
+      const { lines, args } = setup({ method: "POST", headers: { origin } });
+      handleError(new Error("Bad Request"), args);
+      expect(JSON.parse(lines[0])).toMatchObject({ level: 40, origin: origin.slice(0, 256) });
+    },
+  );
+
   it("still logs errors from same-origin actions", () => {
     const { lines, args } = setup({ method: "POST", headers: { origin: "http://localhost" } });
     handleError(new Error("boom"), args);

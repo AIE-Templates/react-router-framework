@@ -9,10 +9,15 @@ export function withForwardedOrigin(request: Request): Request {
   if (!proto && !host) return request;
   const url = new URL(request.url);
   if (proto === "http" || proto === "https") url.protocol = proto;
-  if (host) {
-    // A host without a port must not keep the internal one (e.g. Host: app:3000).
-    url.port = "";
-    url.host = host;
+  // Parse the complete authority before changing either component of the internal URL.
+  if (host && !/[/\\@?#\s]/u.test(host)) {
+    try {
+      const forwarded = new URL(url.protocol + "//" + host);
+      url.hostname = forwarded.hostname;
+      url.port = forwarded.port;
+    } catch {
+      // An invalid proxy header leaves the original authority intact.
+    }
   }
   // The Node adapter's request is not a native Request: passing it as init invokes native
   // getters (such as duplex) with an incompatible receiver. Copy only the fields we need.

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Hono, MiddlewareHandler } from "hono";
@@ -96,13 +96,14 @@ function staticFiles(clientDir: string, cacheControl: string, csp?: HostAppOptio
     });
     if (found && response && (response.ok || response.status === 416)) {
       // Range is evaluated only after cache preconditions, including for unsatisfiable ranges.
-      if (isNotModified(c.req.raw.headers, response.headers.get("Last-Modified"))) {
+      const status = preconditionStatus(c.req.raw.headers, response.headers.get("Last-Modified"));
+      if (status) {
         await response.body?.cancel();
         const headers = new Headers(response.headers);
-        headers.set("Cache-Control", isDocument ? "no-cache" : cacheControl);
+        headers.set("Cache-Control", status === 412 || isDocument ? "no-cache" : cacheControl);
         headers.delete("Content-Length");
         headers.delete("Content-Range");
-        c.res = new Response(null, { status: 304, headers });
+        c.res = new Response(null, { status, headers });
         return c.res;
       }
       if (!response.ok) return response;
@@ -149,7 +150,8 @@ async function resolveStaticFile(clientDir: string, path: string): Promise<strin
   }
   const root = resolve(clientDir);
   for (const candidate of [join(root, decoded), join(root, decoded, "index.html")]) {
-    if (!resolve(candidate).startsWith(root)) continue;
+    const fromRoot = relative(root, candidate);
+    if (fromRoot === ".." || fromRoot.startsWith(".." + sep) || isAbsolute(fromRoot)) continue;
     try {
       if ((await stat(candidate)).isFile()) return candidate;
     } catch {}
@@ -169,13 +171,18 @@ function withoutRange(request: Request): Request {
   }
 }
 
-function isNotModified(requestHeaders: Headers, lastModified: string | null): boolean {
-  const ifModifiedSince = requestHeaders.get("If-Modified-Since");
-  // Existing files match the wildcard. This host does not emit individual entity tags.
-  const etag = requestHeaders.get("If-None-Match");
-  if (etag !== null) return etag.trim() === "*";
-  if (!ifModifiedSince || !lastModified) return false;
-  return Date.parse(lastModified) <= Date.parse(ifModifiedSince);
+function preconditionStatus(headers: Headers, lastModified: string | null): 304 | 412 | undefined {
+  // The selected file exists and has no ETag. Only the wildcard can match.
+  const modified = Date.parse(lastModified ?? "");
+  const match = headers.get("If-Match");
+  if (match !== null ? match.trim() !== "*" : modified > Date.parse(headers.get("If-Unmodified-Since") ?? "")) {
+    return 412;
+  }
+  const noneMatch = headers.get("If-None-Match");
+  if (noneMatch !== null ? noneMatch.trim() === "*" : modified <= Date.parse(headers.get("If-Modified-Since") ?? "")) {
+    return 304;
+  }
+  return undefined;
 }
 
 /**
@@ -200,8 +207,9 @@ function spaShell(clientDir: string, ssr: boolean | undefined, csp: HostAppOptio
   return async (c, next) => {
     if (await serverRendered()) return next();
     const { method, path } = c.req;
-    if ((method !== "GET" && method !== "HEAD") || path.endsWith(".data")) return next();
-    if (path.startsWith("/assets/")) return c.notFound();
+    if (method !== "GET" && method !== "HEAD") return next();
+    if (path.startsWith("/assets/") || path === "/.well-known" || path.startsWith("/.well-known/")) return c.notFound();
+    if (path.endsWith(".data")) return next();
     const { html, policy } = await shell();
     // The shell revalidates on every load, so it never points at assets from an old deploy.
     return c.html(html, 200, {
