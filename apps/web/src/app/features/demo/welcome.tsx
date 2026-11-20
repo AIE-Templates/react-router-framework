@@ -11,6 +11,7 @@ export function Welcome() {
       </div>
       <div className={classes.demoResourceGrid}>
         <a
+          data-native-control=""
           href="https://reactrouter.com/docs"
           target="_blank"
           rel="noreferrer"
@@ -27,6 +28,7 @@ export function Welcome() {
           <DemoIcon name="arrow" />
         </a>
         <a
+          data-native-control=""
           href="https://rmx.as/discord"
           target="_blank"
           rel="noreferrer"

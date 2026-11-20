@@ -62,6 +62,7 @@ export function ModuleLayout({
             <header className="module-header" data-chrome-edge="start" data-window-drag={fused ? "" : undefined}>
               <strong className="module-header-title">{sidebarTitle}</strong>
               <button
+                data-native-control=""
                 {...getInteractiveProps()}
                 type="button"
                 onClick={() => side.setOpen(false)}
@@ -79,6 +80,7 @@ export function ModuleLayout({
           <header className="module-header" data-chrome-edge="workspace" data-window-drag={fused ? "" : undefined}>
             {sidebar && (
               <button
+                data-native-control=""
                 id={`${sidebarId}-trigger`}
                 data-module-panel-toggle="sidebar"
                 {...getInteractiveProps()}
@@ -94,6 +96,7 @@ export function ModuleLayout({
             <div {...getInteractiveProps()}>{actions}</div>
             {auxiliary && (
               <button
+                data-native-control=""
                 id={`${auxiliaryId}-trigger`}
                 data-module-panel-toggle="auxiliary"
                 {...getInteractiveProps()}
@@ -120,6 +123,7 @@ export function ModuleLayout({
             <header className="module-header" data-chrome-edge="end" data-window-drag={fused ? "" : undefined}>
               <strong className="module-header-title">{auxiliaryTitle}</strong>
               <button
+                data-native-control=""
                 {...getInteractiveProps()}
                 type="button"
                 onClick={() => aux.setOpen(false)}

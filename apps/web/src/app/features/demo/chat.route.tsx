@@ -52,13 +52,14 @@ export default function Chat() {
             <label htmlFor="chat-message">Message</label>
             <div>
               <input
+                data-native-control=""
                 id="chat-message"
                 autoComplete="off"
                 ref={input}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
               />
-              <button type="submit" disabled={!draft.trim()}>
+              <button data-native-control="" type="submit" disabled={!draft.trim()}>
                 Send
               </button>
             </div>

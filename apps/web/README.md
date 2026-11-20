@@ -38,7 +38,7 @@ AppRoot owns environment/providers; BasicShell or NavigationShell owns applicati
 
 Global CSS enters through `styles/index.css`. Prefer colocated CSS Modules in the `components` cascade layer; Tailwind utilities remain available. Use `~/` for app-root imports and `./` within a directory or its children. See the root and directory-level AGENTS.md files for conventions.
 
-Core removes starter system-color and background rules from `styles/base.css`: manual visual preferences must win over the OS preference. Core global rules now live in `styles/base.css`, `tokens.css` and `shell.css`; `ui.css` is the UI-library integration slot, empty in Core and populated by UI-library layers. Demo smoke selectors use `data-demo-controls` and `data-demo-draft`, independently of CSS class names.
+Core removes starter system-color and background rules from `styles/base.css`: manual visual preferences must win over the OS preference. Core global rules now live in `styles/base.css`, `tokens.css` and `shell.css`; `styles/ui.css` imports Mantine styles and defines the app’s focus, reduced-motion and desktop drag-region overrides. Demo smoke selectors use `data-demo-controls` and `data-demo-draft`, independently of CSS class names.
 
 ## Core development
 
@@ -85,3 +85,7 @@ Extend existing owners when adding data features; no generic cache or account ma
 Read environment through `~/managers/environment/hooks`; interactive and drag DOM props come from `~/managers/environment/dom-props`. The runtime is still created by AppRoot. Reuse `~/components/appearance-settings` for appearance UI. Ordinary component tests may use `renderWithProviders` from `~/testing/render`; route-dependent components still need an explicit Router context, and provider lifecycle tests can mount providers directly.
 
 Colors use Core semantic variables; viewport media widths come from `~/config/breakpoints`. CSS Modules use the components layer. `tests/architecture/styles.test.ts` checks real CSS/SCSS and TS/TSX source, including inline CSS strings. The window safety stylesheet stays inline and unlayered in `layouts/app-shell/chrome-safety.ts`.
+
+## Mantine UI
+
+`AppUiProvider` composes the Mantine providers. Extend the adapters in `src/app/managers/visual/mantine` to map application tokens to component themes. The appearance panel in `src/app/components/appearance-settings.tsx` demonstrates Select, Button and portalled surfaces.
