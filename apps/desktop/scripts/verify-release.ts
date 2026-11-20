@@ -1,15 +1,13 @@
 // `pnpm verify:release`: checks the packaged release app in out/release from the outside, the way it
-// will be shipped. This is the one and only place that launches a release package: the launchers of
-// scripts/launch.ts refuse to (the release build has no diagnostics to run and its fuses stop the
-// inspector-based test driver), so every release launch here is started, watched and ended by this
-// script itself.
+// will be shipped. It starts, watches and stops its own instances independently of the manual
+// release launcher. Playwright and diagnostics exercise the test profile.
 //
 //   node scripts/verify-release.ts [--no-build] [--distribution] [--allow-no-sandbox]
 //
 // By default it first builds what it checks, through pnpm (as scripts/build.ts requires): the web app
 // and the release bundles (`build release --with-web`), the test bundles against the same web build
-// (`build test`; check 2 runs verify:build's checks on both), the release package (`package:release`)
-// and the test package (`package`, the positive controls of check 3). `--no-build` checks what is on
+// (`build test`; check 2 runs verify:build's checks on both), the release package (`package`)
+// and the test package (`package:test`, the positive controls of check 3). `--no-build` checks what is on
 // disk as it is: out/release, the .vite bundles and out/test.
 //
 // Five checks, each ending in one result line, `pass`, `fail` or `skipped` with its reason. Skipped
@@ -1049,11 +1047,11 @@ async function main(): Promise<number> {
     say("building the web app, the release and test bundles, and packaging the release and test apps");
     pnpm(["run", "build", "release", "--with-web"]);
     pnpm(["run", "build", "test"]);
-    pnpm(["run", isWindows && distribution ? "dist:release" : "package:release"]);
-    pnpm(["run", "package"]);
+    pnpm(["run", isWindows && distribution ? "dist" : "package"]);
+    pnpm(["run", "package:test"]);
   }
   const pkg = locatePackage();
-  if (!existsSync(pkg.executable)) throw new Error(`${pkg.executable} is missing: run \`pnpm release:desktop\` first`);
+  if (!existsSync(pkg.executable)) throw new Error(`${pkg.executable} is missing: run \`pnpm package:desktop\` first`);
   say(`checking ${relative(process.cwd(), pkg.executable) || pkg.executable}`);
   const blocker = probeSandbox()?.blocker;
   const helperReset = blocker !== undefined && beforeBuild !== undefined && beforeBuild.blocker === undefined;

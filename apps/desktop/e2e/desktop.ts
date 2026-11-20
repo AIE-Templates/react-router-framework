@@ -23,8 +23,8 @@ import { windowsProcess } from "../scripts/powershell.ts";
  * What the Playwright Electron driver launches, both the test build profile, started the way
  * scripts/launch.ts says and checked at every launch:
  * - `unpackaged`: `electron .` in apps/desktop (package.json `main`: `.vite/test/main.cjs`), on the
- *   output of `pnpm build:desktop`;
- * - `packaged`: the test profile from `pnpm --filter desktop package` in `out/test`, whose fuses are
+ *   output of `pnpm build:desktop:test`;
+ * - `packaged`: the test profile from `pnpm --dir apps/desktop package:test` in `out/test`, whose fuses are
  *   the release profile's except `EnableNodeCliInspectArguments` (scripts/fuses.ts), which the driver
  *   attaches through; the `packaged-fuses` project reads them back before any packaged test runs.
  *   The release profile turns that fuse off too, so the driver cannot attach to it.

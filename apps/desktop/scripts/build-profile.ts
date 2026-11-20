@@ -1,8 +1,8 @@
 // The desktop build profiles, shared by the build entry (scripts/build.ts), the Vite configuration
 // (vite.base.config.ts), development (scripts/dev.ts) and the launchers (scripts/launch.ts):
 // - `dev`: `pnpm dev:desktop` only, always in watch mode; unminified, NODE_ENV left to the runtime;
-// - `test`: `pnpm build:desktop` and `pnpm package:desktop`, what Playwright, the smoke and the bench run;
-// - `release`: `pnpm release:desktop` and `pnpm dist:desktop`, the distributed build.
+// - `test`: `pnpm build:desktop:test` and `pnpm package:desktop:test`, what Playwright, the smoke and the bench run;
+// - `release`: `pnpm package:desktop` and `pnpm dist:desktop`, the distributed build.
 // Each profile has its own bundle directory (`.vite/<profile>`), so a launcher can never pick up
 // another profile's bundles, and the main process reports the profile it was built with in its
 // first log line. Dependency-free and erasable TypeScript: plain Node imports this file.
@@ -11,7 +11,7 @@ export const BUILD_PROFILES = ["dev", "test", "release"] as const;
 export type BuildProfile = (typeof BUILD_PROFILES)[number];
 
 /** What a build without an explicit profile produces (`pnpm -r build` calls `build.ts` bare). */
-export const DEFAULT_BUILD_PROFILE: BuildProfile = "test";
+export const DEFAULT_BUILD_PROFILE = "release";
 
 /** How scripts/build.ts tells the Vite configuration which profile to build. */
 export const BUILD_PROFILE_ENV = "DESKTOP_BUILD_PROFILE";
@@ -20,7 +20,7 @@ export function isBuildProfile(value: unknown): value is BuildProfile {
   return typeof value === "string" && BUILD_PROFILES.some((profile) => profile === value);
 }
 
-/** The profile named by `value` (DESKTOP_BUILD_PROFILE), `test` when unset; anything else throws. */
+/** The profile named by `value` (DESKTOP_BUILD_PROFILE), `release` when unset; anything else throws. */
 export function buildProfileFrom(value: string | undefined): BuildProfile {
   if (value === undefined || value === "") return DEFAULT_BUILD_PROFILE;
   if (!isBuildProfile(value)) {
@@ -120,5 +120,5 @@ export function parseBuildArgs(args: readonly string[]): { profile: BuildCommand
     else throw new Error(BUILD_USAGE);
   }
   if (mode === "workspace" && profile !== undefined) throw new Error(BUILD_USAGE);
-  return { profile: profile ?? "test", mode: mode ?? "desktop" };
+  return { profile: profile ?? DEFAULT_BUILD_PROFILE, mode: mode ?? "desktop" };
 }

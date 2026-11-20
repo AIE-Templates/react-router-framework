@@ -6,7 +6,7 @@
 // utility running older server code than the web build on disk; this catches both before packaging
 // and before every unpackaged launch, instead of as broken pages.
 //
-//   node scripts/check-web-build.ts [dev | test | release]   (default test)
+//   node scripts/check-web-build.ts [dev | test | release]   (default release)
 //
 // - The completed Web build records its client tree digest outside the client directory. The utility
 //   embeds that digest, so desktop-only rebuilds cannot silently bless a changed client build.
@@ -100,7 +100,7 @@ function show(path: string): string {
 
 /** The command that produces a profile's bundles together with a matching web build. */
 export function buildCommand(profile: BuildProfile): string {
-  return profile === "dev" ? "pnpm dev:desktop" : profile === "test" ? "pnpm build:desktop" : "pnpm release:desktop";
+  return profile === "dev" ? "pnpm dev:desktop" : profile === "test" ? "pnpm build:desktop:test" : "pnpm build:desktop";
 }
 
 /**

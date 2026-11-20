@@ -3,8 +3,8 @@ import { defineConfig } from "@playwright/test";
 import type { Target } from "./e2e/desktop.ts";
 
 // End-to-end tests of the desktop shell through Playwright's Electron driver (`_electron`, no
-// browser download). Two targets: the unpackaged build (`pnpm build:desktop`) and the packaged test
-// profile (`pnpm package:desktop`), whose fuses `packaged-fuses` reads back before any packaged test
+// browser download). Two targets: the unpackaged build (`pnpm build:desktop:test`) and the packaged test
+// profile (`pnpm package:desktop:test`), whose fuses `packaged-fuses` reads back before any packaged test
 // runs; the release profile cannot be driven (inspector fuse off).
 export default defineConfig<{ target: Target }>({
   testDir: "e2e",

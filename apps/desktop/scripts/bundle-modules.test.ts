@@ -272,11 +272,11 @@ describe("readBundleModules", () => {
 
   it("says what to run when the bundle or its record is missing", () => {
     expect(() => readBundleModules(directory, "test", "main.cjs")).toThrow(
-      ".vite/test/main.cjs is missing: run `pnpm build:desktop` first",
+      ".vite/test/main.cjs is missing: run `pnpm build:desktop:test` first",
     );
     rmSync(recordFile());
     expect(() => readBundleModules(directory, "release", "main.cjs")).toThrow(
-      ".vite/release/main.cjs.modules.json is missing: run `pnpm release:desktop` first",
+      ".vite/release/main.cjs.modules.json is missing: run `pnpm build:desktop` first",
     );
     rmSync(bundleFile());
     expect(() => readBundleModules(directory, "release", "main.cjs")).toThrow(".vite/release/main.cjs is missing");

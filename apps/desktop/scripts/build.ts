@@ -3,9 +3,9 @@
 // is the only build of the dev profile.
 //
 //   node scripts/build.ts [test | release] [--with-web]   desktop bundles into .vite/<profile>
-//   node scripts/build.ts --workspace                     `pnpm -r build` (desktop: test)
+//   node scripts/build.ts --workspace                     `pnpm -r build` (desktop: release)
 //
-// Without a profile it builds `test`, which is also what the recursive build's call of this
+// Without a profile it builds `release`, which is also what the recursive build's call of this
 // package's own `build` script gets. `--with-web` builds the web app (and what it depends on)
 // first: the utility bundles its server build, and packaging copies its client build.
 import { spawnSync } from "node:child_process";

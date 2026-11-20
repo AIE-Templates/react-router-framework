@@ -1,7 +1,7 @@
 // The real-app transport benchmark runner: launches the built, unpackaged app (`electron .`, as
-// `pnpm --filter desktop start` does) with DESKTOP_BENCH=1 in a fresh process per run, alternating
+// `pnpm --dir apps/desktop start:test` does) with DESKTOP_BENCH=1 in a fresh process per run, alternating
 // ack coalescing off and on (ABBA order across rounds), collects each run's BENCH_RESULT line into
-// a JSON Lines file and prints the comparison. Builds nothing: run `pnpm build:desktop` first, or
+// a JSON Lines file and prints the comparison. Builds nothing: run `pnpm build:desktop:test` first, or
 // pass `--app` with a packaged test-profile executable (then nothing needs building, but the script
 // still runs from this checkout: it imports scripts/launch.ts and the modules beside it; its fuses
 // must be the test profile's). Either way the app is started the way scripts/launch.ts says, each run

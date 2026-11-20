@@ -134,7 +134,7 @@ describe("web build check", () => {
     // The client from a later web build: same names, new hashes.
     writeAssets("entry.client-Zz9Yy8Xx.js", "root-CheMk1rO.css");
     expect(() => checkWebBuild(desktopDir, "test")).toThrow(
-      /come from different web builds; missing from the client build: entry\.client-BECgCha7\.js\. Run `pnpm build:desktop` first\./,
+      /come from different web builds; missing from the client build: entry\.client-BECgCha7\.js\. Run `pnpm build:desktop:test` first\./,
     );
     // Recovers once the matching client build is back.
     rmSync(join(assets, "entry.client-Zz9Yy8Xx.js"));
@@ -147,7 +147,7 @@ describe("web build check", () => {
     writeBuild(utility, { serverSource: "export const v = 1;\n" });
     writeFileSync(server, "export const v = 2;\n");
     expect(() => checkWebBuild(desktopDir, "test")).toThrow(
-      /utility\.mjs embeds a different web server build than .*index\.js\. Run `pnpm build:desktop` first\./,
+      /utility\.mjs embeds a different web server build than .*index\.js\. Run `pnpm build:desktop:test` first\./,
     );
     writeFileSync(server, "export const v = 1;\n");
     expect(() => checkWebBuild(desktopDir, "test")).not.toThrow();
@@ -171,21 +171,25 @@ describe("web build check", () => {
     writeAssets("entry.client-BECgCha7.js");
     writeBuild(`m={module:"/assets/entry.client-BECgCha7.js"}`, { profile: "release" });
     expect(() => checkWebBuild(desktopDir, "release")).not.toThrow();
-    expect(() => checkWebBuild(desktopDir, "test")).toThrow(/utility\.mjs is missing: run `pnpm build:desktop` first/);
+    expect(() => checkWebBuild(desktopDir, "test")).toThrow(
+      /utility\.mjs is missing: run `pnpm build:desktop:test` first/,
+    );
   });
 
   it("fails when a build is missing or references nothing to compare", () => {
     expect(() => checkWebBuild(desktopDir, "release")).toThrow(
-      /\.vite[\\/]release[\\/]utility\.mjs is missing: run `pnpm release:desktop` first/,
+      /\.vite[\\/]release[\\/]utility\.mjs is missing: run `pnpm build:desktop` first/,
     );
     writeBuild("export {};");
     expect(() => checkWebBuild(desktopDir, "test")).toThrow("references no hashed web client assets");
     writeAssets("entry.client-BECgCha7.js", "root-CheMk1rO.css");
     writeBuild(utility);
     rmSync(join(desktopDir, ".vite", "test", WEB_SERVER_RECORD));
-    expect(() => checkWebBuild(desktopDir, "test")).toThrow(/web-server\.json is missing: run `pnpm build:desktop`/);
+    expect(() => checkWebBuild(desktopDir, "test")).toThrow(
+      /web-server\.json is missing: run `pnpm build:desktop:test`/,
+    );
     rmSync(assets, { recursive: true });
-    expect(() => checkWebBuild(desktopDir, "test")).toThrow(/assets is missing: run `pnpm build:desktop` first/);
+    expect(() => checkWebBuild(desktopDir, "test")).toThrow(/assets is missing: run `pnpm build:desktop:test` first/);
   });
 
   it("exits 1 with a usage message for a bad command line", () => {

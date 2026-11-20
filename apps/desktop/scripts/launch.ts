@@ -1,6 +1,6 @@
 // What every launcher of the desktop app shares: the Playwright fixtures (e2e/desktop.ts), the
-// benchmark (scripts/bench.ts), `pnpm --filter desktop start` and with it the smoke
-// (scripts/start.ts), and development (scripts/dev.ts).
+// benchmark (scripts/bench.ts), `pnpm --dir apps/desktop start:test` and with it the smoke
+// (scripts/start-test.ts), and development (scripts/dev.ts).
 // - `launchSpec()` is the one place that says how a target (unpackaged bundles or the packaged test
 //   app) of a build profile is started: executable, arguments, Chromium switches, working directory
 //   and environment. Callers add only what is theirs (a test's media switch, a user's arguments).
@@ -117,8 +117,7 @@ function processDirOf(executable: string): string {
  * Where `target` of `profile` is: this checkout's Electron for the unpackaged test and dev bundles,
  * the packaged test app (`out/test` unless `executable` names another packaged test-profile
  * executable). The release profile is not launched by these tools: its fuses stop the inspector-based
- * driver, and it contains none of the diagnostics they run. The one place that launches a release
- * package is scripts/verify-release.ts, which does so itself.
+ * driver, and it contains none of the diagnostics they run. The release launcher and its external verifier resolve their executable with packagedBinary().
  */
 export function launchLocation(
   target: LaunchTarget,
@@ -403,7 +402,8 @@ export function checkTestPackageFuses(executable: string): Promise<void> {
  */
 export async function checkLaunchInputs(spec: LaunchLocation, directory: string = desktopDir): Promise<void> {
   if (spec.target === "packaged") {
-    if (!existsSync(spec.command)) throw new Error(`${spec.command} is missing: run \`pnpm package:desktop\` first`);
+    if (!existsSync(spec.command))
+      throw new Error(`${spec.command} is missing: run \`pnpm package:desktop:test\` first`);
     await checkTestPackageFuses(spec.command);
   } else if (spec.profile !== "dev") {
     checkUnpackagedBuild(spec.profile, directory);
