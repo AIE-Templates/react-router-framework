@@ -16,14 +16,16 @@
 // starts it), so a signal meant for this launcher (Ctrl+C, which the terminal sends to its foreground
 // process group, `kill -- -<pgid>`, or `kill <pid>`) never reaches the app's helper processes
 // directly. Killed with them, Chromium's GPU process dies under a main process that is still quitting,
-// and on Linux it then aborts ("GPU process isn't usable. Goodbye.", measured 30 of 30 runs); its
-// orderly quit also ends at the first signal, the next one kills it outright. Instead every SIGINT,
-// SIGTERM and SIGHUP this launcher receives is passed on at once to the app's main process, which
-// quits in order and takes its helpers with it. A second signal while the app still runs is passed on
-// too (Electron's default action for it ends a stuck app), and a third kills the app's whole process
-// group with SIGKILL, which also ends one that is stopped. The app has no controlling terminal; it
-// reads no input (stdin stays shared all the same). Windows has no such signals: each one terminates
-// the app.
+// and on Linux it then aborts ("GPU process isn't usable. Goodbye.", measured 30 of 30 runs). And
+// Electron answers only the first SIGINT or SIGTERM with its own quit and then restores the default
+// action, so the same signal arriving twice at once (the group's and a forwarded copy) cut that quit
+// short. Instead every SIGINT, SIGTERM and SIGHUP this launcher receives is passed on at once to the
+// app's main process alone, which then quits the way it does when asked (measured: exit 0 with every
+// process gone). A second signal while the app still runs is passed on too, on purpose: by then the
+// default action ends an app that did not quit. A third kills the app's whole process group with
+// SIGKILL, which also ends one that is stopped; so does a second one once the main process has exited
+// while a helper still holds its output open. The app has no controlling terminal; it reads no input
+// (stdin stays shared all the same). Windows has no such signals: each one terminates the app.
 // Runs on Node directly (type stripping).
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -82,15 +84,26 @@ child.stdout.pipe(process.stdout);
 const running = () => child.exitCode === null && child.signalCode === null;
 const note = (message: string) => process.stderr.write(`start: ${message}\n`);
 let received = 0;
+let closed = false;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => {
-    if (!running()) return;
+    if (closed) return;
     received++;
     if (isWindows) {
-      child.kill();
+      if (running()) child.kill();
       return;
     }
     const pid = child.pid!;
+    if (!running()) {
+      // The main process has exited, but a process of its group still holds the output open.
+      if (received >= 2) {
+        note(`${signal} again: the app has exited but its process group ${pid} lingers: killing it with SIGKILL`);
+        killGroup(pid, "SIGKILL");
+      } else {
+        note(`${signal}: the app has exited; waiting for its helpers, a second signal kills them`);
+      }
+      return;
+    }
     if (received >= 3) {
       note(`${signal} again: killing the app's process group ${pid} with SIGKILL`);
       killGroup(pid, "SIGKILL");
@@ -123,6 +136,7 @@ child.once("error", (err) => {
   process.exitCode = 1;
 });
 child.once("close", (code, signal) => {
+  closed = true;
   if (signal) note(`the app was ended by ${signal}`);
   process.exitCode = wrongBuild ? 1 : (code ?? (signal ? 1 : 0));
   // An app that ran and left nothing there did not run on it, and wrote somewhere else.

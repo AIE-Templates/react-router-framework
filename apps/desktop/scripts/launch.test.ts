@@ -13,6 +13,7 @@ import {
   checkLaunchInputs,
   checkUnpackagedBuild,
   credentialStoreSwitches,
+  windowStateSwitches,
   electronBinary,
   freshUserDataDir,
   launchLocation,
@@ -113,6 +114,7 @@ describe("launch spec", () => {
     ...sandboxSwitches(process.platform, command),
     `--user-data-dir=${resolve(directory, "data")}`,
     ...credentialStoreSwitches(process.platform),
+    ...windowStateSwitches(process.platform),
   ];
 
   it("starts the unpackaged test bundles as `electron .` in apps/desktop, on the user data directory given", () => {
@@ -260,6 +262,17 @@ describe("credential store", () => {
     expect(credentialStoreSwitches("darwin")).toEqual(["--use-mock-keychain"]);
     expect(credentialStoreSwitches("linux")).toEqual(["--password-store=basic"]);
     expect(credentialStoreSwitches("win32")).toEqual([]);
+  });
+
+  it("keeps macOS test launches past AppKit's crash prompt; elsewhere nothing", () => {
+    expect(windowStateSwitches("darwin")).toEqual(["-ApplePersistenceIgnoreState", "YES"]);
+    expect(windowStateSwitches("linux")).toEqual([]);
+    expect(windowStateSwitches("win32")).toEqual([]);
+    const spec = launchSpec("packaged", "test", {
+      executable: "/x/Desktop.app/Contents/MacOS/Desktop",
+      userDataDir: "/tmp/d",
+    });
+    expect(spec.args.includes("-ApplePersistenceIgnoreState")).toBe(process.platform === "darwin");
   });
 
   it("removes a user data directory with retries, and only warns when it cannot", () => {

@@ -93,6 +93,7 @@ import {
   linuxSandboxBlocker,
   packagedBinary,
   removeUserDataDir,
+  windowStateSwitches,
 } from "./launch.ts";
 import {
   ALLOW_NO_SANDBOX_FLAG,
@@ -523,9 +524,17 @@ async function askOverPipe(app: Running, waitMs: number): Promise<Record<string,
   );
 }
 
-/** The Chromium switches of every release launch: its own user data directory, off the credential store. */
+/**
+ * The switches of every release launch: its own user data directory, off the credential store, and
+ * on macOS past AppKit's "reopen windows?" prompt after a crash (`windowStateSwitches`).
+ */
 function releaseSwitches(userDataDir: string, gate: LaunchGate): string[] {
-  return [`--user-data-dir=${userDataDir}`, ...credentialStoreSwitches(process.platform), ...gate.switches];
+  return [
+    `--user-data-dir=${userDataDir}`,
+    ...credentialStoreSwitches(process.platform),
+    ...windowStateSwitches(process.platform),
+    ...gate.switches,
+  ];
 }
 
 // ---- checks ---------------------------------------------------------------------------------------

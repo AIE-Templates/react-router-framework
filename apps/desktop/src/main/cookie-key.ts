@@ -30,9 +30,9 @@ import { COOKIE_KEY_WRITER_FAILED_FILE, COOKIE_KEY_WRITER_SWITCH } from "~/start
  * COOKIE_KEY_CHECKED_MESSAGE, or COOKIE_KEY_MISMATCH_MESSAGE as an error (~/startup-signals.ts).
  * (Measured: with Local State removed between the copy's exit and the launch's start, the launch
  * logs the mismatch; swapping Local State loses `safeStorage` data and cookies alike.)
- * Cost: one extra start and quit of the app on a profile's first launch, measured at 100 to 130 ms
- * (once 313 ms) on that VM, which delays its main window by about as much and is noted in the boot
- * profile as `cookie-key-writer-ms`; one small file read on every later launch.
+ * Cost: one extra start and quit of the app on a profile's first launch, measured at 98 to 171 ms
+ * typically on that VM (occasionally about 310 ms), which delays its main window by about as much and
+ * is noted in the boot profile as `cookie-key-writer-ms`; one small file read on every later launch.
  *
  * The probe uses `safeStorage`'s synchronous API (`isEncryptionAvailable`, `encryptString`,
  * `decryptString`), which Electron 45 marks deprecated in favour of the asynchronous one and which
@@ -52,7 +52,8 @@ import { COOKIE_KEY_WRITER_FAILED_FILE, COOKIE_KEY_WRITER_SWITCH } from "~/start
 
 /**
  * How long a launch waits for its key writer before starting anyway. The wait holds the
- * single-instance lock, so a second launch started meanwhile waits too; the writer takes 100 to 300 ms.
+ * single-instance lock, so a second launch started meanwhile waits too; the writer takes 98 to 171 ms
+ * typically (occasionally about 310 ms; measured on Windows 11 arm64, see above).
  */
 export const COOKIE_KEY_WRITER_TIMEOUT_MS = 5_000;
 

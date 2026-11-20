@@ -157,6 +157,18 @@ export function credentialStoreSwitches(platform: NodeJS.Platform): string[] {
 }
 
 /**
+ * macOS: `-ApplePersistenceIgnoreState YES`, an argument-domain user default that makes AppKit skip
+ * restoring the app's saved window state for this launch. Without it, a launch after the app crashed
+ * while opening its windows stops before `ready` in AppKit's modal "reopen windows?" prompt
+ * (`promptToIgnorePersistentStateWithCrashHistory:`) until someone answers it (measured: after three
+ * crashes during startup, 3 of 3 launches hung there; with it, 2 of 2 were ready in 0.6 s). A test or
+ * verification switch, like the mock keychain: the app itself never passes it. Elsewhere: none.
+ */
+export function windowStateSwitches(platform: NodeJS.Platform): string[] {
+  return platform === "darwin" ? ["-ApplePersistenceIgnoreState", "YES"] : [];
+}
+
+/**
  * What trying to create an unprivileged user namespace gave: `created`, `failed` with the reason, or
  * `unavailable` when there is no `unshare` to try with.
  */
@@ -351,7 +363,11 @@ export function launchSpec(
     if (userDataDir === undefined) throw new Error("A test launch needs a user data directory of its own");
     // An empty name would resolve to the working directory: the checkout itself as the profile.
     if (userDataDir.trim() === "") throw new Error("A test launch's user data directory cannot be empty");
-    switches.push(`--user-data-dir=${resolve(userDataDir)}`, ...credentialStoreSwitches(process.platform));
+    switches.push(
+      `--user-data-dir=${resolve(userDataDir)}`,
+      ...credentialStoreSwitches(process.platform),
+      ...windowStateSwitches(process.platform),
+    );
   } else if (userDataDir !== undefined) {
     throw new Error("Only test launches take a user data directory; dev uses DESKTOP_USER_DATA_SUFFIX");
   }
