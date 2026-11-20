@@ -8,17 +8,28 @@ import {
   checkAsarContents,
   checkBundleLink,
   type CheckResult,
+  describeExit,
   describeProcesses,
   DISTRIBUTION_FLAG,
   expectedAsarFiles,
+  INCOMPLETE_EXIT,
   judgeRefusal,
   judgeSigning,
+  judgeStartup,
   launchGate,
   type LaunchOutcome,
   launchProcesses,
+  type LaunchRoot,
   leftoverProcesses,
+  mainLogLines,
   missingKinds,
+  parseAuthenticode,
+  parsePsListing,
+  parseWindowsListing,
+  pipeReply,
   type ProcessInfo,
+  type StartupObservation,
+  requiresSigning,
   summarize,
 } from "./release-verdicts.ts";
 
@@ -26,42 +37,100 @@ function check(id: number, status: CheckResult["status"], reason = "because"): C
   return { id, name: `check ${id}`, status, reason };
 }
 
+const all = (status5: CheckResult["status"] = "skipped") => [
+  check(1, "pass"),
+  check(2, "pass"),
+  check(3, "pass"),
+  check(4, "pass"),
+  check(5, status5, "unsigned local package"),
+];
+
 describe("result summary", () => {
-  it("passes with skips, counting them as skipped and never as passed", () => {
-    const summary = summarize([check(1, "pass"), check(2, "pass"), check(5, "skipped", "unsigned local package")]);
-    expect(summary).toMatchObject({ passed: 2, failed: 0, skipped: 1, exitCode: 0 });
-    expect(summary.lines.at(-1)).toBe("2 passed, 0 failed, 1 skipped");
-    expect(summary.lines[2]).toMatch(/^skipped +5 check 5 +unsigned local package$/);
+  it("verifies when checks 1 to 4 pass, a local package's signing check allowed to be skipped", () => {
+    const summary = summarize(all());
+    expect(summary).toMatchObject({ passed: 4, failed: 0, skipped: 1, exitCode: 0 });
+    expect(summary.lines.at(-1)).toBe("4 passed, 0 failed, 1 skipped: verified (exit 0)");
+    expect(summary.lines[4]).toMatch(/^skipped +5 check 5 +unsigned local package$/);
+    expect(summarize(all("pass")).exitCode).toBe(0);
   });
 
   it("fails when any check failed, and counts a check without a reason as failed", () => {
-    expect(summarize([check(1, "pass"), check(2, "fail")])).toMatchObject({ failed: 1, exitCode: 1 });
-    const silent = summarize([check(1, "pass"), check(4, "skipped", " ")]);
-    expect(silent).toMatchObject({ passed: 1, failed: 1, skipped: 0, exitCode: 1 });
-    expect(silent.lines[1]).toContain("(no reason given)");
+    expect(summarize([...all().slice(0, 4), check(5, "fail")])).toMatchObject({ failed: 1, exitCode: 1 });
+    const silent = summarize([check(1, "pass"), check(2, "pass"), check(3, "pass"), check(4, "skipped", " ")]);
+    expect(silent).toMatchObject({ passed: 3, failed: 1, skipped: 0, exitCode: 1 });
+    expect(silent.lines[3]).toContain("(no reason given)");
+    expect(silent.lines.at(-1)).toContain("FAILED (exit 1)");
+  });
+
+  it("is incomplete, with its own exit status, when a required check was skipped or did not run", () => {
+    const skipped = summarize([
+      check(1, "pass"),
+      check(2, "pass"),
+      check(3, "skipped"),
+      check(4, "skipped"),
+      check(5, "skipped"),
+    ]);
+    expect(skipped).toMatchObject({ passed: 2, failed: 0, skipped: 3, exitCode: INCOMPLETE_EXIT });
+    expect(skipped.lines.at(-1)).toBe(
+      "2 passed, 0 failed, 3 skipped: INCOMPLETE, not verified (exit 2): checks 3, 4 did not run",
+    );
+    expect(summarize([check(1, "pass"), check(2, "pass"), check(3, "pass")]).lines.at(-1)).toContain(
+      "check 4 did not run",
+    );
+    // A failure outranks it.
+    expect(summarize([check(1, "fail"), check(3, "skipped")]).exitCode).toBe(1);
+  });
+
+  it("counts a skipped signing check as incomplete for a package declared for distribution", () => {
+    expect(summarize(all(), { signingRequired: true })).toMatchObject({ exitCode: INCOMPLETE_EXIT });
+    expect(summarize(all("pass"), { signingRequired: true }).exitCode).toBe(0);
+  });
+
+  it("requires the signing check for distribution only where applications carry an OS signature", () => {
+    expect(requiresSigning("darwin", true)).toBe(true);
+    expect(requiresSigning("win32", true)).toBe(true);
+    expect(requiresSigning("linux", true)).toBe(false);
+    expect(requiresSigning("darwin", false)).toBe(false);
   });
 });
 
 describe("launch gate", () => {
-  const blocker = "creating an unprivileged user namespace failed (unshare: Operation not permitted)";
+  const userns =
+    "creating an unprivileged user namespace failed (unshare: Operation not permitted), and the setuid sandbox " +
+    "helper /out/linux-unpacked/chrome-sandbox is owned by uid 1000 with mode 755 (it needs root and mode 4755)";
+  const apparmor =
+    "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1), and the " +
+    "setuid sandbox helper /out/linux-unpacked/chrome-sandbox is owned by uid 1000 with mode 755";
 
   it("launches wherever the sandbox can start, and on every other platform", () => {
     expect(launchGate("linux", undefined, false)).toEqual({ run: true, switches: [] });
-    expect(launchGate("darwin", blocker, false)).toEqual({ run: true, switches: [] });
-    expect(launchGate("win32", blocker, true)).toEqual({ run: true, switches: [] });
+    expect(launchGate("darwin", userns, false)).toEqual({ run: true, switches: [] });
+    expect(launchGate("win32", userns, true)).toEqual({ run: true, switches: [] });
   });
 
-  it("skips, saying what the host needs, instead of turning the sandbox off by itself", () => {
-    const gate = launchGate("linux", blocker, false);
+  it("skips, saying what would open the gate on this host, instead of turning the sandbox off by itself", () => {
+    const gate = launchGate("linux", userns, false);
     expect(gate).toMatchObject({ run: false, switches: [] });
-    expect(gate.note).toContain(blocker);
+    expect(gate.note).toContain(userns);
     expect(gate.note).toContain("allow unprivileged user namespaces");
+    expect(gate.note).toContain("root with mode 4755");
+    expect(gate.note).toContain("--no-build");
     expect(gate.note).toContain(ALLOW_NO_SANDBOX_FLAG);
     expect(launchGate("linux", "this runs as root (euid 0)", false).note).toContain("as a user other than root");
   });
 
+  it("gives an AppArmor-restricted host only what works there", () => {
+    const note = launchGate("linux", apparmor, false).note!;
+    expect(note).toContain("chrome-sandbox owned by root with mode 4755");
+    expect(note).toContain("run again with --no-build, since packaging replaces it");
+    expect(note).toContain("kernel.apparmor_restrict_unprivileged_userns=0");
+    expect(note).toContain(ALLOW_NO_SANDBOX_FLAG);
+    expect(note).not.toMatch(/AppArmor profile/);
+    expect(launchGate("linux", apparmor, false, true).note).toContain("This run's packaging replaced a chrome-sandbox");
+  });
+
   it("runs without the sandbox only on explicit opt-in, and says so", () => {
-    const gate = launchGate("linux", blocker, true);
+    const gate = launchGate("linux", userns, true);
     expect(gate).toMatchObject({ run: true, switches: ["--no-sandbox"] });
     expect(gate.note).toMatch(/sandbox was DISABLED/);
   });
@@ -185,7 +254,7 @@ describe("remote debugging refusal", () => {
   it("accepts only the refusal's own code and line, naming the switch", () => {
     expect(judgeRefusal(outcome({}), "remote-debugging-port", quiet)).toEqual({
       ok: true,
-      reason: `exited ${REMOTE_DEBUGGING_EXIT_CODE} with "${REMOTE_DEBUGGING_REFUSED_MESSAGE}" (remote-debugging-port)`,
+      reason: `exited ${REMOTE_DEBUGGING_EXIT_CODE} with "${REMOTE_DEBUGGING_REFUSED_MESSAGE}" (remote-debugging-port) and nothing else`,
     });
   });
 
@@ -196,7 +265,9 @@ describe("remote debugging refusal", () => {
       "exited with code 0, not with the refusal's code 97: it ended for some other reason",
     ],
     ["a startup failure", { code: 1, stdout: "" }, "exited with code 1"],
-    ["the sandbox abort", { code: 133, stdout: "" }, "Chromium abort, such as the SUID sandbox FATAL error"],
+    // What Node reports for a direct child that Chromium aborted (FATAL, failed CHECK): the signal.
+    ["the sandbox abort", { code: null, signal: "SIGTRAP", stdout: "" }, "SIGTRAP (a Chromium abort"],
+    ["a Windows abort", { code: 0x80000003, stdout: "" }, "0x80000003 (a Chromium abort)"],
     ["a signal", { code: null, signal: "SIGSEGV", stdout: "" }, "was ended by SIGSEGV"],
     ["the deadline", { code: null, signal: "SIGKILL", timedOut: true }, "killed at the deadline"],
   ])("fails %s, whatever else it printed", (_label, overrides, reason) => {
@@ -205,63 +276,115 @@ describe("remote debugging refusal", () => {
     expect(verdict.reason).toContain(reason);
   });
 
-  it("fails the right code without the line, with another switch, or after the app started", () => {
+  it("fails the right code without the main process's line, with another switch, or after the app ran", () => {
     expect(judgeRefusal(outcome({ stdout: "" }), "remote-debugging-port", quiet)).toMatchObject({
       ok: false,
       reason: expect.stringContaining('printed "remote debugging refused" 0 times'),
     });
+    // The refusal line of some other process does not count.
+    const notMain = JSON.stringify({
+      level: "error",
+      switch: "remote-debugging-port",
+      msg: REMOTE_DEBUGGING_REFUSED_MESSAGE,
+    });
+    expect(judgeRefusal(outcome({ stdout: `${notMain}\n` }), "remote-debugging-port", quiet).ok).toBe(false);
     expect(judgeRefusal(outcome({}), "remote-debugging-pipe", quiet)).toMatchObject({
       ok: false,
       reason: 'the refusal names "remote-debugging-port", not remote-debugging-pipe',
     });
-    const started = `${JSON.stringify({ process: "main", buildProfile: "release", msg: "build profile" })}\n${refusal("remote-debugging-port")}\n`;
-    expect(judgeRefusal(outcome({ stdout: started }), "remote-debugging-port", quiet).ok).toBe(false);
+    // Any other main-process line means the app ran, with or without a build profile in it.
+    for (const other of [
+      { process: "main", buildProfile: "release", msg: "build profile" },
+      { process: "main", msg: "window chrome policy" },
+    ]) {
+      const ran = `${JSON.stringify(other)}\n${refusal("remote-debugging-port")}\n`;
+      expect(judgeRefusal(outcome({ stdout: ran }), "remote-debugging-port", quiet)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("it ran before refusing"),
+      });
+    }
   });
 
-  it("fails whenever the endpoint was reachable, even after a proper refusal", () => {
+  it("fails whenever the endpoint answered, even after a proper refusal, and when processes outlive it", () => {
     expect(judgeRefusal(outcome({}), "remote-debugging-port", { listened: true })).toEqual({
       ok: false,
-      reason: "the remote debugging port accepted a connection",
+      reason: "the remote debugging port answered /json/version",
     });
     expect(judgeRefusal(outcome({}), "remote-debugging-pipe", { listened: false, answered: true }).ok).toBe(false);
+    const straggler: ProcessInfo = { pid: 7, ppid: 1, command: "helper --type=gpu-process" };
+    expect(judgeRefusal(outcome({}), "remote-debugging-port", quiet, [straggler])).toEqual({
+      ok: false,
+      reason: "it left 1 process(es) running after it exited (killed)",
+    });
+  });
+
+  it("reads only the main process's lines, and a DevTools reply by its id", () => {
+    const utility = JSON.stringify({ level: "info", msg: "request completed" });
+    expect(mainLogLines(`${utility}\n${refusal("x")}\nnot json\n`)).toEqual([JSON.parse(refusal("x"))]);
+    expect(pipeReply(`{"id":2,"result":{}}\0{"id":1,"result":{"product":"Chrome/156"}}\0`, 1)).toEqual({
+      product: "Chrome/156",
+    });
+    expect(pipeReply('{"id":1,"error":{"message":"no"}}\0', 1)).toBeUndefined();
+    expect(describeExit({ code: null, signal: "SIGTRAP", timedOut: false })).toContain("Chromium abort");
   });
 });
+
+/** A start time `seconds` after 10:00:00 (UTC) on the day of the launches below. */
+function at(seconds: number): number {
+  return Date.UTC(2026, 10, 20, 10, 0, 0) + seconds * 1000;
+}
 
 describe("process accounting", () => {
   const bundle = "/out/Desktop.app";
   const location = { command: `${bundle}/Contents/MacOS/Desktop`, processDir: bundle };
   const helper = (type: string) =>
     `${bundle}/Contents/Frameworks/Desktop Helper.app/Contents/MacOS/Desktop Helper ${type}`;
-  const root: ProcessInfo = { pid: 100, ppid: 1, pgid: 100, command: location.command };
+  // Spawned at 10:00:00.500; `ps` reports whole seconds.
+  const spawnedAt = Date.UTC(2026, 10, 20, 10, 0, 0, 500);
+  const root: LaunchRoot = { pid: 100, spawnedAt };
+  const main: ProcessInfo = { pid: 100, ppid: 1, pgid: 100, command: location.command, startedAt: at(0) };
   const listing: ProcessInfo[] = [
-    root,
-    { pid: 101, ppid: 100, pgid: 100, command: helper("--type=gpu-process") },
+    main,
+    { pid: 101, ppid: 100, pgid: 100, command: helper("--type=gpu-process"), startedAt: at(0) },
     {
       pid: 102,
       ppid: 100,
       pgid: 100,
       command: helper("--type=utility --utility-sub-type=network.mojom.NetworkService"),
+      startedAt: at(1),
     },
-    { pid: 103, ppid: 100, pgid: 100, command: helper("--type=utility --utility-sub-type=node.mojom.NodeService") },
-    { pid: 104, ppid: 100, pgid: 100, command: helper("--type=renderer") },
+    {
+      pid: 103,
+      ppid: 100,
+      pgid: 100,
+      command: helper("--type=utility --utility-sub-type=node.mojom.NodeService"),
+      startedAt: at(1),
+    },
+    { pid: 104, ppid: 100, pgid: 100, command: helper("--type=renderer"), startedAt: at(1) },
     // A crash handler that detached from the tree and its group.
     {
       pid: 105,
       ppid: 1,
       pgid: 105,
       command: `${bundle}/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler`,
+      startedAt: at(0),
     },
     // A child of a renderer, and a member of the group that is not in the tree.
-    { pid: 106, ppid: 104, pgid: 100, command: "/bin/sh -c something" },
-    { pid: 107, ppid: 1, pgid: 100, command: "/usr/bin/orphan" },
+    { pid: 106, ppid: 104, pgid: 100, command: "/bin/sh -c something", startedAt: at(2) },
+    { pid: 107, ppid: 1, pgid: 100, command: "/usr/bin/orphan", startedAt: at(2) },
     // Not this launch: an instance that was running before, and an unrelated process.
-    { pid: 200, ppid: 1, pgid: 200, command: location.command },
-    { pid: 300, ppid: 1, pgid: 300, command: "/usr/bin/other" },
+    { pid: 200, ppid: 1, pgid: 200, command: location.command, startedAt: at(-60) },
+    { pid: 300, ppid: 1, pgid: 300, command: "/usr/bin/other", startedAt: at(-60) },
+    // Already there before the launch, yet arranged to look like its own: a child of the root's PID,
+    // a member of its group, a process of the package. None of them is the launch's.
+    { pid: 301, ppid: 100, pgid: 100, command: helper("--type=renderer"), startedAt: at(-30) },
+    // Exited, waiting to be reaped.
+    { pid: 302, ppid: 100, pgid: 100, command: helper("--type=gpu-process"), startedAt: at(1), zombie: true },
   ];
-  const preexisting = new Set([200, 300]);
+  const preexisting = new Set([200, 300, 301]);
 
   it("counts the tree, the process group and new processes of the package, nothing else", () => {
-    const launched = launchProcesses(listing, 100, preexisting, location, "darwin");
+    const launched = launchProcesses(listing, root, preexisting, location, "darwin");
     expect(launched.map((process) => process.pid)).toEqual([100, 101, 102, 103, 104, 105, 106, 107]);
     expect(describeProcesses(launched, 100)).toBe(
       "main, crashpad-handler, gpu-process, other ×2, renderer, utility (network), utility (node)",
@@ -270,41 +393,244 @@ describe("process accounting", () => {
     expect(missingKinds(launched.slice(0, 3), 100)).toEqual(["renderer", "utility (node)"]);
   });
 
-  it("matches Windows processes by executable, without process groups", () => {
-    const exe = String.raw`C:\out\win-unpacked\Desktop.exe`;
-    const windows: ProcessInfo[] = [
-      { pid: 10, ppid: 1, command: `"${exe}"`, executable: exe },
-      { pid: 11, ppid: 99, command: `"${exe}" --type=renderer`, executable: exe.toUpperCase() },
-      { pid: 12, ppid: 99, command: "notepad.exe", executable: String.raw`C:\Windows\notepad.exe` },
-    ];
-    const launched = launchProcesses(
-      windows,
-      10,
-      new Set(),
-      { command: exe, processDir: String.raw`C:\out\win-unpacked` },
-      "win32",
+  it("never counts a process that started before the launch, even one missing from the earlier listing", () => {
+    const older: ProcessInfo = {
+      pid: 400,
+      ppid: 100,
+      pgid: 100,
+      command: helper("--type=renderer"),
+      startedAt: at(-1),
+    };
+    expect(launchProcesses([...listing, older], root, preexisting, location, "darwin").map((p) => p.pid)).not.toContain(
+      400,
     );
-    expect(launched.map((process) => process.pid)).toEqual([10, 11]);
   });
 
-  it("reports what outlived the main process, ignoring reused PIDs and what was there before", () => {
-    const launched = launchProcesses(listing, 100, preexisting, location, "darwin");
-    expect(leftoverProcesses([listing[8], listing[9]], launched, 100, preexisting, location, "darwin")).toEqual([]);
+  it("allows Linux's ps to report a start up to one second early, no more", () => {
+    // procps adds start ticks to a boot time truncated to the second.
+    const early = listing.map((process) =>
+      process.pid === 100 || process.pid === 101 ? { ...process, startedAt: at(-1) } : process,
+    );
+    const linux = launchProcesses(early, root, preexisting, location, "linux").map((process) => process.pid);
+    expect(linux).toEqual(expect.arrayContaining([100, 101]));
+    expect(launchProcesses(early, root, preexisting, location, "darwin").map((process) => process.pid)).not.toContain(
+      100,
+    );
+    const older = { pid: 400, ppid: 100, pgid: 100, command: helper("--type=renderer"), startedAt: at(-2) };
+    expect(launchProcesses([...early, older], root, preexisting, location, "linux").map((p) => p.pid)).not.toContain(
+      400,
+    );
+  });
+
+  describe("on Windows", () => {
+    const exe = String.raw`C:\out\win-unpacked\Desktop.exe`;
+    const winLocation = { command: exe, processDir: String.raw`C:\out\win-unpacked` };
+    const winRoot: LaunchRoot = { pid: 10, spawnedAt };
+
+    it("matches by executable and creation time, and counts the key writer as the launch's", () => {
+      const windows: ProcessInfo[] = [
+        { pid: 10, ppid: 1, command: `"${exe}"`, executable: exe, startedAt: spawnedAt + 5 },
+        {
+          pid: 11,
+          ppid: 10,
+          command: `"${exe}" --type=renderer`,
+          executable: exe.toUpperCase(),
+          startedAt: spawnedAt + 300,
+        },
+        {
+          pid: 12,
+          ppid: 99,
+          command: "notepad.exe",
+          executable: String.raw`C:\Windows\notepad.exe`,
+          startedAt: spawnedAt + 400,
+        },
+        // The cookie key writer a first launch on a fresh profile starts, while it still runs.
+        {
+          pid: 13,
+          ppid: 10,
+          command: `"${exe}" --desktop-cookie-key-writer`,
+          executable: exe,
+          startedAt: spawnedAt + 50,
+        },
+        // No creation time: on Windows nothing proves it is the launch's.
+        { pid: 14, ppid: 10, command: `"${exe}" --type=gpu-process`, executable: exe },
+      ];
+      const launched = launchProcesses(windows, winRoot, new Set(), winLocation, "win32");
+      expect(launched.map((process) => process.pid)).toEqual([10, 11, 13]);
+    });
+
+    it("claims the orphan of the exited root, but nothing a later holder of its PID started, nor an old process", () => {
+      const after: ProcessInfo[] = [
+        // Started by the root, which has exited: Windows keeps its parent PID.
+        { pid: 20, ppid: 10, command: `"${exe}" --type=renderer`, executable: exe, startedAt: spawnedAt + 300 },
+        // PID 10 reused by an unrelated program long after, and its child.
+        {
+          pid: 10,
+          ppid: 4,
+          command: "svchost.exe",
+          executable: String.raw`C:\Windows\svchost.exe`,
+          startedAt: spawnedAt + 60_000,
+        },
+        {
+          pid: 21,
+          ppid: 10,
+          command: "conhost.exe",
+          executable: String.raw`C:\Windows\conhost.exe`,
+          startedAt: spawnedAt + 61_000,
+        },
+        // Older than the launch, whose dead parent had had PID 10.
+        { pid: 22, ppid: 10, command: "old.exe", executable: String.raw`C:\old.exe`, startedAt: spawnedAt - 3_600_000 },
+      ];
+      const launched = launchProcesses(after, winRoot, new Set(), winLocation, "win32");
+      expect(launched.map((process) => process.pid)).toEqual([20]);
+      expect(leftoverProcesses(after, [], winRoot, new Set(), winLocation, "win32").map((p) => p.pid)).toEqual([20]);
+    });
+  });
+
+  it("reports what outlived the main process: never reused PIDs, old processes or zombies", () => {
+    const launched = launchProcesses(listing, root, preexisting, location, "darwin");
+    expect(
+      leftoverProcesses([listing[8], listing[9], listing[10]], launched, root, preexisting, location, "darwin"),
+    ).toEqual([]);
     const after: ProcessInfo[] = [
       // Reparented, still the same process.
       { ...listing[4], ppid: 1 },
       // A PID of the launch reused by something unrelated.
-      { pid: 101, ppid: 1, pgid: 101, command: "/usr/bin/unrelated" },
+      { pid: 101, ppid: 1, pgid: 101, command: "/usr/bin/unrelated", startedAt: at(20) },
       // Still in the group.
-      { pid: 400, ppid: 1, pgid: 100, command: "/bin/sleep 100" },
+      { pid: 400, ppid: 1, pgid: 100, command: "/bin/sleep 100", startedAt: at(3) },
       // A new process of the package started during the quit.
-      { pid: 401, ppid: 1, pgid: 401, command: helper("--type=gpu-process") },
-      listing[8],
-      listing[9],
+      { pid: 401, ppid: 1, pgid: 401, command: helper("--type=gpu-process"), startedAt: at(4) },
+      // Exited, not yet reaped.
+      { ...listing[2], ppid: 1, zombie: true },
+      ...listing.slice(8, 11),
     ];
     expect(
-      leftoverProcesses(after, launched, 100, preexisting, location, "darwin").map((process) => process.pid),
+      leftoverProcesses(after, launched, root, preexisting, location, "darwin").map((process) => process.pid),
     ).toEqual([104, 400, 401]);
+  });
+
+  it("parses ps and the Windows listing, and refuses output that is not one", () => {
+    const ps = [
+      "    1     0     1 Ss   Wed Nov 11 09:20:13 2026     /sbin/launchd",
+      "  731   730   731 Z    Sun Nov  2 07:05:09 2026     (Desktop Helper)",
+      "  900     1   900 S    Thu Nov 20 17:25:01 2026     /out/Desktop.app/Contents/MacOS/Desktop --user-data-dir=/tmp/a b",
+    ].join("\n");
+    const parsed = parsePsListing(ps);
+    expect(parsed.map(({ pid, zombie }) => [pid, zombie])).toEqual([
+      [1, false],
+      [731, true],
+      [900, false],
+    ]);
+    expect(parsed[2].command).toBe("/out/Desktop.app/Contents/MacOS/Desktop --user-data-dir=/tmp/a b");
+    expect(parsed[2].startedAt).toBe(new Date(2026, 10, 20, 17, 25, 1).getTime());
+    const windows = parseWindowsListing(
+      '\uFEFF[{"ProcessId":10,"ParentProcessId":4,"ExecutablePath":"C:\\\\Programme\\\\Désktop.exe","CommandLine":"\\"Désktop.exe\\" --flag","Created":1795166701000}]',
+    );
+    expect(windows).toEqual([
+      {
+        pid: 10,
+        ppid: 4,
+        command: '"Désktop.exe" --flag',
+        executable: String.raw`C:\Programme\Désktop.exe`,
+        startedAt: 1795166701000,
+      },
+    ]);
+    expect(parseWindowsListing('{"ProcessId":4,"ParentProcessId":0,"Created":null}')).toEqual([
+      { pid: 4, ppid: 0, command: "", executable: undefined, startedAt: undefined },
+    ]);
+    expect(() => parseWindowsListing("Get-CimInstance : Zugriff verweigert")).toThrow(
+      "the Windows process listing is not JSON",
+    );
+  });
+});
+
+describe("startup smoke", () => {
+  const launched: ProcessInfo[] = [
+    { pid: 100, ppid: 1, command: "Desktop" },
+    { pid: 101, ppid: 100, command: "Helper --type=renderer" },
+    { pid: 102, ppid: 100, command: "Helper --type=utility --utility-sub-type=node.mojom.NodeService" },
+  ];
+  const exit0: LaunchOutcome = { code: 0, signal: null, timedOut: false, stdout: "" };
+  const good: StartupObservation = {
+    platform: "darwin",
+    rootPid: 100,
+    profile: "release",
+    readyMs: 812,
+    readyTimeoutMs: 30_000,
+    quit: { method: "SIGTERM", outcome: exit0, ms: 60, timeoutMs: 15_000 },
+    launched,
+    leftovers: [],
+    userData: { written: ["Local State", "Partitions"], missing: [] },
+    realUserData: { path: "/Users/u/Library/Application Support/Desktop", before: "absent", after: "absent" },
+  };
+
+  it("passes a release launch that got ready and quit cleanly, naming the profile it reported", () => {
+    expect(judgeStartup(good)).toEqual({
+      status: "pass",
+      reason: expect.stringMatching(
+        /^the main process reported build profile release, main window ready in 812 ms; SIGTERM → exit 0 in 60 ms; all 3 processes gone \(main, renderer, utility \(node\)\)/,
+      ),
+    });
+  });
+
+  it("fails a ready line without a build profile, or with another one", () => {
+    expect(judgeStartup({ ...good, profile: undefined })).toEqual({
+      status: "fail",
+      reason: "the main process reported its main window ready without first reporting its build profile",
+    });
+    expect(judgeStartup({ ...good, profile: "test" }).reason).toBe(
+      'the main process reports build profile "test", not "release"',
+    );
+  });
+
+  it("fails a launch that never got ready, saying how it ended", () => {
+    const notReady = { ...good, readyMs: undefined, quit: undefined };
+    expect(
+      judgeStartup({
+        ...notReady,
+        notReady: { endedByItself: false, outcome: { ...exit0, code: null, signal: "SIGKILL" } },
+      }).reason,
+    ).toBe(
+      "its main window was not ready within 30 s; killed with all its processes; a keychain dialog may be waiting on screen (not retried)",
+    );
+    expect(
+      judgeStartup({
+        ...notReady,
+        profile: undefined,
+        platform: "linux",
+        notReady: { endedByItself: true, outcome: { ...exit0, code: null, signal: "SIGTRAP" } },
+      }).reason,
+    ).toBe(
+      "the app was ended by SIGTRAP (a Chromium abort, such as the SUID sandbox FATAL error) without reporting its build profile",
+    );
+  });
+
+  it("fails a dirty quit: a failed request, a non-zero exit, a timeout, leftovers, missing processes or data", () => {
+    const quit = good.quit!;
+    expect(
+      judgeStartup({ ...good, quit: { ...quit, method: "taskkill", requestError: "exit 128: ERROR: not found" } })
+        .reason,
+    ).toBe("asking it to quit (taskkill) failed: exit 128: ERROR: not found");
+    expect(judgeStartup({ ...good, quit: { ...quit, outcome: { ...exit0, code: 3 } } }).reason).toBe(
+      "asked to quit, it exited with code 3, not 0",
+    );
+    expect(
+      judgeStartup({ ...good, quit: { ...quit, outcome: { ...exit0, code: null, signal: "SIGKILL", timedOut: true } } })
+        .reason,
+    ).toBe("asked to quit, it did not exit within 15 s and was killed");
+    expect(judgeStartup({ ...good, leftovers: [{ pid: 7, ppid: 1, command: "sleep" }] }).reason).toBe(
+      "1 of its processes outlived it (killed now): 7 other",
+    );
+    expect(judgeStartup({ ...good, launched: launched.slice(0, 1) }).reason).toBe(
+      "the process listing saw no renderer, utility (node) process (saw: main)",
+    );
+    expect(judgeStartup({ ...good, userData: { written: [], missing: ["Local State"] } }).reason).toBe(
+      "the app did not write Local State into its --user-data-dir (found: nothing)",
+    );
+    expect(judgeStartup({ ...good, realUserData: { ...good.realUserData, after: ". dir 1" } }).reason).toBe(
+      "the installed app's userData directory /Users/u/Library/Application Support/Desktop was created",
+    );
   });
 });
 
@@ -348,6 +674,19 @@ describe("signing", () => {
       status: "pass",
       reason: "Authenticode signature valid: CN=Example",
     });
+  });
+
+  it("reads Get-AuthenticodeSignature's answer, and refuses one it cannot read", () => {
+    expect(
+      parseAuthenticode('\uFEFF{"Status":"NotSigned","StatusMessage":"Die Datei ist nicht signiert.","Signer":null}'),
+    ).toEqual({
+      platform: "win32",
+      status: "NotSigned",
+      message: "Die Datei ist nicht signiert.",
+      signer: undefined,
+    });
+    expect(() => parseAuthenticode("Get-AuthenticodeSignature : Zugriff verweigert")).toThrow("did not answer in JSON");
+    expect(() => parseAuthenticode("{}")).toThrow("gave no Status");
   });
 
   it("states that nothing applies on Linux", () => {

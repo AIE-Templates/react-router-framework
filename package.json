@@ -22,7 +22,7 @@
     "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
     "typegen": "pnpm --filter web exec react-router typegen",
     "verify:build": "pnpm --filter desktop verify:build",
-    "verify:release": "pnpm --filter desktop verify:release"
+    "verify:release": "pnpm --dir apps/desktop verify:release"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
