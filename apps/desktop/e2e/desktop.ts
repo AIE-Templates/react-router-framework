@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
@@ -9,6 +8,8 @@ import {
   checkLaunchInputs,
   desktopDir,
   electronBinary,
+  freshUserDataDir,
+  launchLocation,
   type LaunchTarget,
   launchSpec,
   packagedBinary,
@@ -19,8 +20,10 @@ import {
  * scripts/launch.ts says and checked at every launch:
  * - `unpackaged`: `electron .` in apps/desktop (package.json `main`: `.vite/test/main.cjs`), on the
  *   output of `pnpm build:desktop`;
- * - `packaged`: the test profile from `pnpm --filter desktop package` in `out/test` (no fuses flipped).
- *   The release profile turns `EnableNodeCliInspectArguments` off, so the driver cannot attach to it.
+ * - `packaged`: the test profile from `pnpm --filter desktop package` in `out/test`, whose fuses are
+ *   the release profile's except `EnableNodeCliInspectArguments` (scripts/fuses.ts), which the driver
+ *   attaches through; the `packaged-fuses` project reads them back before any packaged test runs.
+ *   The release profile turns that fuse off too, so the driver cannot attach to it.
  */
 export type Target = LaunchTarget;
 
@@ -28,7 +31,7 @@ export { desktopDir, electronBinary, packagedBinary };
 
 /** Includes macOS helpers under Contents/Frameworks beside the main executable. */
 export function targetProcesses(target: Target): number[] {
-  const { command, processDir } = launchSpec(target, "test");
+  const { command, processDir } = launchLocation(target, "test");
   return appProcesses(command, processDir);
 }
 
@@ -40,20 +43,21 @@ export interface Launched {
 }
 
 /**
- * Launches the app with `DESKTOP_E2E=1` (the `/__e2e/*` endpoints) and a user data directory of its
- * own (`DESKTOP_USER_DATA_SUFFIX`), checks it reports the test build profile, and waits for the first
- * window to finish hydrating. Unpackaged, the test bundles must exist and match the web build.
+ * Launches the app with `DESKTOP_E2E=1` (the `/__e2e/*` endpoints) on `userDataDir`
+ * (`--user-data-dir`), checks it reports the test build profile and runs on that directory, and waits
+ * for the first window to finish hydrating. Unpackaged, the test bundles must exist and match the
+ * web build; packaged, the app must have the test profile's fuses.
  */
-export async function launch(target: Target, userDataSuffix: string): Promise<Launched> {
-  const spec = launchSpec(target, "test");
-  checkLaunchInputs(spec);
+export async function launch(target: Target, userDataDir: string): Promise<Launched> {
+  const spec = launchSpec(target, "test", { userDataDir });
+  await checkLaunchInputs(spec);
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     // Nothing from a developer's shell that changes what the app does.
     if (value === undefined || /^(DESKTOP_|WEB_SHELL|ELECTRON_RUN_AS_NODE$|NODE_OPTIONS$)/.test(name)) continue;
     env[name] = value;
   }
-  Object.assign(env, spec.env, { DESKTOP_E2E: "1", DESKTOP_USER_DATA_SUFFIX: userDataSuffix });
+  Object.assign(env, spec.env, { DESKTOP_E2E: "1" });
   const app = await electron.launch({
     executablePath: spec.command,
     // Exercise the real permission policy without accessing the user's camera or microphone.
@@ -70,6 +74,12 @@ export async function launch(target: Target, userDataSuffix: string): Promise<La
   if (reported !== spec.profile) {
     await app.close().catch(() => {});
     throw buildProfileMismatch(reported, spec.profile);
+  }
+  // The app's data must be where the test put it, not in the installed app's directory.
+  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
+  if (realpathSync(userData) !== realpathSync(userDataDir)) {
+    await app.close().catch(() => {});
+    throw new Error(`The app runs on user data ${userData}, not on ${userDataDir}`);
   }
   await waitForApp(page);
   return { app, page, pid };
@@ -100,8 +110,8 @@ function isAlive(pid: number): boolean {
 }
 
 interface Fixtures {
-  /** A unique `DESKTOP_USER_DATA_SUFFIX` for this test; the directory is deleted afterwards. */
-  userDataSuffix: string;
+  /** A fresh user data directory for this test, shared by its launches; deleted afterwards. */
+  userDataDir: string;
   /** Launch the app for this test; every app launched through it is quit after the test. */
   launchApp: () => Promise<Launched>;
   /** The first launch, for tests that need only one. */
@@ -115,23 +125,23 @@ interface Options {
 export const test = base.extend<Fixtures & Options>({
   target: ["unpackaged", { option: true }],
   // oxlint-disable-next-line no-empty-pattern -- Playwright fixtures destructure their dependencies
-  userDataSuffix: async ({}, provide) => {
-    await provide(`e2e-${randomUUID().slice(0, 8)}`);
+  userDataDir: async ({}, provide) => {
+    const directory = freshUserDataDir("e2e");
+    try {
+      await provide(directory);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   },
-  launchApp: async ({ target, userDataSuffix }, provide) => {
+  launchApp: async ({ target, userDataDir }, provide) => {
     const launched: Launched[] = [];
-    let userData: string | undefined;
     await provide(async () => {
-      const app = await launch(target, userDataSuffix);
+      const app = await launch(target, userDataDir);
       launched.push(app);
-      userData ??= await app.app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
       return app;
     });
     for (const app of launched) {
       if (isAlive(app.pid)) await quit(app).catch(() => process.kill(app.pid, "SIGKILL"));
-    }
-    if (userData && userData.endsWith(`-${userDataSuffix}`) && existsSync(userData)) {
-      rmSync(userData, { recursive: true, force: true });
     }
   },
   desktop: async ({ launchApp }, provide) => {

@@ -7,12 +7,15 @@
 // `.vite/test/main.cjs`); `--packaged` starts the packaged test app in out/test
 // (`pnpm package:desktop`), `--app` another packaged test-profile executable. Started the way
 // scripts/launch.ts says: it first checks the target exists (unpackaged: that the bundles match the
-// web build), then that the started main process reports the test build profile; otherwise it
-// stops the app and exits 1. The app's environment, stdin, output and exit status pass through.
+// web build; packaged: that its fuses are the test profile's), then that the started main process
+// reports the test build profile; otherwise it stops the app and exits 1. The app runs on a fresh
+// user data directory, removed when it exits, unless the arguments name one
+// (`--user-data-dir=<dir>`, kept). The app's environment, stdin, output and exit status pass through.
 // Runs on Node directly (type stripping).
 import { spawn } from "node:child_process";
+import { readdirSync, rmSync } from "node:fs";
 
-import { checkLaunchInputs, launchSpec, verifyBuildProfile } from "./launch.ts";
+import { checkLaunchInputs, freshUserDataDir, launchSpec, verifyBuildProfile } from "./launch.ts";
 
 function fail(err: unknown): never {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
@@ -32,13 +35,20 @@ if (args[0] === "--packaged") {
   args.splice(0, 2);
 }
 
+// A user data directory named in the arguments is the caller's; otherwise a fresh one, removed afterwards.
+const named = args.findIndex((arg) => arg.startsWith("--user-data-dir="));
+const userDataDir = named >= 0 ? args.splice(named, 1)[0].slice("--user-data-dir=".length) : freshUserDataDir("start");
+const removeUserData = named < 0;
+
 let spec: ReturnType<typeof launchSpec>;
 try {
-  spec = launchSpec(packaged ? "packaged" : "unpackaged", "test", { executable });
-  checkLaunchInputs(spec);
+  spec = launchSpec(packaged ? "packaged" : "unpackaged", "test", { executable, userDataDir });
+  await checkLaunchInputs(spec);
 } catch (err) {
+  if (removeUserData) rmSync(userDataDir, { recursive: true, force: true });
   fail(err);
 }
+process.stderr.write(`start: user data in ${userDataDir}${removeUserData ? " (removed on exit)" : ""}\n`);
 
 const child = spawn(spec.command, [...spec.args, ...args], {
   cwd: spec.cwd,
@@ -67,4 +77,14 @@ child.once("error", (err) => {
 });
 child.once("close", (code, signal) => {
   process.exitCode = wrongBuild ? 1 : (code ?? (signal ? 1 : 0));
+  // An app that ran and left nothing there did not run on it, and wrote somewhere else.
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(userDataDir);
+  } catch {}
+  if (!wrongBuild && code === 0 && entries.length === 0) {
+    process.stderr.write(`The app left nothing in its user data directory ${userDataDir}\n`);
+    process.exitCode = 1;
+  }
+  if (removeUserData) rmSync(userDataDir, { recursive: true, force: true });
 });

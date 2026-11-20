@@ -3,15 +3,18 @@
 // ack coalescing off and on (ABBA order across rounds), collects each run's BENCH_RESULT line into
 // a JSON Lines file and prints the comparison. Builds nothing: run `pnpm build:desktop` first, or
 // pass `--app` with a packaged test-profile executable (then nothing needs building, but the script
-// still runs from this checkout: it imports scripts/launch.ts and the modules beside it). Either way
-// the app is started the way scripts/launch.ts says and must report the test build profile. Runs on Node directly (type stripping). See README, "Real-app benchmark".
+// still runs from this checkout: it imports scripts/launch.ts and the modules beside it; its fuses
+// must be the test profile's). Either way the app is started the way scripts/launch.ts says, each run
+// on a fresh user data directory removed afterwards, and must report the test build profile. Results
+// are compared within the files given (both modes of one run by default), never against a stored
+// baseline. Runs on Node directly (type stripping). See README, "Real-app benchmark".
 //
 //   node scripts/bench.ts [run] [--rounds 5] [--measure-ms 10000] [--warmup-ms 2000]
 //                         [--cases api-c1,...] [--modes off,on] [--label text] [--out file.jsonl]
 //                         [--app path/to/packaged/executable]
 //   node scripts/bench.ts compare <file.jsonl>...
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
@@ -19,7 +22,9 @@ import {
   appProcesses,
   checkLaunchInputs,
   desktopDir,
-  type LaunchSpec,
+  freshUserDataDir,
+  type LaunchLocation,
+  launchLocation,
   launchSpec,
   verifyBuildProfile,
 } from "./launch.ts";
@@ -60,7 +65,9 @@ function isRunRecord(value: unknown): value is RunRecord {
  * What a run launches (scripts/launch.ts): this checkout's Electron on the unpackaged test bundles,
  * or with `--app <executable>` a packaged test-profile app (release builds do not contain the benchmark).
  */
-let target: LaunchSpec | undefined;
+let target: LaunchLocation | undefined;
+/** `--app`, for `launchSpec` at each run. */
+let app: string | undefined;
 
 const isWindows = process.platform === "win32";
 
@@ -135,9 +142,13 @@ function cleanupAndExit(code: number): never {
 
 async function runOnce(round: number, mode: Mode, env: Record<string, string>, timeoutMs: number): Promise<RunRecord> {
   const started = performance.now();
+  // A user data directory of its own: no single-instance clash with a running app, no state from
+  // another run, nothing written to the installed app's.
+  const userDataDir = freshUserDataDir("bench");
+  const spec = launchSpec(target!.target, target!.profile, { executable: app, userDataDir });
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
-    ...target!.env,
+    ...spec.env,
     ...env,
     DESKTOP_PORT_ACK_COALESCE: mode === "on" ? "1" : "0",
   };
@@ -149,7 +160,7 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
     "ELECTRON_RUN_AS_NODE",
   ])
     delete childEnv[key];
-  const { command, args, cwd } = target!;
+  const { command, args, cwd } = spec;
   const child = spawn(command, args, {
     cwd,
     env: childEnv,
@@ -200,7 +211,10 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
     killGroup(pgid, "SIGKILL");
   }
   groups.delete(pgid);
+  const used = readdirSync(userDataDir).length > 0;
+  rmSync(userDataDir, { recursive: true, force: true });
   if (wrongBuild) throw wrongBuild;
+  if (!used) throw new Error(`run ${round}/${mode} left nothing in its user data directory ${userDataDir}`);
   return { round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
 }
 
@@ -218,10 +232,11 @@ async function run(options: Map<string, string>): Promise<void> {
       join(desktopDir, "bench-results", `bench-${new Date().toISOString().replaceAll(":", "-")}.jsonl`),
   );
 
-  const app = options.get("app");
-  target = launchSpec(app === undefined ? "unpackaged" : "packaged", "test", { executable: app });
-  // The executable exists; the unpackaged test bundles match the web build (a packaged app carries its own).
-  checkLaunchInputs(target);
+  app = options.get("app");
+  target = launchLocation(app === undefined ? "unpackaged" : "packaged", "test", { executable: app });
+  // The executable exists; the unpackaged test bundles match the web build (a packaged app carries
+  // its own, and must have the test profile's fuses).
+  await checkLaunchInputs(target);
   const already = runProcesses();
   if (already.length > 0) {
     throw new Error(`The app under test is already running (pids ${already.join(", ")}); quit it first`);
@@ -234,8 +249,6 @@ async function run(options: Map<string, string>): Promise<void> {
     DESKTOP_BENCH: "1",
     DESKTOP_BENCH_MEASURE_MS: String(measureMs),
     DESKTOP_BENCH_WARMUP_MS: String(warmupMs),
-    // A user data directory of its own: no single-instance clash with a running app, no shared state.
-    DESKTOP_USER_DATA_SUFFIX: "bench",
     ...(cases ? { DESKTOP_BENCH_CASES: cases } : {}),
     ...(options.get("label") ? { DESKTOP_BENCH_LABEL: options.get("label")! } : {}),
   };

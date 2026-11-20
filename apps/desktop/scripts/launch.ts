@@ -4,6 +4,10 @@
 // - `launchSpec()` is the one place that says how a target (unpackaged bundles or the packaged test
 //   app) of a build profile is started: executable, arguments, Chromium switches, working directory
 //   and environment. Callers add only what is theirs (a test's media switch, a user's arguments).
+//   Test launches always run on a user data directory the caller names (`--user-data-dir`), never
+//   on the installed app's, and on macOS and Linux keep away from the system keychain or keyring,
+//   which the packaged test app's cookie encryption fuse would otherwise reach for
+//   (scripts/fuses.ts).
 // - Each build profile lives in its own `.vite/<profile>` (scripts/build-profile.ts) and the main
 //   process logs the profile it was built with before anything else
 //   (`{"buildProfile":"test","msg":"build profile"}`). A launcher that spawns the app itself reads
@@ -11,18 +15,23 @@
 //   start, so a stale or mismatched build can never pass as the one under test. Playwright consumes
 //   the app's stdout itself; e2e/desktop.ts asks the main process instead (`desktopBuildProfile`).
 // - `checkLaunchInputs()` first makes sure the target exists and, unpackaged, that its bundles match
-//   the web build (scripts/check-web-build.ts).
+//   the web build (scripts/check-web-build.ts); packaged, that the fuses of the binary are the test
+//   profile's (scripts/fuses.ts), so a package whose `afterPack` did not run is never launched.
 // Runs on Node directly (type stripping).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
+import { pathToFuseFile } from "@electron/fuses";
+
 import { packagedExecutable } from "../e2e/packaged-path.ts";
 import { type BuildProfile, bundleDir } from "./build-profile.ts";
 import { buildCommand, checkWebBuild } from "./check-web-build.ts";
+import { checkPackagedFuses, describeFuses, type PackagedProfile } from "./fuses.ts";
 
 export const desktopDir = resolve(import.meta.dirname, "..");
 
@@ -71,22 +80,26 @@ export function appProcesses(executable: string, directory: string): number[] {
 
 export type LaunchTarget = "unpackaged" | "packaged";
 
-/** How to start one target of one build profile; `env` goes over the caller's environment. */
-export interface LaunchSpec {
+/** Where the app of one target of one build profile is: enough to find its processes. */
+export interface LaunchLocation {
   target: LaunchTarget;
   profile: BuildProfile;
   command: string;
-  args: string[];
-  cwd: string;
-  env: Record<string, string>;
   /** The directory every process of the app has its executable under, for `appProcesses`. */
   processDir: string;
 }
 
-/** The packaged test app electron-builder's `--dir` writes for this machine, only ever in `out/test`. */
-export function packagedBinary(directory: string = desktopDir): string {
+/** How to start one target of one build profile; `env` goes over the caller's environment. */
+export interface LaunchSpec extends LaunchLocation {
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+}
+
+/** The packaged app electron-builder's `--dir` writes for this machine, in `out/<profile>` (test by default). */
+export function packagedBinary(directory: string = desktopDir, profile: PackagedProfile = "test"): string {
   const metadata = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
-  return packagedExecutable(join(directory, "out", "test"), metadata, process.platform, process.arch);
+  return packagedExecutable(join(directory, "out", profile), metadata, process.platform, process.arch);
 }
 
 /** A macOS bundle's helpers live under Contents/Frameworks, beside Contents/MacOS: take the bundle. */
@@ -96,48 +109,196 @@ function processDirOf(executable: string): string {
 }
 
 /**
- * How to start `target` of `profile`: the unpackaged test bundles (`electron .`, package.json `main`
- * is `.vite/test/main.cjs`), the unpackaged dev bundles (`electron .vite/dev`, scripts/dev.ts), or the
- * packaged test app (`out/test` unless `executable` names another packaged test-profile executable).
- * The release profile is not launched by these tools: its fuses stop the drivers and its cookie
- * encryption reaches for the system keychain.
+ * Where `target` of `profile` is: this checkout's Electron for the unpackaged test and dev bundles,
+ * the packaged test app (`out/test` unless `executable` names another packaged test-profile
+ * executable). The release profile is not launched by these tools: its fuses stop the inspector-based
+ * driver, and it contains none of the diagnostics they run.
  */
-export function launchSpec(
+export function launchLocation(
   target: LaunchTarget,
   profile: BuildProfile,
   { executable, directory = desktopDir }: { executable?: string; directory?: string } = {},
-): LaunchSpec {
-  // Chromium switches every launch of this target and profile gets (platform specifics belong here).
-  const switches: string[] = [];
-  const env = { NODE_ENV: profile === "dev" ? "development" : "production" };
+): LaunchLocation {
   if (target === "unpackaged" && (profile === "test" || profile === "dev")) {
     if (executable !== undefined) throw new Error("An unpackaged launch runs this checkout's Electron");
     const command = electronBinary();
-    const app = profile === "test" ? "." : join(directory, bundleDir("dev"));
-    return {
-      target,
-      profile,
-      command,
-      args: [app, ...switches],
-      cwd: directory,
-      env,
-      processDir: processDirOf(command),
-    };
+    return { target, profile, command, processDir: processDirOf(command) };
   }
   if (target === "packaged" && profile === "test") {
     const command = resolve(executable ?? packagedBinary(directory));
-    return { target, profile, command, args: switches, cwd: dirname(command), env, processDir: processDirOf(command) };
+    return { target, profile, command, processDir: processDirOf(command) };
   }
   throw new Error(`The ${target} ${profile} build is not a launch target`);
 }
 
 /**
- * Throws, saying which command to run, unless what `spec` starts exists and, for the unpackaged test
- * bundles, matches the web build. The dev bundles are checked by scripts/dev.ts, which builds them.
+ * The Chromium switches that keep a test launch away from the system's credential store. The packaged
+ * test app encrypts its cookies (the `EnableCookieEncryption` fuse, scripts/fuses.ts), and Chromium
+ * keeps that key in the OS store, which on a developer's machine can prompt and on a machine without
+ * a desktop session can hang.
  */
-export function checkLaunchInputs(spec: LaunchSpec, directory: string = desktopDir): void {
+export function credentialStoreSwitches(platform: NodeJS.Platform): string[] {
+  // macOS: a fixed in-process key instead of the login keychain's "<product> Safe Storage" item.
+  if (platform === "darwin") return ["--use-mock-keychain"];
+  // Linux: Chromium's built-in static key instead of the Secret Service (gnome-keyring) or KWallet.
+  if (platform === "linux") return ["--password-store=basic"];
+  // Windows: DPAPI, tied to the user account, never prompts and needs no service: nothing to add.
+  return [];
+}
+
+/** How to look at the machine for `linuxSandboxBlocker`; tests pass their own. */
+export interface SandboxProbe {
+  /** A sysctl's value from /proc/sys, trimmed, or undefined when this kernel does not have it. */
+  sysctl(name: string): string | undefined;
+  /** Owner and mode of a file, or undefined when it does not exist. */
+  stat(path: string): { uid: number; mode: number } | undefined;
+}
+
+const machineProbe: SandboxProbe = {
+  sysctl(name) {
+    try {
+      return readFileSync(join("/proc/sys", ...name.split(".")), "utf8").trim();
+    } catch {
+      return undefined;
+    }
+  },
+  stat(path) {
+    try {
+      const { uid, mode } = statSync(path);
+      return { uid, mode };
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+/**
+ * Why Chromium's sandbox cannot start for `executable` on this Linux machine, or undefined when it
+ * can. Chromium sandboxes with unprivileged user namespaces and falls back to the setuid helper
+ * `chrome-sandbox` beside the executable; with neither it aborts at startup (`FATAL ...
+ * setuid_sandbox_host.cc ... The SUID sandbox helper binary was found, but is not configured
+ * correctly`). User namespaces count as forbidden when the kernel says so: Ubuntu's AppArmor
+ * restriction (`kernel.apparmor_restrict_unprivileged_userns=1`, which an AppArmor profile for an
+ * installed app could lift, but an unpacked build has none), Debian's switch
+ * (`kernel.unprivileged_userns_clone=0`) or no namespaces at all (`user.max_user_namespaces=0`). The
+ * helper works only when owned by root with mode 4755, which an unpacked build's never is unless
+ * someone made it so.
+ */
+export function linuxSandboxBlocker(executable: string, probe: SandboxProbe = machineProbe): string | undefined {
+  let userns: string | undefined;
+  if (probe.sysctl("kernel.apparmor_restrict_unprivileged_userns") === "1") {
+    userns = "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1)";
+  } else if (probe.sysctl("kernel.unprivileged_userns_clone") === "0") {
+    userns = "unprivileged user namespaces are disabled (kernel.unprivileged_userns_clone=0)";
+  } else if (probe.sysctl("user.max_user_namespaces") === "0") {
+    userns = "user namespaces are disabled (user.max_user_namespaces=0)";
+  }
+  if (userns === undefined) return undefined;
+  const helper = join(dirname(executable), "chrome-sandbox");
+  const helperStat = probe.stat(helper);
+  if (helperStat && helperStat.uid === 0 && (helperStat.mode & 0o7777) === 0o4755) return undefined;
+  const found = helperStat
+    ? `owned by uid ${helperStat.uid} with mode ${(helperStat.mode & 0o7777).toString(8)}`
+    : "missing";
+  return `${userns}, and the setuid sandbox helper ${helper} is ${found} (it needs root and mode 4755)`;
+}
+
+/** The sandbox notices already printed by this process, so each is printed once. */
+const sandboxNotices = new Set<string>();
+
+/**
+ * `--no-sandbox` for a test or dev launch on a Linux machine where Chromium's sandbox cannot start
+ * (`linuxSandboxBlocker`), with one notice on stderr saying so and why; nothing anywhere else.
+ * Playwright's Electron driver adds `--no-sandbox` on Linux by itself; the launchers that spawn the
+ * app themselves need this. The release build is never given it.
+ */
+export function sandboxSwitches(
+  platform: NodeJS.Platform,
+  executable: string,
+  probe: SandboxProbe = machineProbe,
+): string[] {
+  if (platform !== "linux") return [];
+  const blocker = linuxSandboxBlocker(executable, probe);
+  if (blocker === undefined) return [];
+  if (!sandboxNotices.has(blocker)) {
+    sandboxNotices.add(blocker);
+    process.stderr.write(`launch: passing --no-sandbox: Chromium's sandbox cannot start here: ${blocker}\n`);
+  }
+  return ["--no-sandbox"];
+}
+
+/** A fresh, empty user data directory for one test launch (or one test's launches), under the system temp directory. */
+export function freshUserDataDir(label: string): string {
+  return mkdtempSync(join(tmpdir(), `desktop-${label}-`));
+}
+
+/**
+ * How to start `target` of `profile`: the unpackaged test bundles (`electron .`, package.json `main`
+ * is `.vite/test/main.cjs`), the unpackaged dev bundles (`electron .vite/dev`, scripts/dev.ts), or the
+ * packaged test app (see `launchLocation`). A test launch needs `userDataDir`, the directory it runs
+ * on (`--user-data-dir`, which Chromium and with it Electron's `userData` path, the single-instance
+ * lock and the utility's compile cache follow); reuse one across the restarts of one test and never
+ * share it between runs. `DESKTOP_USER_DATA_SUFFIX` is the dev profile's, and is cleared for test
+ * launches so it cannot move that directory.
+ */
+export function launchSpec(
+  target: LaunchTarget,
+  profile: BuildProfile,
+  {
+    executable,
+    directory = desktopDir,
+    userDataDir,
+  }: { executable?: string; directory?: string; userDataDir?: string } = {},
+): LaunchSpec {
+  const location = launchLocation(target, profile, { executable, directory });
+  const env: Record<string, string> = { NODE_ENV: profile === "dev" ? "development" : "production" };
+  // Chromium switches every launch of this target and profile gets.
+  const switches = sandboxSwitches(process.platform, location.command);
+  if (profile === "test") {
+    if (userDataDir === undefined) throw new Error("A test launch needs a user data directory of its own");
+    switches.push(`--user-data-dir=${resolve(userDataDir)}`, ...credentialStoreSwitches(process.platform));
+    env.DESKTOP_USER_DATA_SUFFIX = "";
+  } else if (userDataDir !== undefined) {
+    throw new Error("Only test launches take a user data directory; dev uses DESKTOP_USER_DATA_SUFFIX");
+  }
+  if (target === "unpackaged") {
+    const app = profile === "test" ? "." : join(directory, bundleDir("dev"));
+    return { ...location, args: [app, ...switches], cwd: directory, env };
+  }
+  return { ...location, args: switches, cwd: dirname(location.command), env };
+}
+
+/** Fuse read-backs of this process, per fuse file as it was on disk, so repeated launches read it once. */
+const fuseChecks = new Map<string, Promise<void>>();
+
+/**
+ * Reads the fuses of a packaged test app and rejects, before anything starts it, unless they are the
+ * test profile's (scripts/fuses.ts). Prints the readings once per binary.
+ */
+export function checkTestPackageFuses(executable: string): Promise<void> {
+  const fuseFile = pathToFuseFile(executable);
+  const { size, mtimeMs } = statSync(fuseFile);
+  const key = `${fuseFile}\0${size}\0${mtimeMs}`;
+  let check = fuseChecks.get(key);
+  if (check === undefined) {
+    check = (async () => {
+      const readings = await checkPackagedFuses(executable, "test");
+      process.stdout.write(`launch: fuses of ${executable} match the test profile: ${describeFuses(readings)}\n`);
+    })();
+    fuseChecks.set(key, check);
+  }
+  return check;
+}
+
+/**
+ * Rejects, saying which command to run, unless what `spec` starts exists and, for the unpackaged test
+ * bundles, matches the web build; for the packaged test app, unless its fuses are the test profile's.
+ * The dev bundles are checked by scripts/dev.ts, which builds them.
+ */
+export async function checkLaunchInputs(spec: LaunchLocation, directory: string = desktopDir): Promise<void> {
   if (spec.target === "packaged") {
     if (!existsSync(spec.command)) throw new Error(`${spec.command} is missing: run \`pnpm package:desktop\` first`);
+    await checkTestPackageFuses(spec.command);
   } else if (spec.profile !== "dev") {
     checkUnpackagedBuild(spec.profile, directory);
   }

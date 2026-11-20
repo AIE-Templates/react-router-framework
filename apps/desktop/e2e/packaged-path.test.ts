@@ -61,8 +61,8 @@ describe("builder profiles", () => {
         new RegExp(`^extraMetadata:\\n(?: {2}.*\\n)*? {2}main: \\.vite/${profile}/main\\.cjs$`, "m"),
       );
       expect(leaf).toMatch(new RegExp(`^directories:\\n {2}output: out/${profile}$`, "m"));
-      // Fuses are flipped on the release package only.
-      expect(/^afterPack: \.\/scripts\/fuses\.ts$/m.test(leaf)).toBe(profile === "release");
+      // Both packages get their profile's fuses (scripts/fuses.ts tells which from the entry).
+      expect(leaf).toMatch(/^afterPack: \.\/scripts\/fuses\.ts$/m);
     },
   );
 });

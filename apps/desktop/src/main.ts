@@ -50,7 +50,9 @@ const profile = createBootProfile(debug.bootProfile);
 // other builds do not even bundle the module (~/main/dev-host.ts).
 const dev = DESKTOP_BUILD_PROFILE === "dev" ? developmentHost : undefined;
 
-// A development or test instance keeps its own storage, apart from the installed app's.
+// A development instance keeps its own storage, apart from the installed app's
+// (DESKTOP_USER_DATA_SUFFIX); test launches name theirs with --user-data-dir (scripts/launch.ts),
+// which Electron has applied to the userData path already.
 const { compileCacheDir } = configureUserData(app, debug.userDataSuffix);
 
 // Before `ready`: the scheme behaves like https (standard origin, fetch and streams, CORS, code cache).

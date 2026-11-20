@@ -1,7 +1,9 @@
 # The test profile: `pnpm package:desktop` (`pnpm --filter desktop package`) builds it unpacked into
 # out/test from the `.vite/test` bundles, for Playwright (e2e/desktop.ts), the smoke and the
-# benchmark. No fuses are flipped: Playwright's Electron driver needs the Node CLI inspect arguments.
-# Installers are built only from the release profile.
+# benchmark. Its fuses are flipped after packing (scripts/fuses.ts): the release package's set except
+# the Node CLI inspect arguments, which Playwright's Electron driver needs. Its cookie encryption is
+# on, so the launchers keep it off the system keychain (scripts/launch.ts). Installers are built only
+# from the release profile.
 extends: ./electron-builder.base.yml
 extraMetadata:
   main: .vite/test/main.cjs
@@ -13,3 +15,4 @@ files:
   - package.json
 directories:
   output: out/test
+afterPack: ./scripts/fuses.ts

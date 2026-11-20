@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -7,13 +7,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { packagedExecutable } from "../e2e/packaged-path.ts";
 import { WEB_SERVER_RECORD, webServerDigest } from "./check-web-build.ts";
+import { FUSE_NAMES, FUSES } from "./fuses.ts";
 import {
   buildProfileMismatch,
   checkLaunchInputs,
   checkUnpackagedBuild,
+  credentialStoreSwitches,
   electronBinary,
+  freshUserDataDir,
+  launchLocation,
   launchSpec,
+  linuxSandboxBlocker,
   reportedBuildProfile,
+  type SandboxProbe,
+  sandboxSwitches,
   verifyBuildProfile,
   writeDevPackageJson,
 } from "./launch.ts";
@@ -99,37 +106,67 @@ describe("launch spec", () => {
 
   afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
-  it("starts the unpackaged test bundles as `electron .` in apps/desktop", () => {
-    expect(launchSpec("unpackaged", "test", { directory })).toEqual({
+  /** What every test launch on this machine adds after its user data directory. */
+  const platformSwitches = (command: string) => [
+    ...sandboxSwitches(process.platform, command),
+    `--user-data-dir=${resolve(directory, "data")}`,
+    ...credentialStoreSwitches(process.platform),
+  ];
+
+  it("starts the unpackaged test bundles as `electron .` in apps/desktop, on the user data directory given", () => {
+    const userDataDir = join(directory, "data");
+    expect(launchSpec("unpackaged", "test", { directory, userDataDir })).toEqual({
       target: "unpackaged",
       profile: "test",
       command: electronBinary(),
-      args: ["."],
+      args: [".", ...platformSwitches(electronBinary())],
       cwd: directory,
-      env: { NODE_ENV: "production" },
+      // The dev profile's way of moving the user data directory cannot move a test launch's.
+      env: { NODE_ENV: "production", DESKTOP_USER_DATA_SUFFIX: "" },
       processDir: electronProcessDir(),
     });
   });
 
-  it("starts the dev bundles on their directory", () => {
-    expect(launchSpec("unpackaged", "dev", { directory })).toMatchObject({
+  it("refuses a test launch without a user data directory, and gives none to dev", () => {
+    expect(() => launchSpec("unpackaged", "test", { directory })).toThrow(
+      "A test launch needs a user data directory of its own",
+    );
+    expect(() => launchSpec("unpackaged", "dev", { directory, userDataDir: join(directory, "data") })).toThrow(
+      "Only test launches take a user data directory",
+    );
+  });
+
+  it("starts the dev bundles on their directory, with DESKTOP_USER_DATA_SUFFIX left to the caller", () => {
+    const spec = launchSpec("unpackaged", "dev", { directory });
+    expect(spec).toMatchObject({
       command: electronBinary(),
-      args: [join(directory, ".vite", "dev")],
+      args: [join(directory, ".vite", "dev"), ...sandboxSwitches(process.platform, electronBinary())],
       cwd: directory,
       env: { NODE_ENV: "development" },
     });
+    expect(spec.args.some((arg) => arg.startsWith("--user-data-dir"))).toBe(false);
+    expect(spec.env).not.toHaveProperty("DESKTOP_USER_DATA_SUFFIX");
   });
 
   it("starts the packaged test app from out/test, or the executable named", () => {
-    const packaged = packagedExecutable(join(directory, "out", "test"), metadata, process.platform, process.arch);
-    expect(launchSpec("packaged", "test", { directory })).toMatchObject({
-      command: resolve(packaged),
-      args: [],
-      cwd: dirname(resolve(packaged)),
-      env: { NODE_ENV: "production" },
+    const userDataDir = join(directory, "data");
+    const packaged = resolve(
+      packagedExecutable(join(directory, "out", "test"), metadata, process.platform, process.arch),
+    );
+    expect(launchSpec("packaged", "test", { directory, userDataDir })).toMatchObject({
+      command: packaged,
+      args: platformSwitches(packaged),
+      cwd: dirname(packaged),
+      env: { NODE_ENV: "production", DESKTOP_USER_DATA_SUFFIX: "" },
     });
     const other = join(directory, "elsewhere", "Desktop");
-    expect(launchSpec("packaged", "test", { directory, executable: other })).toMatchObject({
+    expect(launchSpec("packaged", "test", { directory, executable: other, userDataDir })).toMatchObject({
+      command: other,
+      processDir: dirname(other),
+    });
+    expect(launchLocation("packaged", "test", { directory, executable: other })).toEqual({
+      target: "packaged",
+      profile: "test",
       command: other,
       processDir: dirname(other),
     });
@@ -140,16 +177,64 @@ describe("launch spec", () => {
     ["packaged", "release"],
     ["packaged", "dev"],
   ] as const)("does not launch the %s %s build", (target, profile) => {
-    expect(() => launchSpec(target, profile, { directory })).toThrow(
+    expect(() => launchSpec(target, profile, { directory, userDataDir: join(directory, "data") })).toThrow(
       `The ${target} ${profile} build is not a launch target`,
     );
   });
 
-  it("requires the packaged app to exist; the dev bundles are scripts/dev.ts's to check", () => {
-    expect(() => checkLaunchInputs(launchSpec("packaged", "test", { directory }), directory)).toThrow(
+  it("requires the packaged app to exist; the dev bundles are scripts/dev.ts's to check", async () => {
+    await expect(checkLaunchInputs(launchLocation("packaged", "test", { directory }), directory)).rejects.toThrow(
       "is missing: run `pnpm package:desktop` first",
     );
-    expect(() => checkLaunchInputs(launchSpec("unpackaged", "dev", { directory }), directory)).not.toThrow();
+    await expect(checkLaunchInputs(launchLocation("unpackaged", "dev", { directory }), directory)).resolves.toBe(
+      undefined,
+    );
+  });
+
+  /** A file with a fuse wire, the way `getCurrentFuseWire` finds one in an Electron binary. */
+  function fakeBinary(name: string, fuses: Record<string, boolean>): string {
+    const wire = FUSE_NAMES.map((fuse) => (fuses[fuse] ? 0x31 : 0x30));
+    const file = join(directory, name);
+    writeFileSync(
+      file,
+      Buffer.concat([
+        Buffer.from("padding before the wire "),
+        Buffer.from("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX"),
+        Buffer.from([1, wire.length, ...wire]),
+        Buffer.from(" and after"),
+      ]),
+    );
+    return file;
+  }
+
+  it("launches a packaged app only when its fuses read back as the test profile's", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const fused = fakeBinary("fused", FUSES.test);
+      await expect(checkLaunchInputs(launchLocation("packaged", "test", { executable: fused }))).resolves.toBe(
+        undefined,
+      );
+      expect(stdout).toHaveBeenCalledWith(expect.stringContaining("EnableNodeCliInspectArguments=true"));
+      // A package whose afterPack did not run keeps Electron's defaults.
+      const unfused = fakeBinary("unfused", {
+        RunAsNode: true,
+        EnableCookieEncryption: false,
+        EnableNodeOptionsEnvironmentVariable: true,
+        EnableNodeCliInspectArguments: true,
+        EnableEmbeddedAsarIntegrityValidation: false,
+        OnlyLoadAppFromAsar: false,
+      });
+      await expect(checkLaunchInputs(launchLocation("packaged", "test", { executable: unfused }))).rejects.toThrow(
+        /not those of the test profile.*RunAsNode is true, expected false; EnableCookieEncryption is false, expected true/,
+      );
+      // So does the release package: its inspect fuse is off.
+      const release = fakeBinary("release", FUSES.release);
+      await expect(checkLaunchInputs(launchLocation("packaged", "test", { executable: release }))).rejects.toThrow(
+        "EnableNodeCliInspectArguments is false, expected true",
+      );
+    } finally {
+      stdout.mockRestore();
+    }
   });
 
   it("names what a launched app reported", () => {
@@ -159,6 +244,90 @@ describe("launch spec", () => {
     expect(buildProfileMismatch(undefined, "test").message).toBe(
       'The launched app reports build profile none, expected "test"',
     );
+  });
+});
+
+describe("credential store", () => {
+  it("keeps test launches off the macOS keychain and the Linux keyring; Windows needs nothing", () => {
+    expect(credentialStoreSwitches("darwin")).toEqual(["--use-mock-keychain"]);
+    expect(credentialStoreSwitches("linux")).toEqual(["--password-store=basic"]);
+    expect(credentialStoreSwitches("win32")).toEqual([]);
+  });
+
+  it("makes a fresh user data directory per call", () => {
+    const first = freshUserDataDir("unit");
+    const second = freshUserDataDir("unit");
+    try {
+      expect(first).not.toBe(second);
+      expect(readdirSync(first)).toEqual([]);
+    } finally {
+      rmSync(first, { recursive: true, force: true });
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Linux sandbox", () => {
+  const executable = join("/opt", "app", "desktop");
+  const helper = join("/opt", "app", "chrome-sandbox");
+  const probe = (sysctls: Record<string, string>, helperStat?: { uid: number; mode: number }): SandboxProbe => ({
+    sysctl: (name) => sysctls[name],
+    stat: (path) => (path === helper ? helperStat : undefined),
+  });
+  const restricted = { "kernel.apparmor_restrict_unprivileged_userns": "1" };
+
+  it("leaves the sandbox on where user namespaces are allowed, whatever the helper", () => {
+    expect(linuxSandboxBlocker(executable, probe({}))).toBeUndefined();
+    expect(
+      linuxSandboxBlocker(
+        executable,
+        probe({
+          "kernel.apparmor_restrict_unprivileged_userns": "0",
+          "kernel.unprivileged_userns_clone": "1",
+          "user.max_user_namespaces": "63000",
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("leaves the sandbox on where namespaces are forbidden but the helper is root-owned 4755", () => {
+    expect(linuxSandboxBlocker(executable, probe(restricted, { uid: 0, mode: 0o104755 }))).toBeUndefined();
+  });
+
+  it.each([
+    [restricted, "kernel.apparmor_restrict_unprivileged_userns=1"],
+    [{ "kernel.unprivileged_userns_clone": "0" }, "kernel.unprivileged_userns_clone=0"],
+    [{ "user.max_user_namespaces": "0" }, "user.max_user_namespaces=0"],
+  ])("says why it cannot start: %j", (sysctls, reason) => {
+    const missing = linuxSandboxBlocker(executable, probe(sysctls));
+    expect(missing).toContain(reason);
+    expect(missing).toContain(`${helper} is missing`);
+    expect(linuxSandboxBlocker(executable, probe(sysctls, { uid: 1000, mode: 0o104755 }))).toContain(
+      `${helper} is owned by uid 1000 with mode 4755`,
+    );
+    expect(linuxSandboxBlocker(executable, probe(sysctls, { uid: 0, mode: 0o100755 }))).toContain(
+      `${helper} is owned by uid 0 with mode 755`,
+    );
+  });
+
+  it("adds --no-sandbox only on Linux and only when the sandbox cannot start, saying so once", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(sandboxSwitches("darwin", executable, probe(restricted))).toEqual([]);
+      expect(sandboxSwitches("win32", executable, probe(restricted))).toEqual([]);
+      expect(sandboxSwitches("linux", executable, probe({}))).toEqual([]);
+      expect(sandboxSwitches("linux", executable, probe(restricted, { uid: 0, mode: 0o104755 }))).toEqual([]);
+      expect(stderr).not.toHaveBeenCalled();
+      const blocked = probe({ "kernel.unprivileged_userns_clone": "0" }, { uid: 501, mode: 0o100755 });
+      expect(sandboxSwitches("linux", executable, blocked)).toEqual(["--no-sandbox"]);
+      expect(sandboxSwitches("linux", executable, blocked)).toEqual(["--no-sandbox"]);
+      expect(stderr).toHaveBeenCalledTimes(1);
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringMatching(/^launch: passing --no-sandbox: .*unprivileged_userns_clone=0.*uid 501 with mode 755/),
+      );
+    } finally {
+      stderr.mockRestore();
+    }
   });
 });
 
