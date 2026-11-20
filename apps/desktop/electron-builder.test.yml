@@ -1,4 +1,4 @@
-# The test profile: `pnpm package:desktop` (`pnpm --filter desktop package`) builds it unpacked into
+# The test profile: `pnpm package:desktop:test` (`pnpm --dir apps/desktop package:test`) builds it unpacked into
 # out/test from the `.vite/test` bundles, for Playwright (e2e/desktop.ts), the smoke and the
 # benchmark. Its fuses are flipped after packing (scripts/fuses.ts): the release package's set except
 # the Node CLI inspect arguments, which Playwright's Electron driver needs. Its cookie encryption is

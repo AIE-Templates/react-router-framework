@@ -195,7 +195,7 @@ describe("launch spec", () => {
 
   it("requires the packaged app to exist; the dev bundles are scripts/dev.ts's to check", async () => {
     await expect(checkLaunchInputs(launchLocation("packaged", "test", { directory }), directory)).rejects.toThrow(
-      "is missing: run `pnpm package:desktop` first",
+      "is missing: run `pnpm package:desktop:test` first",
     );
     await expect(checkLaunchInputs(launchLocation("unpackaged", "dev", { directory }), directory)).resolves.toBe(
       undefined,
@@ -461,7 +461,7 @@ describe("files on disk", () => {
     const bundles = join(desktopDir, ".vite", "test");
     mkdirSync(bundles, { recursive: true });
     expect(() => checkUnpackagedBuild("test", desktopDir)).toThrow(
-      `${join(".vite", "test", "main.cjs")} is missing: run \`pnpm build:desktop\` first`,
+      `${join(".vite", "test", "main.cjs")} is missing: run \`pnpm build:desktop:test\` first`,
     );
     writeFileSync(join(bundles, "main.cjs"), "");
     writeFileSync(join(bundles, "preload.cjs"), "");

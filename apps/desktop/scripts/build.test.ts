@@ -67,13 +67,13 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
   }
 
   it.each([
-    { args: [], profile: "test", web: false },
-    { args: ["--with-web"], profile: "test", web: true },
+    { args: [], profile: "release", web: false },
+    { args: ["--with-web"], profile: "release", web: true },
     { args: ["test"], profile: "test", web: false },
     { args: ["release", "--with-web"], profile: "release", web: true },
     { args: ["--with-web", "release"], profile: "release", web: true },
   ])("builds the $profile profile with production inputs (arguments $args)", ({ args, profile, web }) => {
-    const result = run(args, { DESKTOP_BUILD_PROFILE: "release" });
+    const result = run(args, { DESKTOP_BUILD_PROFILE: profile === "release" ? "test" : "release" });
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     const calls = readInvocations();
@@ -118,7 +118,7 @@ if (process.argv.includes(process.env.BUILD_FAIL_ARG)) process.exit(7);
     expect(call).toMatchObject({
       args: ["-r", "build"],
       cwd: repoDir,
-      env: { NODE_ENV: "production", DESKTOP_BUILD_PROFILE: "test" },
+      env: { NODE_ENV: "production", DESKTOP_BUILD_PROFILE: "release" },
     });
     expect(call.env).not.toHaveProperty("DESKTOP_DEV_SERVER_URL");
     expect(call.env).not.toHaveProperty("DESKTOP_DEV");

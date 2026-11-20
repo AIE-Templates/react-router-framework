@@ -1,7 +1,7 @@
 # The release profile, from the `.vite/release` bundles into out/release, with all of Electron's
 # fuses this project sets flipped after packing (scripts/fuses.ts; and, once certificates exist,
 # signing and notarization).
-# `pnpm release:desktop` builds it unpacked for local checks, `pnpm dist:desktop` builds the
+# `pnpm package:desktop` builds it unpacked for local checks, `pnpm dist:desktop` builds the
 # installers; both build the release bundles first. The release bundles contain no diagnostics (the
 # in-app smoke, the benchmark, the end-to-end endpoints) and read no debug environment variables, and
 # Playwright's Electron driver needs the Node inspect arguments the fuses turn off: the smoke, the

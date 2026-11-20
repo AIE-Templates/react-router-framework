@@ -8,7 +8,7 @@ Diagnostics (smoke, benchmark, E2E endpoints), the development proxy and the deb
 
 ## Decision
 
-Three build profiles, `dev`, `test` and `release`, are compiled in (`DESKTOP_BUILD_PROFILE`) with separate bundle directories (`.vite/<profile>`) and package directories (`out/test`, `out/release`). The build configuration replaces excluded modules with empty implementations of the same contract (`PROFILE_ENTRIES`). Release carries no debug or test capability: no diagnostics, no development code, no debug variable reads, no DevTools, and it refuses Chromium remote debugging at startup with exit status 97. Both packages take fuses from one table; the test package keeps only the Node inspector on. Release is never driven by Playwright and is launched only by `verify:release`, which checks it from outside.
+Three build profiles, `dev`, `test` and `release`, are compiled in (`DESKTOP_BUILD_PROFILE`) with separate bundle directories (`.vite/<profile>`) and package directories (`out/test`, `out/release`). The build configuration replaces excluded modules with empty implementations of the same contract (`PROFILE_ENTRIES`). Release carries no debug or test capability: no diagnostics, no development code, no debug variable reads, no DevTools, and it refuses Chromium remote debugging at startup with exit status 97. Both packages take fuses from one table; the test package keeps only the Node inspector on. Users can launch the packaged release app directly or via `pnpm start:desktop`. Automated release verification uses `verify:release` to check it from outside. Playwright drives the test profile.
 
 ## Consequences
 

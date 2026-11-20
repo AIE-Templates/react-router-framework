@@ -167,11 +167,11 @@ function sourceOf(bundle: string): string {
   return `src/${bundle.split(".")[0]}.ts`;
 }
 
-it("builds the test profile when none is named", () => {
+it("builds the release profile when none is named", () => {
   vi.stubEnv("DESKTOP_BUILD_PROFILE", undefined);
   const config = entryConfig(options);
-  expect(config.build?.outDir).toBe(".vite/test");
-  expect(config.define).toMatchObject({ DESKTOP_BUILD_PROFILE: '"test"' });
+  expect(config.build?.outDir).toBe(".vite/release");
+  expect(config.define).toMatchObject({ DESKTOP_BUILD_PROFILE: '"release"' });
 });
 
 it("takes an explicit profile over the environment", () => {
