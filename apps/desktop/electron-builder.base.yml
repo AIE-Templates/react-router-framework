@@ -26,6 +26,11 @@ mac:
 win:
   target:
     - nsis
+# An assisted installer: it shows its pages and lets the user choose the installation directory and
+# whether to install for this user or for all users (the latter asks for elevation).
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
 linux:
   target:
     - deb
