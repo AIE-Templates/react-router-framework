@@ -7,17 +7,23 @@
 // must be the test profile's). Either way the app is started the way scripts/launch.ts says, each run
 // on a fresh user data directory removed afterwards, and must report the test build profile. Results
 // are compared within the files given (both modes of one run by default), never against a stored
-// baseline. Runs on Node directly (type stripping). See README, "Real-app benchmark".
+// baseline. Every record carries what it was measured on, the target (unpackaged or packaged) and
+// the fuses of the binary that ran, and runs that differ in either are never merged into one file
+// or compared (a packaged app's fuses change what it costs). Runs on Node directly (type
+// stripping). See README, "Real-app benchmark".
 //
 //   node scripts/bench.ts [run] [--rounds 5] [--measure-ms 10000] [--warmup-ms 2000]
 //                         [--cases api-c1,...] [--modes off,on] [--label text] [--out file.jsonl]
 //                         [--app path/to/packaged/executable]
 //   node scripts/bench.ts compare <file.jsonl>...
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+import { getCurrentFuseWire } from "@electron/fuses";
+
 import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
+import { describeFuses, fuseReadings } from "./fuses.ts";
 import {
   appProcesses,
   checkLaunchInputs,
@@ -26,12 +32,21 @@ import {
   type LaunchLocation,
   launchLocation,
   launchSpec,
+  type LaunchTarget,
+  removeUserDataDir,
   verifyBuildProfile,
 } from "./launch.ts";
 
 type Mode = "off" | "on";
 
-interface RunRecord {
+/** What a run was measured on; runs are comparable only when theirs are equal. */
+export interface RunMarker {
+  target: LaunchTarget;
+  /** The fuses of the binary that ran, as scripts/fuses.ts describes them (`name=value ...`). */
+  fuses: string;
+}
+
+interface RunRecord extends Partial<RunMarker> {
   round: number;
   mode: Mode;
   exitCode: number | null;
@@ -57,8 +72,52 @@ function isRunRecord(value: unknown): value is RunRecord {
     isRecord(value) &&
     typeof value.mode === "string" &&
     isMode(value.mode) &&
+    (value.target === undefined || value.target === "unpackaged" || value.target === "packaged") &&
+    (value.fuses === undefined || typeof value.fuses === "string") &&
     (value.result === undefined || isBenchResult(value.result))
   );
+}
+
+/** A record's marker as one string, or undefined for a record written before markers existed. */
+function markerKey(record: Partial<RunMarker>): string | undefined {
+  return record.target === undefined || record.fuses === undefined ? undefined : `${record.target}, ${record.fuses}`;
+}
+
+/**
+ * Throws unless every record of `files` (records per file) carries the same marker, and `expected`
+ * when given: results from another target or from a binary with other fuses must not be merged into
+ * one file or compared. Records written before markers existed are refused too: nothing says what
+ * they were measured on.
+ */
+export function checkRunMarkers(files: ReadonlyMap<string, readonly Partial<RunMarker>[]>, expected?: RunMarker): void {
+  const seen = new Map<string, string>();
+  if (expected) seen.set(markerKey(expected)!, "this run");
+  for (const [file, records] of files) {
+    for (const record of records) {
+      const key = markerKey(record);
+      if (key === undefined) {
+        throw new Error(
+          `${file} holds runs without a target and fuse marker (written by an older bench): ` +
+            "they cannot be compared with anything; measure again",
+        );
+      }
+      if (!seen.has(key)) seen.set(key, file);
+    }
+  }
+  if (seen.size > 1) {
+    throw new Error(
+      "Refusing to merge or compare runs measured on different targets or fuses:\n" +
+        [...seen].map(([key, where]) => `  ${where}: ${key}`).join("\n"),
+    );
+  }
+}
+
+function readRecords(file: string): RunRecord[] {
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line): unknown => JSON.parse(line))
+    .filter(isRunRecord);
 }
 
 /**
@@ -134,17 +193,32 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
 
 let current: ChildProcess | undefined;
 const groups = new Set<number>();
+/** The user data directories of runs not yet cleaned up, removed on any exit. */
+const userDataDirs = new Set<string>();
+
+function cleanup(): void {
+  for (const pgid of groups) killGroup(pgid, "SIGKILL");
+  for (const directory of userDataDirs) removeUserDataDir(directory);
+  userDataDirs.clear();
+}
 
 function cleanupAndExit(code: number): never {
-  for (const pgid of groups) killGroup(pgid, "SIGKILL");
+  cleanup();
   process.exit(code);
 }
 
-async function runOnce(round: number, mode: Mode, env: Record<string, string>, timeoutMs: number): Promise<RunRecord> {
+async function runOnce(
+  round: number,
+  mode: Mode,
+  env: Record<string, string>,
+  timeoutMs: number,
+  marker: RunMarker,
+): Promise<RunRecord> {
   const started = performance.now();
   // A user data directory of its own: no single-instance clash with a running app, no state from
   // another run, nothing written to the installed app's.
   const userDataDir = freshUserDataDir("bench");
+  userDataDirs.add(userDataDir);
   const spec = launchSpec(target!.target, target!.profile, { executable: app, userDataDir });
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -212,10 +286,11 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
   }
   groups.delete(pgid);
   const used = readdirSync(userDataDir).length > 0;
-  rmSync(userDataDir, { recursive: true, force: true });
+  removeUserDataDir(userDataDir);
+  userDataDirs.delete(userDataDir);
   if (wrongBuild) throw wrongBuild;
   if (!used) throw new Error(`run ${round}/${mode} left nothing in its user data directory ${userDataDir}`);
-  return { round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
+  return { ...marker, round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
 }
 
 async function run(options: Map<string, string>): Promise<void> {
@@ -237,6 +312,13 @@ async function run(options: Map<string, string>): Promise<void> {
   // The executable exists; the unpackaged test bundles match the web build (a packaged app carries
   // its own, and must have the test profile's fuses).
   await checkLaunchInputs(target);
+  // What these runs are measured on, recorded with each of them; a file of runs on anything else is
+  // not appended to.
+  const marker: RunMarker = {
+    target: target.target,
+    fuses: describeFuses(fuseReadings(await getCurrentFuseWire(target.command))),
+  };
+  if (existsSync(out)) checkRunMarkers(new Map([[out, readRecords(out)]]), marker);
   const already = runProcesses();
   if (already.length > 0) {
     throw new Error(`The app under test is already running (pids ${already.join(", ")}); quit it first`);
@@ -253,7 +335,8 @@ async function run(options: Map<string, string>): Promise<void> {
     ...(options.get("label") ? { DESKTOP_BENCH_LABEL: options.get("label")! } : {}),
   };
   process.stdout.write(
-    `bench: ${rounds} round(s) × [${modes.join(", ")}], warmup ${warmupMs} ms, measure ${measureMs} ms per case → ${out}\n`,
+    `bench: ${rounds} round(s) × [${modes.join(", ")}], warmup ${warmupMs} ms, measure ${measureMs} ms per case → ${out}\n` +
+      `bench: ${marker.target} target, fuses ${marker.fuses}\n`,
   );
   let failures = 0;
   try {
@@ -262,7 +345,7 @@ async function run(options: Map<string, string>): Promise<void> {
       const order = round % 2 === 0 ? modes : modes.toReversed();
       for (const mode of order) {
         process.stdout.write(`round ${round + 1}/${rounds} ack coalescing ${mode} … `);
-        const record = await runOnce(round, mode, env, timeoutMs);
+        const record = await runOnce(round, mode, env, timeoutMs, marker);
         appendFileSync(out, JSON.stringify(record) + "\n");
         const ok = record.exitCode === 0 && record.result?.ok === true;
         if (!ok) failures++;
@@ -360,13 +443,9 @@ function fmt(n: number): string {
 }
 
 function compare(files: string[]): void {
-  const records: RunRecord[] = files.flatMap((file) =>
-    readFileSync(file, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line): unknown => JSON.parse(line))
-      .filter(isRunRecord),
-  );
+  const byFile = new Map(files.map((file) => [file, readRecords(file)]));
+  checkRunMarkers(byFile);
+  const records: RunRecord[] = [...byFile.values()].flat();
   const good = records.filter((r) => r.exitCode === 0 && r.result?.ok && r.result.cases);
   if (good.length === 0) {
     process.stdout.write("no successful runs to compare\n");
@@ -431,6 +510,7 @@ async function main() {
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     if (current?.pid) killGroup(current.pid, "SIGKILL");
+    cleanup();
     process.exitCode = 1;
   }
 }

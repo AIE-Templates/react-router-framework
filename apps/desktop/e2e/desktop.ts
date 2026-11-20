@@ -1,4 +1,4 @@
-import { realpathSync, rmSync } from "node:fs";
+import { realpathSync } from "node:fs";
 
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
@@ -13,6 +13,7 @@ import {
   type LaunchTarget,
   launchSpec,
   packagedBinary,
+  removeUserDataDir,
 } from "../scripts/launch.ts";
 
 /**
@@ -44,9 +45,12 @@ export interface Launched {
 
 /**
  * Launches the app with `DESKTOP_E2E=1` (the `/__e2e/*` endpoints) on `userDataDir`
- * (`--user-data-dir`), checks it reports the test build profile and runs on that directory, and waits
- * for the first window to finish hydrating. Unpackaged, the test bundles must exist and match the
- * web build; packaged, the app must have the test profile's fuses.
+ * (`--user-data-dir`), checks it reports the test build profile, runs on that directory and, on
+ * Linux, keeps its secrets in the basic store rather than a keyring, and waits for the first window
+ * to finish hydrating. Unpackaged, the test bundles must exist and match the web build; packaged, the
+ * app must have the test profile's fuses. On Linux the Chromium sandbox stays on wherever it can start
+ * (scripts/launch.ts); where it cannot, launchSpec has said so and Playwright adds `--no-sandbox`. A
+ * launch that fails any of this is closed before the error reaches the caller.
  */
 export async function launch(target: Target, userDataDir: string): Promise<Launched> {
   const spec = launchSpec(target, "test", { userDataDir });
@@ -64,25 +68,39 @@ export async function launch(target: Target, userDataDir: string): Promise<Launc
     args: [...spec.args, "--use-fake-device-for-media-stream"],
     cwd: spec.cwd,
     env,
+    // Playwright otherwise adds `--no-sandbox` on Linux by itself, silently.
+    chromiumSandbox: !spec.args.includes("--no-sandbox"),
   });
-  // On Windows Playwright may launch Electron through a separate launcher process.
-  const pid = await app.evaluate(() => process.pid);
-  const page = await app.firstWindow();
-  // Playwright reads the app's stdout itself, so the startup line is out of reach: the main process
-  // of every non-release build exposes its profile instead (src/main.ts).
-  const reported = await app.evaluate(() => globalThis.desktopBuildProfile);
-  if (reported !== spec.profile) {
+  let pid: number | undefined;
+  try {
+    // On Windows Playwright may launch Electron through a separate launcher process.
+    pid = await app.evaluate(() => process.pid);
+    const page = await app.firstWindow();
+    // Playwright reads the app's stdout itself, so the startup line is out of reach: the main process
+    // of every non-release build exposes its profile instead (src/main.ts).
+    const reported = await app.evaluate(() => globalThis.desktopBuildProfile);
+    if (reported !== spec.profile) throw buildProfileMismatch(reported, spec.profile);
+    // The app's data must be where the test put it, not in the installed app's directory.
+    const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
+    if (realpathSync(userData) !== realpathSync(userDataDir)) {
+      throw new Error(`The app runs on user data ${userData}, not on ${userDataDir}`);
+    }
+    // `--password-store=basic` must keep Linux launches off a running keyring (gnome-keyring,
+    // KWallet), which could prompt or hang. macOS has no such reading: `--use-mock-keychain` swaps
+    // the keychain under safeStorage without changing anything safeStorage reports.
+    if (process.platform === "linux") {
+      const backend = await app.evaluate(({ safeStorage }) => safeStorage.getSelectedStorageBackend());
+      if (backend !== "basic_text") {
+        throw new Error(`The app keeps its secrets in ${backend}, not in the basic store (--password-store=basic)`);
+      }
+    }
+    await waitForApp(page);
+    return { app, page, pid };
+  } catch (err) {
     await app.close().catch(() => {});
-    throw buildProfileMismatch(reported, spec.profile);
+    if (pid !== undefined && isAlive(pid)) process.kill(pid, "SIGKILL");
+    throw err;
   }
-  // The app's data must be where the test put it, not in the installed app's directory.
-  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
-  if (realpathSync(userData) !== realpathSync(userDataDir)) {
-    await app.close().catch(() => {});
-    throw new Error(`The app runs on user data ${userData}, not on ${userDataDir}`);
-  }
-  await waitForApp(page);
-  return { app, page, pid };
 }
 
 /** Waits until the page is the hydrated desktop document. */
@@ -130,7 +148,7 @@ export const test = base.extend<Fixtures & Options>({
     try {
       await provide(directory);
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      removeUserDataDir(directory);
     }
   },
   launchApp: async ({ target, userDataDir }, provide) => {

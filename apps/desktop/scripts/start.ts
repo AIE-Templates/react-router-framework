@@ -13,9 +13,9 @@
 // (`--user-data-dir=<dir>`, kept). The app's environment, stdin, output and exit status pass through.
 // Runs on Node directly (type stripping).
 import { spawn } from "node:child_process";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync } from "node:fs";
 
-import { checkLaunchInputs, freshUserDataDir, launchSpec, verifyBuildProfile } from "./launch.ts";
+import { checkLaunchInputs, freshUserDataDir, launchSpec, removeUserDataDir, verifyBuildProfile } from "./launch.ts";
 
 function fail(err: unknown): never {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
@@ -45,7 +45,7 @@ try {
   spec = launchSpec(packaged ? "packaged" : "unpackaged", "test", { executable, userDataDir });
   await checkLaunchInputs(spec);
 } catch (err) {
-  if (removeUserData) rmSync(userDataDir, { recursive: true, force: true });
+  if (removeUserData) removeUserDataDir(userDataDir);
   fail(err);
 }
 process.stderr.write(`start: user data in ${userDataDir}${removeUserData ? " (removed on exit)" : ""}\n`);
@@ -86,5 +86,5 @@ child.once("close", (code, signal) => {
     process.stderr.write(`The app left nothing in its user data directory ${userDataDir}\n`);
     process.exitCode = 1;
   }
-  if (removeUserData) rmSync(userDataDir, { recursive: true, force: true });
+  if (removeUserData) removeUserDataDir(userDataDir);
 });

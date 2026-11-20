@@ -19,8 +19,10 @@ import {
   launchSpec,
   linuxSandboxBlocker,
   reportedBuildProfile,
+  removeUserDataDir,
   type SandboxProbe,
   sandboxSwitches,
+  type UserNamespaceAttempt,
   verifyBuildProfile,
   writeDevPackageJson,
 } from "./launch.ts";
@@ -131,6 +133,12 @@ describe("launch spec", () => {
     expect(() => launchSpec("unpackaged", "test", { directory })).toThrow(
       "A test launch needs a user data directory of its own",
     );
+    // `start.ts --user-data-dir=` must not run on the working directory.
+    for (const userDataDir of ["", "  "]) {
+      expect(() => launchSpec("unpackaged", "test", { directory, userDataDir })).toThrow(
+        "A test launch's user data directory cannot be empty",
+      );
+    }
     expect(() => launchSpec("unpackaged", "dev", { directory, userDataDir: join(directory, "data") })).toThrow(
       "Only test launches take a user data directory",
     );
@@ -254,6 +262,29 @@ describe("credential store", () => {
     expect(credentialStoreSwitches("win32")).toEqual([]);
   });
 
+  it("removes a user data directory with retries, and only warns when it cannot", () => {
+    const directory = freshUserDataDir("unit");
+    writeFileSync(join(directory, "Local State"), "{}");
+    expect(removeUserDataDir(directory)).toBe(true);
+    expect(() => readdirSync(directory)).toThrow("ENOENT");
+
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const calls: unknown[] = [];
+      const busy = (path: string, options: unknown) => {
+        calls.push([path, options]);
+        throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+      };
+      expect(removeUserDataDir("/tmp/held", busy)).toBe(false);
+      expect(calls).toEqual([
+        ["/tmp/held", expect.objectContaining({ recursive: true, force: true, maxRetries: expect.any(Number) })],
+      ]);
+      expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/^warning: could not remove .*\/tmp\/held.*EBUSY/));
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("makes a fresh user data directory per call", () => {
     const first = freshUserDataDir("unit");
     const second = freshUserDataDir("unit");
@@ -270,42 +301,87 @@ describe("credential store", () => {
 describe("Linux sandbox", () => {
   const executable = join("/opt", "app", "desktop");
   const helper = join("/opt", "app", "chrome-sandbox");
-  const probe = (sysctls: Record<string, string>, helperStat?: { uid: number; mode: number }): SandboxProbe => ({
-    sysctl: (name) => sysctls[name],
-    stat: (path) => (path === helper ? helperStat : undefined),
-  });
+  interface Machine {
+    euid?: number;
+    sysctls?: Record<string, string>;
+    helper?: { uid: number; mode: number };
+    userns?: UserNamespaceAttempt;
+  }
+  const probe = ({ euid = 1000, sysctls = {}, helper: helperStat, userns = { result: "created" } }: Machine) => {
+    const attempts = { count: 0 };
+    const machine: SandboxProbe = {
+      euid: () => euid,
+      sysctl: (name) => sysctls[name],
+      stat: (path) => (path === helper ? helperStat : undefined),
+      userNamespace: () => {
+        attempts.count++;
+        return userns;
+      },
+    };
+    return Object.assign(machine, { attempts });
+  };
   const restricted = { "kernel.apparmor_restrict_unprivileged_userns": "1" };
+  const seccomp: UserNamespaceAttempt = { result: "failed", reason: "unshare failed: Operation not permitted" };
+  const rootHelper = { uid: 0, mode: 0o104755 };
 
-  it("leaves the sandbox on where user namespaces are allowed, whatever the helper", () => {
+  it("leaves the sandbox on where a user namespace can be created, whatever the helper and the other sysctls", () => {
     expect(linuxSandboxBlocker(executable, probe({}))).toBeUndefined();
     expect(
       linuxSandboxBlocker(
         executable,
-        probe({
-          "kernel.apparmor_restrict_unprivileged_userns": "0",
-          "kernel.unprivileged_userns_clone": "1",
-          "user.max_user_namespaces": "63000",
-        }),
+        probe({ sysctls: { "kernel.unprivileged_userns_clone": "0", "user.max_user_namespaces": "0" } }),
       ),
     ).toBeUndefined();
   });
 
-  it("leaves the sandbox on where namespaces are forbidden but the helper is root-owned 4755", () => {
-    expect(linuxSandboxBlocker(executable, probe(restricted, { uid: 0, mode: 0o104755 }))).toBeUndefined();
+  it("believes the attempt over sysctls that allow namespaces: a seccomp filter blocks them", () => {
+    const machine = probe({
+      sysctls: { "kernel.unprivileged_userns_clone": "1", "user.max_user_namespaces": "63000" },
+      userns: seccomp,
+    });
+    const blocker = linuxSandboxBlocker(executable, machine);
+    expect(blocker).toContain("creating an unprivileged user namespace failed");
+    expect(blocker).toContain("Operation not permitted");
+    expect(blocker).toContain(`${helper} is missing`);
+    expect(machine.attempts.count).toBe(1);
   });
 
-  it.each([
-    [restricted, "kernel.apparmor_restrict_unprivileged_userns=1"],
-    [{ "kernel.unprivileged_userns_clone": "0" }, "kernel.unprivileged_userns_clone=0"],
-    [{ "user.max_user_namespaces": "0" }, "user.max_user_namespaces=0"],
-  ])("says why it cannot start: %j", (sysctls, reason) => {
-    const missing = linuxSandboxBlocker(executable, probe(sysctls));
-    expect(missing).toContain(reason);
-    expect(missing).toContain(`${helper} is missing`);
-    expect(linuxSandboxBlocker(executable, probe(sysctls, { uid: 1000, mode: 0o104755 }))).toContain(
-      `${helper} is owned by uid 1000 with mode 4755`,
-    );
-    expect(linuxSandboxBlocker(executable, probe(sysctls, { uid: 0, mode: 0o100755 }))).toContain(
+  it("counts Ubuntu's AppArmor restriction whatever unshare managed, since it applies per executable", () => {
+    const machine = probe({ sysctls: restricted });
+    expect(linuxSandboxBlocker(executable, machine)).toContain("kernel.apparmor_restrict_unprivileged_userns=1");
+    expect(machine.attempts.count).toBe(0);
+  });
+
+  it("falls back to the sysctls only where there is no unshare to try with", () => {
+    const unavailable: UserNamespaceAttempt = { result: "unavailable" };
+    expect(linuxSandboxBlocker(executable, probe({ userns: unavailable }))).toBeUndefined();
+    expect(
+      linuxSandboxBlocker(
+        executable,
+        probe({ userns: unavailable, sysctls: { "kernel.unprivileged_userns_clone": "0" } }),
+      ),
+    ).toContain("kernel.unprivileged_userns_clone=0");
+    expect(
+      linuxSandboxBlocker(executable, probe({ userns: unavailable, sysctls: { "user.max_user_namespaces": "0" } })),
+    ).toContain("user.max_user_namespaces=0");
+  });
+
+  it("leaves the sandbox on where namespaces are forbidden but the helper is root-owned 4755", () => {
+    expect(linuxSandboxBlocker(executable, probe({ sysctls: restricted, helper: rootHelper }))).toBeUndefined();
+    expect(linuxSandboxBlocker(executable, probe({ userns: seccomp, helper: rootHelper }))).toBeUndefined();
+  });
+
+  it("says it cannot start as root, even with a working helper and namespaces", () => {
+    const machine = probe({ euid: 0, helper: rootHelper });
+    expect(linuxSandboxBlocker(executable, machine)).toContain("euid 0");
+    expect(machine.attempts.count).toBe(0);
+  });
+
+  it("names the helper's state when it cannot stand in", () => {
+    expect(
+      linuxSandboxBlocker(executable, probe({ userns: seccomp, helper: { uid: 1000, mode: 0o104755 } })),
+    ).toContain(`${helper} is owned by uid 1000 with mode 4755`);
+    expect(linuxSandboxBlocker(executable, probe({ userns: seccomp, helper: { uid: 0, mode: 0o100755 } }))).toContain(
       `${helper} is owned by uid 0 with mode 755`,
     );
   });
@@ -313,17 +389,17 @@ describe("Linux sandbox", () => {
   it("adds --no-sandbox only on Linux and only when the sandbox cannot start, saying so once", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
-      expect(sandboxSwitches("darwin", executable, probe(restricted))).toEqual([]);
-      expect(sandboxSwitches("win32", executable, probe(restricted))).toEqual([]);
+      expect(sandboxSwitches("darwin", executable, probe({ euid: 0, sysctls: restricted }))).toEqual([]);
+      expect(sandboxSwitches("win32", executable, probe({ euid: 0, sysctls: restricted }))).toEqual([]);
       expect(sandboxSwitches("linux", executable, probe({}))).toEqual([]);
-      expect(sandboxSwitches("linux", executable, probe(restricted, { uid: 0, mode: 0o104755 }))).toEqual([]);
+      expect(sandboxSwitches("linux", executable, probe({ sysctls: restricted, helper: rootHelper }))).toEqual([]);
       expect(stderr).not.toHaveBeenCalled();
-      const blocked = probe({ "kernel.unprivileged_userns_clone": "0" }, { uid: 501, mode: 0o100755 });
+      const blocked = probe({ userns: seccomp, helper: { uid: 501, mode: 0o100755 } });
       expect(sandboxSwitches("linux", executable, blocked)).toEqual(["--no-sandbox"]);
       expect(sandboxSwitches("linux", executable, blocked)).toEqual(["--no-sandbox"]);
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(stderr).toHaveBeenCalledWith(
-        expect.stringMatching(/^launch: passing --no-sandbox: .*unprivileged_userns_clone=0.*uid 501 with mode 755/),
+        expect.stringMatching(/^launch: passing --no-sandbox: .*Operation not permitted.*uid 501 with mode 755/),
       );
     } finally {
       stderr.mockRestore();

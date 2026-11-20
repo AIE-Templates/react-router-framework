@@ -19,7 +19,16 @@
 //   profile's (scripts/fuses.ts), so a package whose `afterPack` did not run is never launched.
 // Runs on Node directly (type stripping).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  type RmOptions,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -146,15 +155,58 @@ export function credentialStoreSwitches(platform: NodeJS.Platform): string[] {
   return [];
 }
 
+/**
+ * What trying to create an unprivileged user namespace gave: `created`, `failed` with the reason, or
+ * `unavailable` when there is no `unshare` to try with.
+ */
+export type UserNamespaceAttempt =
+  | { result: "created" }
+  | { result: "failed"; reason: string }
+  | { result: "unavailable" };
+
 /** How to look at the machine for `linuxSandboxBlocker`; tests pass their own. */
 export interface SandboxProbe {
+  /** The effective user id of this process (`process.geteuid()`). */
+  euid(): number;
   /** A sysctl's value from /proc/sys, trimmed, or undefined when this kernel does not have it. */
   sysctl(name: string): string | undefined;
   /** Owner and mode of a file, or undefined when it does not exist. */
   stat(path: string): { uid: number; mode: number } | undefined;
+  /** Tries to create an unprivileged user namespace, the way Chromium's sandbox does. */
+  userNamespace(): UserNamespaceAttempt;
+}
+
+/** The user namespace attempt of this process, made once: the answer does not change while it runs. */
+let userNamespaceAttempt: UserNamespaceAttempt | undefined;
+
+/**
+ * `unshare --user --map-root-user true`: a new user namespace with a uid map written, which is what
+ * Chromium's namespace sandbox needs, and what a seccomp filter blocking `unshare` or `clone` with
+ * namespace flags (Docker's default profile), a kernel switch or an AppArmor restriction refuses.
+ */
+function tryUserNamespace(): UserNamespaceAttempt {
+  try {
+    execFileSync("unshare", ["--user", "--map-root-user", "true"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: 10_000,
+    });
+    return { result: "created" };
+  } catch (err) {
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT") {
+      return { result: "unavailable" };
+    }
+    const output = typeof err === "object" && err !== null && "stderr" in err ? err.stderr : undefined;
+    const stderr = Buffer.isBuffer(output)
+      ? output.toString("utf8").trim()
+      : typeof output === "string"
+        ? output.trim()
+        : "";
+    return { result: "failed", reason: stderr || (err instanceof Error ? err.message : String(err)) };
+  }
 }
 
 const machineProbe: SandboxProbe = {
+  euid: () => process.geteuid?.() ?? -1,
   sysctl(name) {
     try {
       return readFileSync(join("/proc/sys", ...name.split(".")), "utf8").trim();
@@ -170,28 +222,46 @@ const machineProbe: SandboxProbe = {
       return undefined;
     }
   },
+  userNamespace: () => (userNamespaceAttempt ??= tryUserNamespace()),
 };
 
 /**
  * Why Chromium's sandbox cannot start for `executable` on this Linux machine, or undefined when it
- * can. Chromium sandboxes with unprivileged user namespaces and falls back to the setuid helper
- * `chrome-sandbox` beside the executable; with neither it aborts at startup (`FATAL ...
- * setuid_sandbox_host.cc ... The SUID sandbox helper binary was found, but is not configured
- * correctly`). User namespaces count as forbidden when the kernel says so: Ubuntu's AppArmor
- * restriction (`kernel.apparmor_restrict_unprivileged_userns=1`, which an AppArmor profile for an
- * installed app could lift, but an unpacked build has none), Debian's switch
- * (`kernel.unprivileged_userns_clone=0`) or no namespaces at all (`user.max_user_namespaces=0`). The
- * helper works only when owned by root with mode 4755, which an unpacked build's never is unless
- * someone made it so.
+ * can, judged from what the machine does rather than only from what it is configured to do.
+ * - As root (euid 0) Chromium refuses to start with its sandbox at all ("Running as root without
+ *   --no-sandbox is not supported"), whatever else holds.
+ * - Otherwise Chromium sandboxes with unprivileged user namespaces and falls back to the setuid helper
+ *   `chrome-sandbox` beside the executable; with neither it aborts at startup (`FATAL ...
+ *   setuid_sandbox_host.cc ... The SUID sandbox helper binary was found, but is not configured
+ *   correctly`). Whether user namespaces work is tried (`unshare --user --map-root-user true`), which
+ *   also catches a seccomp filter that blocks them (Docker's default profile) where every sysctl says
+ *   they are allowed. Only without `unshare` does the decision fall back to the sysctls alone:
+ *   Debian's switch (`kernel.unprivileged_userns_clone=0`) or no namespaces at all
+ *   (`user.max_user_namespaces=0`). Ubuntu's AppArmor restriction
+ *   (`kernel.apparmor_restrict_unprivileged_userns=1`) is decided per executable, so `unshare`
+ *   succeeding under a profile of its own says nothing about Electron, which as an unpacked build has
+ *   none: that sysctl counts as a blocker whatever the attempt gave.
+ * - The helper works only when owned by root with mode 4755, which an unpacked build's never is
+ *   unless someone made it so.
  */
 export function linuxSandboxBlocker(executable: string, probe: SandboxProbe = machineProbe): string | undefined {
+  if (probe.euid() === 0) {
+    return "this runs as root (euid 0), and Chromium does not start its sandbox as root";
+  }
   let userns: string | undefined;
   if (probe.sysctl("kernel.apparmor_restrict_unprivileged_userns") === "1") {
     userns = "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1)";
-  } else if (probe.sysctl("kernel.unprivileged_userns_clone") === "0") {
-    userns = "unprivileged user namespaces are disabled (kernel.unprivileged_userns_clone=0)";
-  } else if (probe.sysctl("user.max_user_namespaces") === "0") {
-    userns = "user namespaces are disabled (user.max_user_namespaces=0)";
+  } else {
+    const attempt = probe.userNamespace();
+    if (attempt.result === "failed") {
+      userns = `creating an unprivileged user namespace failed (unshare --user --map-root-user: ${attempt.reason})`;
+    } else if (attempt.result === "unavailable") {
+      if (probe.sysctl("kernel.unprivileged_userns_clone") === "0") {
+        userns = "unprivileged user namespaces are disabled (kernel.unprivileged_userns_clone=0)";
+      } else if (probe.sysctl("user.max_user_namespaces") === "0") {
+        userns = "user namespaces are disabled (user.max_user_namespaces=0)";
+      }
+    }
   }
   if (userns === undefined) return undefined;
   const helper = join(dirname(executable), "chrome-sandbox");
@@ -209,8 +279,9 @@ const sandboxNotices = new Set<string>();
 /**
  * `--no-sandbox` for a test or dev launch on a Linux machine where Chromium's sandbox cannot start
  * (`linuxSandboxBlocker`), with one notice on stderr saying so and why; nothing anywhere else.
- * Playwright's Electron driver adds `--no-sandbox` on Linux by itself; the launchers that spawn the
- * app themselves need this. The release build is never given it.
+ * Playwright's Electron driver adds `--no-sandbox` on Linux by itself unless told otherwise
+ * (`chromiumSandbox`, e2e/desktop.ts); the launchers that spawn the app themselves need this. The
+ * release build is never given it by these launchers (scripts/verify-release.ts decides for itself).
  */
 export function sandboxSwitches(
   platform: NodeJS.Platform,
@@ -230,6 +301,28 @@ export function sandboxSwitches(
 /** A fresh, empty user data directory for one test launch (or one test's launches), under the system temp directory. */
 export function freshUserDataDir(label: string): string {
   return mkdtempSync(join(tmpdir(), `desktop-${label}-`));
+}
+
+/**
+ * Removes a user data directory once its app has exited, retrying for a while: the app's helper
+ * processes can still hold files in it for a moment after the main process is gone, which on
+ * Windows fails a removal with EBUSY, EPERM or ENOTEMPTY. A directory that still cannot be removed
+ * is left behind with a warning on stderr rather than failing the run that used it. Returns whether
+ * it is gone.
+ */
+export function removeUserDataDir(
+  directory: string,
+  remove: (path: string, options: RmOptions) => void = rmSync,
+): boolean {
+  try {
+    remove(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    return true;
+  } catch (err) {
+    process.stderr.write(
+      `warning: could not remove the user data directory ${directory}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return false;
+  }
 }
 
 /**
@@ -255,6 +348,8 @@ export function launchSpec(
   const switches = sandboxSwitches(process.platform, location.command);
   if (profile === "test") {
     if (userDataDir === undefined) throw new Error("A test launch needs a user data directory of its own");
+    // An empty name would resolve to the working directory: the checkout itself as the profile.
+    if (userDataDir.trim() === "") throw new Error("A test launch's user data directory cannot be empty");
     switches.push(`--user-data-dir=${resolve(userDataDir)}`, ...credentialStoreSwitches(process.platform));
   } else if (userDataDir !== undefined) {
     throw new Error("Only test launches take a user data directory; dev uses DESKTOP_USER_DATA_SUFFIX");
