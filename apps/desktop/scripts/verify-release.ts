@@ -17,8 +17,8 @@
 //   0  verified: checks 1 to 4 passed, and check 5 passed or was skipped for a local package;
 //   1  failed: at least one check failed;
 //   2  incomplete: nothing failed, but one of checks 1 to 4 was skipped (or check 5, for a package
-//      declared for distribution on macOS or Windows): the package was not verified, whatever else
-//      passed.
+//      declared for distribution on macOS or Windows), as check 4 is on a macOS screen that is
+//      locked: the package was not verified, whatever else passed.
 // 1. Fuses: the six fuses read back from the packaged binary are the release column of
 //    scripts/fuses.ts.
 // 2. Package contents, from the final app.asar itself (scripts/asar.ts): exactly the release
@@ -40,7 +40,13 @@
 //    (MAIN_WINDOW_READY_MESSAGE) within 30 s, then, asked to quit from outside (SIGTERM on macOS and
 //    Linux, `taskkill` without /F on Windows, which must itself succeed), exit 0 with every process it
 //    created gone. It must have written its data into that directory and left the installed app's
-//    userData directory as it was (absent stays absent). The decision is `judgeStartup`.
+//    userData directory as it was (absent stays absent). On Windows its main process must have run
+//    the cookie key writer on that fresh profile and checked its key (one COOKIE_KEY_STORED_MESSAGE
+//    and one COOKIE_KEY_CHECKED_MESSAGE line, no mismatch, no writer warning, no failure record);
+//    elsewhere none of those lines may appear. The decision is `judgeStartup`; a failure carries the
+//    main process's last log lines (with their times), what of the launch was running and the end of
+//    its stderr. On macOS a locked screen (scripts/session-state.ts) skips this check: macOS then
+//    reports no window as shown, so a ready window could not be told from a missing one.
 // 5. Signing: by intended use (scripts/release-verdicts.ts, `judgeSigning`). A local unsigned package
 //    is skipped; `--distribution` declares the package is for distribution, where a missing or
 //    invalid signature fails (macOS: codesign deep strict verify, stapled notarization, Gatekeeper;
@@ -58,8 +64,11 @@
 // On macOS every launch carries `--use-mock-keychain` (measured: the release package then encrypts
 // its cookies with Chromium's mock key, and the login keychain is neither read for nor given a
 // "<product> Safe Storage" item), and a hard deadline that kills the launch's whole process tree. A
-// launch that does not get ready in time is killed and fails, never retried: on a machine where the
-// mock keychain had no effect, a keychain dialog could be waiting on screen.
+// launch that does not get ready in time is killed and fails, never retried: a system dialog could be
+// waiting on screen (a keychain one, should the mock keychain ever have no effect). A first launch of a
+// freshly written package is slower (measured on macOS: ready in 1.8 to 2.0 s against 0.5 s for the
+// next launch, while the system checks the new helper executables on their first start), well within
+// the deadline: no allowance is needed for it.
 // Runs on Node directly (type stripping).
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -68,7 +77,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { Readable, Writable } from "node:stream";
 
-import { MAIN_WINDOW_READY_MESSAGE } from "../src/startup-signals.ts";
+import { COOKIE_KEY_WRITER_FAILED_FILE, MAIN_WINDOW_READY_MESSAGE } from "../src/startup-signals.ts";
 import { asarFile, asarHeaderHash, readAsar, sha256 } from "./asar.ts";
 import { bundleDir, type Bundle, perBundle } from "./build-profile.ts";
 import { checkBundleTexts } from "./bundle-markers.ts";
@@ -92,10 +101,12 @@ import {
   type CheckResult,
   type CheckStatus,
   describeExit,
+  describeProcesses,
   DISTRIBUTION_FLAG,
   judgeRefusal,
   judgeSigning,
   judgeStartup,
+  type LaunchDiagnostics,
   type LaunchGate,
   launchGate,
   type LaunchOutcome,
@@ -104,6 +115,7 @@ import {
   leftoverProcesses,
   mainLogLines,
   type Manifest,
+  observeCookieKey,
   parseAuthenticode,
   parsePsListing,
   parseWindowsListing,
@@ -115,6 +127,7 @@ import {
   type StartupObservation,
   summarize,
 } from "./release-verdicts.ts";
+import { SCREEN_LOCKED_REASON, screenLock } from "./session-state.ts";
 import { checkBuiltBundles } from "./verify-build.ts";
 
 const USAGE = `Usage: verify-release.ts [--no-build] [${DISTRIBUTION_FLAG}] [${ALLOW_NO_SANDBOX_FLAG}]`;
@@ -744,6 +757,12 @@ async function checkStartup(pkg: Package, gate: LaunchGate): Promise<CheckResult
   const name = "startup smoke";
   if (!gate.run) return report(4, name, "skipped", gate.note!);
   const note = gate.note ? `${gate.note}. ` : "";
+  // A locked macOS screen reports no window as shown, so a ready main window could not be told from
+  // one that never shows (measured: the smoke failed only while the screen was locked).
+  const lockBefore = screenLock();
+  if ("locked" in lockBefore && lockBefore.locked) {
+    return report(4, name, "skipped", `${note}${SCREEN_LOCKED_REASON}; unlock the screen and run again`);
+  }
   const realUserData = realUserDataDir(pkg.manifest.productName);
   const before = fingerprint(realUserData);
   const userDataDir = tempDir("verify-release");
@@ -751,6 +770,7 @@ async function checkStartup(pkg: Package, gate: LaunchGate): Promise<CheckResult
     let profile: string | undefined;
     let readyMs: number | undefined;
     let spawnedAt = Date.now();
+    const mainLines: { ms: number; record: Record<string, unknown> }[] = [];
     // Assigned at once: a promise runs its executor synchronously.
     let settle: (() => void) | undefined;
     const settled = new Promise<void>((resolveSettled) => {
@@ -763,6 +783,7 @@ async function checkStartup(pkg: Package, gate: LaunchGate): Promise<CheckResult
         // The main process's lines only (`process: "main"`).
         const [record] = mainLogLines(line);
         if (record === undefined) return;
+        mainLines.push({ ms: Date.now() - spawnedAt, record });
         if (profile === undefined && typeof record.buildProfile === "string") {
           profile = record.buildProfile;
           if (profile !== "release") settle?.();
@@ -789,14 +810,25 @@ async function checkStartup(pkg: Package, gate: LaunchGate): Promise<CheckResult
       leftovers: [],
       userData: { written: [], missing: [] },
       realUserData: { path: realUserData, before, after: before },
+      cookieKey: observeCookieKey([], false),
     };
+    const diagnostics = (running?: string): LaunchDiagnostics => ({ mainLines, stderr: app.stderr(), running });
     if (readyMs === undefined || profile !== "release") {
       // Whether it ended by itself, before anything here killed it.
       const endedByItself = !app.isRunning();
+      let running: string | undefined;
+      try {
+        running = describeProcesses(createdBy(started), app.pid);
+      } catch {}
       killRunningTree(app);
       const outcome = await app.exited;
       await finish(started);
-      const verdict = judgeStartup({ ...observed, notReady: { endedByItself, outcome } });
+      const verdict = judgeStartup({
+        ...observed,
+        notReady: { endedByItself, outcome },
+        diagnostics: diagnostics(running),
+        screenAtFailure: screenLock(),
+      });
       return report(4, name, verdict.status, note + verdict.reason);
     }
 
@@ -833,6 +865,11 @@ async function checkStartup(pkg: Package, gate: LaunchGate): Promise<CheckResult
       leftovers,
       userData: { written, missing: expected.filter((entry) => !existsSync(join(userDataDir, entry))) },
       realUserData: { path: realUserData, before, after: fingerprint(realUserData) },
+      diagnostics: diagnostics(),
+      cookieKey: observeCookieKey(
+        mainLines.map(({ record }) => record),
+        existsSync(join(userDataDir, COOKIE_KEY_WRITER_FAILED_FILE)),
+      ),
     });
     return report(4, name, verdict.status, note + verdict.reason);
   } finally {

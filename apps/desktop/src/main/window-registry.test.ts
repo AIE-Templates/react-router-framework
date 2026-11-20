@@ -216,6 +216,49 @@ it("reports a window ready once, when it both holds a loaded document and is vis
   expect(onReady).toHaveBeenLastCalledWith(settings, undefined);
 });
 
+it("reports a window ready that this app showed after its document loaded, though no show event comes", () => {
+  // macOS sends no `show` event while the screen is locked (it follows occlusion); a first launch
+  // there finished its document before its first paint, then waited for the event in vain.
+  vi.useFakeTimers();
+  try {
+    const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+    const { registry } = setup(onReady);
+    const { window } = registry.open("app://app/", "primary");
+    const primary = made[0];
+    primary.visible = false;
+    primary.commit("app://app/");
+    expect(onReady).not.toHaveBeenCalled();
+    // The ready-to-show fallback shows it (FakeWindow.show emits no event, as macOS then).
+    primary.emit("ready-to-show");
+    vi.advanceTimersByTime(1000);
+    expect(primary.show).toHaveBeenCalledOnce();
+    expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+    primary.emit("show");
+    expect(onReady).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not report a window ready that showing left invisible", () => {
+  vi.useFakeTimers();
+  try {
+    const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+    const { registry } = setup(onReady);
+    registry.open("app://app/", "primary");
+    const primary = made[0];
+    primary.visible = false;
+    primary.commit("app://app/");
+    primary.show.mockImplementation(() => {});
+    primary.emit("ready-to-show");
+    vi.advanceTimersByTime(1000);
+    expect(primary.show).toHaveBeenCalledOnce();
+    expect(onReady).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("never reports a window ready for a failed load, and does once a later load succeeds", () => {
   const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
   const { registry } = setup(onReady);

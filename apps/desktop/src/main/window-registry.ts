@@ -96,7 +96,9 @@ export function createWindowRegistry(options: RegistryOptions) {
       showDialog: (kind, signal) => choose(win, kind, signal),
       onError: (err) => options.log.warn({ err }, "window recovery operation failed"),
     });
-    const present = configureWindow(win, options, children);
+    // Set below, once readiness is tracked: the window was just shown by configureWindow.
+    let afterShown: (() => void) | undefined;
+    const present = configureWindow(win, options, children, () => afterShown?.());
     const entry: Entry = { window: win, recovery, present, key: fixedKey ?? options.keyForUrl(new URL(url)) };
     entries.set(id, entry);
     if (lifecycle) deliver(recovery, lifecycle);
@@ -121,7 +123,12 @@ export function createWindowRegistry(options: RegistryOptions) {
       options.onReady?.(win, fixedKey);
     };
     // The event itself says the window is shown, whatever a platform reports while it is delivered.
+    // Not the only way: on macOS it follows occlusion and does not come while the screen is locked,
+    // so a window this app has just shown counts as shown when it says it is visible (measured: on a
+    // locked screen with the display asleep, a first launch whose document finished before its first
+    // paint waited for the event in vain while `isVisible()` was true).
     win.on("show", () => settleReady(true));
+    afterShown = () => settleReady(win.isVisible());
     contents.on("did-navigate", (_event, target, httpResponseCode) => {
       committed = true;
       succeeded = httpResponseCode >= 200 && httpResponseCode < 300;

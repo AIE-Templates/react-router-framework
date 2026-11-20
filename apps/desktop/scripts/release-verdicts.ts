@@ -5,9 +5,18 @@
 // it did not create), how a normal launch is judged (`judgeStartup`), and how a signature is judged
 // by the package's intended use.
 // Runs on Node directly (type stripping).
-import { REMOTE_DEBUGGING_EXIT_CODE, REMOTE_DEBUGGING_REFUSED_MESSAGE } from "../src/startup-signals.ts";
+import {
+  COOKIE_KEY_CHECKED_MESSAGE,
+  COOKIE_KEY_MISMATCH_MESSAGE,
+  COOKIE_KEY_STORED_MESSAGE,
+  COOKIE_KEY_WRITER_FAILED_FILE,
+  COOKIE_KEY_WRITER_WARNINGS,
+  REMOTE_DEBUGGING_EXIT_CODE,
+  REMOTE_DEBUGGING_REFUSED_MESSAGE,
+} from "../src/startup-signals.ts";
 import type { AsarEntry } from "./asar.ts";
 import { bundleDir, BUILD_PROFILES, type Bundle, BUNDLES } from "./build-profile.ts";
+import type { ScreenLock } from "./session-state.ts";
 
 // ---- results ------------------------------------------------------------------------------------
 
@@ -628,6 +637,150 @@ export interface StartupObservation {
   /** Entries of the fresh --user-data-dir, and the expected ones it lacks. */
   userData: { written: readonly string[]; missing: readonly string[] };
   realUserData: { path: string; before: string; after: string };
+  /** What the launch printed and ran, appended (bounded) to a failure so it can be diagnosed. */
+  diagnostics?: LaunchDiagnostics;
+  /** macOS: the screen lock, read again when the launch was given up on. */
+  screenAtFailure?: ScreenLock;
+  /** The main process's cookie key lines (src/startup-signals.ts) and the writer's failure record. */
+  cookieKey: CookieKeyObservation;
+}
+
+/** What check 4 saw of the cookie key writer (Windows test and release builds only). */
+export interface CookieKeyObservation {
+  /** How many COOKIE_KEY_STORED_MESSAGE lines, with the first one's writer time. */
+  stored: number;
+  writerMs?: number;
+  checked: number;
+  mismatch: number;
+  /** The COOKIE_KEY_WRITER_WARNINGS lines logged, in order. */
+  warnings: readonly string[];
+  /** Whether COOKIE_KEY_WRITER_FAILED_FILE was in the fresh --user-data-dir after the quit. */
+  failureRecord: boolean;
+}
+
+/** Counts the cookie key lines of the main process's log records. */
+export function observeCookieKey(
+  records: readonly Record<string, unknown>[],
+  failureRecord: boolean,
+): CookieKeyObservation {
+  let stored = 0;
+  let checked = 0;
+  let mismatch = 0;
+  let writerMs: number | undefined;
+  const warnings: string[] = [];
+  const known: readonly string[] = COOKIE_KEY_WRITER_WARNINGS;
+  for (const { msg, ms } of records) {
+    if (msg === COOKIE_KEY_STORED_MESSAGE) {
+      stored++;
+      if (writerMs === undefined && typeof ms === "number") writerMs = ms;
+    } else if (msg === COOKIE_KEY_CHECKED_MESSAGE) {
+      checked++;
+    } else if (msg === COOKIE_KEY_MISMATCH_MESSAGE) {
+      mismatch++;
+    } else if (typeof msg === "string" && known.includes(msg)) {
+      warnings.push(msg);
+    }
+  }
+  return { stored, checked, mismatch, warnings, failureRecord, ...(writerMs === undefined ? {} : { writerMs }) };
+}
+
+/**
+ * The cookie key writer's part of check 4. On Windows a release launch on a fresh profile must run
+ * the writer and use its key: exactly one COOKIE_KEY_STORED_MESSAGE and one COOKIE_KEY_CHECKED_MESSAGE,
+ * no mismatch, no writer warning, no failure record left behind. Elsewhere none of these may appear.
+ * The problems, and what was observed for the result line.
+ */
+export function judgeCookieKey(
+  platform: NodeJS.Platform,
+  observed: CookieKeyObservation,
+): { problems: string[]; summary: string } {
+  const problems: string[] = [];
+  const counts = `${observed.stored} "stored", ${observed.checked} "checked"`;
+  if (observed.mismatch > 0) problems.push(`the main process logged "${COOKIE_KEY_MISMATCH_MESSAGE}"`);
+  for (const warning of observed.warnings) problems.push(`the main process logged "${warning}"`);
+  if (observed.failureRecord) problems.push(`${COOKIE_KEY_WRITER_FAILED_FILE} was left in the fresh --user-data-dir`);
+  if (platform === "win32") {
+    if (observed.stored !== 1 || observed.checked !== 1) {
+      problems.push(
+        `on a fresh profile the cookie key writer must store the key and the launch check it, once each: ${counts} lines`,
+      );
+    }
+    return {
+      problems,
+      summary: `cookie key stored by its writer${observed.writerMs === undefined ? "" : ` in ${observed.writerMs} ms`} and checked`,
+    };
+  }
+  if (observed.stored > 0 || observed.checked > 0) {
+    problems.push(`the cookie key writer ran, which only Windows builds do: ${counts} lines`);
+  }
+  return { problems, summary: "no cookie key writer lines (Windows only)" };
+}
+
+/** What a launch printed, and what of it ran when it was given up on: the evidence a failure carries. */
+export interface LaunchDiagnostics {
+  /** The main process's log lines, oldest first, each with when it arrived (ms since the spawn). */
+  mainLines: readonly { ms: number; record: Record<string, unknown> }[];
+  stderr: string;
+  /** The kinds of the launch's processes that were running when it was given up on, if listed. */
+  running?: string;
+}
+
+/** How many of the last main-process lines, and how much of stderr's end, a failure carries. */
+export const DIAGNOSTIC_MAIN_LINES = 12;
+export const DIAGNOSTIC_STDERR_CHARS = 1_000;
+const DIAGNOSTIC_LINE_CHARS = 200;
+/** Fields every log line has, left out of the summary of one. */
+const ROUTINE_LOG_FIELDS = new Set(["level", "time", "process", "msg"]);
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/**
+ * `; running then: …; last main-process lines: [+12 ms] info build profile {"buildProfile":"release"} | …;
+ * stderr ends: "…"`: bounded (DIAGNOSTIC_MAIN_LINES lines of at most 200 characters each, the last
+ * DIAGNOSTIC_STDERR_CHARS of stderr on one line), and "" when there is nothing to tell.
+ */
+export function describeDiagnostics(diagnostics: LaunchDiagnostics | undefined): string {
+  if (diagnostics === undefined) return "";
+  const parts: string[] = [];
+  if (diagnostics.running !== undefined) parts.push(`running then: ${diagnostics.running || "nothing"}`);
+  const lines = diagnostics.mainLines.slice(-DIAGNOSTIC_MAIN_LINES).map(({ ms, record }) => {
+    const extra = Object.fromEntries(Object.entries(record).filter(([field]) => !ROUTINE_LOG_FIELDS.has(field)));
+    const level = typeof record.level === "string" ? record.level : "?";
+    const fields = Object.keys(extra).length > 0 ? ` ${JSON.stringify(extra)}` : "";
+    return clip(`[+${ms} ms] ${level} ${String(record.msg)}${fields}`, DIAGNOSTIC_LINE_CHARS);
+  });
+  const skipped = diagnostics.mainLines.length - lines.length;
+  parts.push(
+    lines.length === 0
+      ? "no main-process line"
+      : `${skipped > 0 ? `last ${lines.length} of ${diagnostics.mainLines.length}` : "its"} main-process lines: ${lines.join(" | ")}`,
+  );
+  const stderr = diagnostics.stderr.trim();
+  if (stderr !== "") {
+    const tail = stderr.length > DIAGNOSTIC_STDERR_CHARS ? `…${stderr.slice(-DIAGNOSTIC_STDERR_CHARS)}` : stderr;
+    parts.push(`stderr ends: ${JSON.stringify(tail.replace(/\s*\r?\n\s*/g, " ⏎ "))}`);
+  } else {
+    parts.push("nothing on stderr");
+  }
+  return `; ${parts.join("; ")}`;
+}
+
+/**
+ * macOS: why a main window may not have been reported ready. A screen locked when the launch was
+ * given up on explains it on its own: macOS reports no window as shown then.
+ */
+function waitingHint(screen: ScreenLock | undefined): string {
+  if (screen !== undefined && "locked" in screen && screen.locked) {
+    return (
+      "; the macOS screen was locked when it was given up on (CGSSessionScreenIsLocked), and macOS reports " +
+      "no window as shown while it is: this says nothing about the app; unlock the screen and run again"
+    );
+  }
+  const unknown =
+    screen !== undefined && "unknown" in screen ? `; whether the screen was locked is unknown (${screen.unknown})` : "";
+  return `${unknown}; a system dialog or a first-launch policy check may be waiting (not retried)`;
 }
 
 function failure(reason: string): { status: CheckStatus; reason: string } {
@@ -642,7 +795,8 @@ function failure(reason: string): { status: CheckStatus; reason: string } {
  * directory and the installed app's userData must be as it was.
  */
 export function judgeStartup(observed: StartupObservation): { status: CheckStatus; reason: string } {
-  const fail = failure;
+  const evidence = describeDiagnostics(observed.diagnostics);
+  const fail = (reason: string) => failure(reason + evidence);
   const seconds = observed.readyTimeoutMs / 1000;
   if (observed.profile !== undefined && observed.profile !== "release") {
     return fail(`the main process reports build profile ${JSON.stringify(observed.profile)}, not "release"`);
@@ -658,10 +812,10 @@ export function judgeStartup(observed: StartupObservation): { status: CheckStatu
           (observed.profile === undefined ? "without reporting its build profile" : "before its main window was ready"),
       );
     }
-    const keychain = observed.platform === "darwin" ? "; a keychain dialog may be waiting on screen (not retried)" : "";
+    const waiting = observed.platform === "darwin" ? waitingHint(observed.screenAtFailure) : "";
     return fail(
       `${observed.profile === undefined ? "the app did not report its build profile" : "its main window was not ready"} ` +
-        `within ${seconds} s; killed with all its processes${keychain}`,
+        `within ${seconds} s; killed with all its processes${waiting}`,
     );
   }
   const { quit } = observed;
@@ -672,6 +826,8 @@ export function judgeStartup(observed: StartupObservation): { status: CheckStatu
   } else if (quit.outcome.code !== 0 || quit.outcome.signal !== null) {
     problems.push(`asked to quit, it ${describeExit(quit.outcome)}, not 0`);
   }
+  const cookieKey = judgeCookieKey(observed.platform, observed.cookieKey);
+  problems.push(...cookieKey.problems);
   const seen = describeProcesses(observed.launched, observed.rootPid);
   const missing = missingKinds(observed.launched, observed.rootPid);
   if (missing.length > 0) problems.push(`the process listing saw no ${missing.join(", ")} process (saw: ${seen})`);
@@ -702,6 +858,7 @@ export function judgeStartup(observed: StartupObservation): { status: CheckStatu
       `the main process reported build profile ${observed.profile}, main window ready in ${observed.readyMs} ms; ` +
       `${quit.method} → exit 0 in ${quit.ms} ms; all ${observed.launched.length} processes gone (${seen}); ` +
       `data written to the fresh --user-data-dir (${observed.userData.written.toSorted().join(", ")}); ` +
+      `${cookieKey.summary}; ` +
       `${real.path} untouched (${real.before === "absent" ? "absent before and after" : "unchanged"})`,
   };
 }

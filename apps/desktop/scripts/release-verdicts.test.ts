@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { REMOTE_DEBUGGING_EXIT_CODE, REMOTE_DEBUGGING_REFUSED_MESSAGE } from "../src/startup-signals.ts";
+import {
+  COOKIE_KEY_CHECKED_MESSAGE,
+  COOKIE_KEY_MISMATCH_MESSAGE,
+  COOKIE_KEY_STORED_MESSAGE,
+  COOKIE_KEY_WRITER_FAILED_FILE,
+  COOKIE_KEY_WRITER_WARNINGS,
+  REMOTE_DEBUGGING_EXIT_CODE,
+  REMOTE_DEBUGGING_REFUSED_MESSAGE,
+} from "../src/startup-signals.ts";
 import type { AsarEntry } from "./asar.ts";
 import { perBundle } from "./build-profile.ts";
 import {
@@ -8,8 +16,11 @@ import {
   checkAsarContents,
   checkBundleLink,
   type CheckResult,
+  describeDiagnostics,
   describeExit,
   describeProcesses,
+  DIAGNOSTIC_MAIN_LINES,
+  DIAGNOSTIC_STDERR_CHARS,
   DISTRIBUTION_FLAG,
   expectedAsarFiles,
   INCOMPLETE_EXIT,
@@ -23,6 +34,7 @@ import {
   leftoverProcesses,
   mainLogLines,
   missingKinds,
+  observeCookieKey,
   parseAuthenticode,
   parsePsListing,
   parseWindowsListing,
@@ -545,6 +557,11 @@ describe("process accounting", () => {
   });
 });
 
+/** A main-process log record with `msg`. */
+function line(msg: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { level: "info", process: "main", msg, ...extra };
+}
+
 describe("startup smoke", () => {
   const launched: ProcessInfo[] = [
     { pid: 100, ppid: 1, command: "Desktop" },
@@ -563,6 +580,7 @@ describe("startup smoke", () => {
     leftovers: [],
     userData: { written: ["Local State", "Partitions"], missing: [] },
     realUserData: { path: "/Users/u/Library/Application Support/Desktop", before: "absent", after: "absent" },
+    cookieKey: observeCookieKey([], false),
   };
 
   it("passes a release launch that got ready and quit cleanly, naming the profile it reported", () => {
@@ -592,7 +610,7 @@ describe("startup smoke", () => {
         notReady: { endedByItself: false, outcome: { ...exit0, code: null, signal: "SIGKILL" } },
       }).reason,
     ).toBe(
-      "its main window was not ready within 30 s; killed with all its processes; a keychain dialog may be waiting on screen (not retried)",
+      "its main window was not ready within 30 s; killed with all its processes; a system dialog or a first-launch policy check may be waiting (not retried)",
     );
     expect(
       judgeStartup({
@@ -604,6 +622,118 @@ describe("startup smoke", () => {
     ).toBe(
       "the app was ended by SIGTRAP (a Chromium abort, such as the SUID sandbox FATAL error) without reporting its build profile",
     );
+  });
+
+  it("says when the screen was locked at the failure, and never then points at a dialog", () => {
+    const notReady = {
+      ...good,
+      readyMs: undefined,
+      quit: undefined,
+      notReady: { endedByItself: false, outcome: { ...exit0, code: null, signal: "SIGKILL" } },
+    };
+    const locked = judgeStartup({ ...notReady, screenAtFailure: { locked: true } }).reason;
+    expect(locked).toBe(
+      "its main window was not ready within 30 s; killed with all its processes; the macOS screen was locked when it " +
+        "was given up on (CGSSessionScreenIsLocked), and macOS reports no window as shown while it is: this says " +
+        "nothing about the app; unlock the screen and run again",
+    );
+    expect(locked).not.toMatch(/keychain|dialog/);
+    expect(judgeStartup({ ...notReady, screenAtFailure: { unknown: "ioreg failed" } }).reason).toContain(
+      "whether the screen was locked is unknown (ioreg failed); a system dialog",
+    );
+  });
+
+  it("appends the app's last main-process lines, what ran and a stderr tail to a failure, bounded", () => {
+    const mainLines = Array.from({ length: DIAGNOSTIC_MAIN_LINES + 3 }, (_, i) => ({
+      ms: i * 100,
+      record: {
+        level: "info",
+        time: "t",
+        process: "main",
+        msg: `line ${i}`,
+        ...(i === 0 ? { buildProfile: "release" } : {}),
+      },
+    }));
+    const reason = judgeStartup({
+      ...good,
+      readyMs: undefined,
+      quit: undefined,
+      notReady: { endedByItself: false, outcome: { ...exit0, code: null, signal: "SIGKILL" } },
+      screenAtFailure: { locked: false },
+      diagnostics: { mainLines, stderr: `${"x".repeat(5000)}\nlast\nwords\n`, running: "main, gpu-process" },
+    }).reason;
+    expect(reason).toContain("; running then: main, gpu-process; ");
+    expect(reason).toContain(
+      `last ${DIAGNOSTIC_MAIN_LINES} of ${DIAGNOSTIC_MAIN_LINES + 3} main-process lines: [+300 ms] info line 3 | `,
+    );
+    expect(reason).not.toContain("line 2 |");
+    expect(reason).toContain(
+      `[+${(DIAGNOSTIC_MAIN_LINES + 2) * 100} ms] info line ${DIAGNOSTIC_MAIN_LINES + 2}; stderr ends: "…`,
+    );
+    expect(reason).toMatch(/x ⏎ last ⏎ words"$/);
+    expect(reason.length).toBeLessThan(DIAGNOSTIC_MAIN_LINES * 210 + DIAGNOSTIC_STDERR_CHARS + 600);
+    // A line's own fields are kept, routine ones dropped; a quiet launch says so.
+    expect(describeDiagnostics({ mainLines: mainLines.slice(0, 1), stderr: "" })).toBe(
+      '; its main-process lines: [+0 ms] info line 0 {"buildProfile":"release"}; nothing on stderr',
+    );
+    expect(describeDiagnostics({ mainLines: [], stderr: "", running: "" })).toBe(
+      "; running then: nothing; no main-process line; nothing on stderr",
+    );
+    // A pass carries none of it.
+    expect(judgeStartup({ ...good, diagnostics: { mainLines, stderr: "noise" } }).reason).not.toContain("noise");
+  });
+
+  const windows = (records: Record<string, unknown>[], failureRecord = false) =>
+    judgeStartup({
+      ...good,
+      platform: "win32",
+      quit: { ...good.quit!, method: "taskkill" },
+      cookieKey: observeCookieKey(records, failureRecord),
+    });
+
+  describe("cookie key writer", () => {
+    const storedAndChecked = [line(COOKIE_KEY_STORED_MESSAGE, { ms: 142 }), line(COOKIE_KEY_CHECKED_MESSAGE)];
+
+    it("on Windows requires the key stored by its writer and checked, once each", () => {
+      expect(windows(storedAndChecked)).toMatchObject({
+        status: "pass",
+        reason: expect.stringContaining("; cookie key stored by its writer in 142 ms and checked; "),
+      });
+      expect(windows([]).reason).toBe(
+        'on a fresh profile the cookie key writer must store the key and the launch check it, once each: 0 "stored", 0 "checked" lines',
+      );
+      expect(windows(storedAndChecked.slice(0, 1)).status).toBe("fail");
+      expect(windows([...storedAndChecked, storedAndChecked[0]]).reason).toContain('2 "stored", 1 "checked" lines');
+    });
+
+    it("on Windows fails a mismatch, any writer warning and a failure record", () => {
+      expect(windows([...storedAndChecked.slice(0, 1), line(COOKIE_KEY_MISMATCH_MESSAGE)]).reason).toContain(
+        `the main process logged "${COOKIE_KEY_MISMATCH_MESSAGE}"`,
+      );
+      for (const warning of COOKIE_KEY_WRITER_WARNINGS) {
+        expect(windows([...storedAndChecked, line(warning)])).toEqual({
+          status: "fail",
+          reason: `the main process logged "${warning}"`,
+        });
+      }
+      expect(windows(storedAndChecked, true).reason).toBe(
+        `${COOKIE_KEY_WRITER_FAILED_FILE} was left in the fresh --user-data-dir`,
+      );
+    });
+
+    it("on macOS and Linux requires that none of these lines appear", () => {
+      expect(judgeStartup(good).reason).toContain("; no cookie key writer lines (Windows only); ");
+      for (const platform of ["darwin", "linux"] as const) {
+        const elsewhere = (records: Record<string, unknown>[], failureRecord = false) =>
+          judgeStartup({ ...good, platform, cookieKey: observeCookieKey(records, failureRecord) });
+        expect(elsewhere(storedAndChecked).reason).toBe(
+          'the cookie key writer ran, which only Windows builds do: 1 "stored", 1 "checked" lines',
+        );
+        expect(elsewhere([line(COOKIE_KEY_MISMATCH_MESSAGE)]).status).toBe("fail");
+        expect(elsewhere([line(COOKIE_KEY_WRITER_WARNINGS[0])]).status).toBe("fail");
+        expect(elsewhere([], true).status).toBe("fail");
+      }
+    });
   });
 
   it("fails a dirty quit: a failed request, a non-zero exit, a timeout, leftovers, missing processes or data", () => {

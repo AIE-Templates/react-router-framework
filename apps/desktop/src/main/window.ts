@@ -94,10 +94,16 @@ function nativeOptions({ session, preloadPath, chrome, appVersion }: WindowOptio
   };
 }
 
+/**
+ * `onShown` runs right after this module shows the window (first paint, or the ready-to-show
+ * fallback): on macOS the `show` event follows the window's occlusion state, so while the screen is
+ * locked it does not come at all, although the window is shown.
+ */
 export function configureWindow(
   win: BrowserWindow,
   options: WindowOptions,
   children: { reuse(url: string): boolean; adopt(window: BrowserWindow, url: string): void },
+  onShown?: () => void,
 ) {
   const { chrome, profile, log, logRendererConsole } = options;
   const policy = chrome?.currentPolicy();
@@ -119,6 +125,7 @@ export function configureWindow(
     shown = true;
     log.debug({ reason }, "showing window");
     win.show();
+    onShown?.();
   };
   const onFirstPaint = (event: IpcMainEvent) => {
     if (!isTrustedSender(event, win)) return;
