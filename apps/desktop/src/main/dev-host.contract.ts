@@ -12,6 +12,11 @@ export interface DevelopmentHost {
   createFetch(): PortFetch;
   /** Calls `reload` whenever scripts/dev.ts reports a rebuilt preload script. */
   onReloadRequest(reload: () => void): void;
+  /**
+   * `DESKTOP_USER_DATA_SUFFIX`, as it was when the process started: a userData directory of its own,
+   * apart from the installed app's (src/main/user-data.ts). scripts/dev.ts sets it, `dev` by default.
+   */
+  userDataSuffix: string | undefined;
 }
 
 /** The dev build's host; undefined in every other build, which is how the main process tells. */

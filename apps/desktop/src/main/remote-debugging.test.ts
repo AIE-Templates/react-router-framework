@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { REMOTE_DEBUGGING_EXIT_CODE, REMOTE_DEBUGGING_REFUSED_MESSAGE } from "~/startup-signals.ts";
 
@@ -12,20 +12,47 @@ const native = vi.hoisted(() => ({
 vi.mock("electron", () => ({ app: { commandLine: { hasSwitch: native.hasSwitch }, exit: native.exit } }));
 vi.mock("node:fs", () => ({ writeSync: native.writeSync }));
 
+/** What a test's stand-in for an exit throws where the real one would end the process. */
+class ProcessEnded extends Error {}
+/** In call order: the log line and every way out that was tried. */
+let steps: string[];
+/** The ways out that end the process in this test; the others return, as a deferred exit would. */
+let effective: string[];
+function wayOut(name: string) {
+  return (...args: unknown[]) => {
+    steps.push(`${name}(${args.join(", ")})`);
+    if (effective.includes(name)) throw new ProcessEnded(name);
+  };
+}
+
 const argv = process.argv;
+const reallyExit = Object.getOwnPropertyDescriptor(process, "reallyExit");
+// Every way out is replaced before any test runs the guard: the real ones would end the test run.
+beforeEach(() => {
+  steps = [];
+  effective = ["app.exit"];
+  native.hasSwitch.mockImplementation(() => false);
+  native.writeSync.mockImplementation(() => steps.push("line"));
+  native.exit.mockImplementation(wayOut("app.exit"));
+  Object.defineProperty(process, "reallyExit", { configurable: true, writable: true, value: wayOut("reallyExit") });
+  vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+    wayOut("kill")(pid === process.pid ? "self" : pid, signal);
+    return true;
+  });
+});
 afterEach(() => {
   process.argv = argv;
+  if (reallyExit) Object.defineProperty(process, "reallyExit", reallyExit);
+  else Reflect.deleteProperty(process, "reallyExit");
+  vi.restoreAllMocks();
   vi.clearAllMocks();
-  native.hasSwitch.mockImplementation(() => false);
-  native.writeSync.mockImplementation(() => 0);
 });
 
 it("lets a launch without a remote debugging switch through, silently", () => {
   process.argv = ["desktop", "--use-mock-keychain", "--user-data-dir=/tmp/profile"];
   refuseRemoteDebugging();
   expect(native.hasSwitch.mock.calls).toEqual([["remote-debugging-port"], ["remote-debugging-pipe"]]);
-  expect(native.exit).not.toHaveBeenCalled();
-  expect(native.writeSync).not.toHaveBeenCalled();
+  expect(steps).toEqual([]);
 });
 
 it.each([
@@ -38,18 +65,10 @@ it.each([
   ({ args, chromium, found }) => {
     process.argv = ["desktop", ...args];
     native.hasSwitch.mockImplementation((name) => name === chromium);
-    const order: string[] = [];
-    native.writeSync.mockImplementation(() => order.push("line"));
-    native.exit.mockImplementation(() => void order.push("exit"));
     const stdout = vi.spyOn(process.stdout, "write");
-    try {
-      refuseRemoteDebugging();
-      expect(stdout).not.toHaveBeenCalled();
-    } finally {
-      stdout.mockRestore();
-    }
-    expect(order).toEqual(["line", "exit"]);
-    expect(native.exit).toHaveBeenCalledExactlyOnceWith(REMOTE_DEBUGGING_EXIT_CODE);
+    expect(() => refuseRemoteDebugging()).toThrow(ProcessEnded);
+    expect(stdout).not.toHaveBeenCalled();
+    expect(steps).toEqual(["line", `app.exit(${REMOTE_DEBUGGING_EXIT_CODE})`]);
     const [fd, line] = native.writeSync.mock.calls[0];
     expect(fd).toBe(1);
     expect(line.endsWith("\n")).toBe(true);
@@ -67,6 +86,46 @@ it("still exits when stdout cannot be written", () => {
   native.writeSync.mockImplementation(() => {
     throw new Error("EBADF");
   });
-  refuseRemoteDebugging();
-  expect(native.exit).toHaveBeenCalledExactlyOnceWith(REMOTE_DEBUGGING_EXIT_CODE);
+  expect(() => refuseRemoteDebugging()).toThrow(ProcessEnded);
+  expect(steps).toEqual([`app.exit(${REMOTE_DEBUGGING_EXIT_CODE})`]);
+});
+
+describe("when an exit does not end the process", () => {
+  beforeEach(() => {
+    process.argv = ["desktop", "--remote-debugging-port=9222"];
+  });
+
+  it("falls back to Node's own exit with the same status if Electron defers app.exit", () => {
+    effective = ["reallyExit"];
+    expect(() => refuseRemoteDebugging()).toThrow(ProcessEnded);
+    expect(steps).toEqual([
+      "line",
+      `app.exit(${REMOTE_DEBUGGING_EXIT_CODE})`,
+      `reallyExit(${REMOTE_DEBUGGING_EXIT_CODE})`,
+    ]);
+  });
+
+  it("kills itself if that returns too", () => {
+    effective = ["kill"];
+    expect(() => refuseRemoteDebugging()).toThrow(ProcessEnded);
+    expect(steps.slice(-1)).toEqual(["kill(self, SIGKILL)"]);
+  });
+
+  it("copes with a runtime that has no reallyExit", () => {
+    Reflect.deleteProperty(process, "reallyExit");
+    effective = ["kill"];
+    expect(() => refuseRemoteDebugging()).toThrow(ProcessEnded);
+    expect(steps).toEqual(["line", `app.exit(${REMOTE_DEBUGGING_EXIT_CODE})`, "kill(self, SIGKILL)"]);
+  });
+
+  it("never returns to the main entry, whatever happens: one log line, every way out tried in order", () => {
+    effective = [];
+    expect(() => refuseRemoteDebugging()).toThrow("The process survived its own exit");
+    expect(steps).toEqual([
+      "line",
+      `app.exit(${REMOTE_DEBUGGING_EXIT_CODE})`,
+      `reallyExit(${REMOTE_DEBUGGING_EXIT_CODE})`,
+      "kill(self, SIGKILL)",
+    ]);
+  });
 });

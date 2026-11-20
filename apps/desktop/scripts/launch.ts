@@ -238,8 +238,7 @@ export function freshUserDataDir(label: string): string {
  * packaged test app (see `launchLocation`). A test launch needs `userDataDir`, the directory it runs
  * on (`--user-data-dir`, which Chromium and with it Electron's `userData` path, the single-instance
  * lock and the utility's compile cache follow); reuse one across the restarts of one test and never
- * share it between runs. `DESKTOP_USER_DATA_SUFFIX` is the dev profile's, and is cleared for test
- * launches so it cannot move that directory.
+ * share it between runs. `DESKTOP_USER_DATA_SUFFIX` is the dev profile's: only the dev build reads it.
  */
 export function launchSpec(
   target: LaunchTarget,
@@ -257,7 +256,6 @@ export function launchSpec(
   if (profile === "test") {
     if (userDataDir === undefined) throw new Error("A test launch needs a user data directory of its own");
     switches.push(`--user-data-dir=${resolve(userDataDir)}`, ...credentialStoreSwitches(process.platform));
-    env.DESKTOP_USER_DATA_SUFFIX = "";
   } else if (userDataDir !== undefined) {
     throw new Error("Only test launches take a user data directory; dev uses DESKTOP_USER_DATA_SUFFIX");
   }

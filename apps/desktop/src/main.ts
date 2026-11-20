@@ -46,14 +46,14 @@ if (DESKTOP_BUILD_PROFILE !== "release") globalThis.desktopBuildProfile = DESKTO
 // The debug variables of dev and test builds; a release build reads none of them (~/debug-env.ts).
 const debug = readDebugEnv();
 const profile = createBootProfile(debug.bootProfile);
-// The dev build's host, whose pages come from `react-router dev`. The build profile decides, and the
-// other builds do not even bundle the module (~/main/dev-host.ts).
-const dev = DESKTOP_BUILD_PROFILE === "dev" ? developmentHost : undefined;
+// The dev build's host, whose pages come from `react-router dev`; undefined in test and release
+// builds, which bundle its empty implementation instead (~/main/dev-host.ts).
+const dev = developmentHost;
 
-// A development instance keeps its own storage, apart from the installed app's
-// (DESKTOP_USER_DATA_SUFFIX); test launches name theirs with --user-data-dir (scripts/launch.ts),
+// A development instance keeps its own storage, apart from the installed app's (the dev build's
+// DESKTOP_USER_DATA_SUFFIX); test launches name theirs with --user-data-dir (scripts/launch.ts),
 // which Electron has applied to the userData path already.
-const { compileCacheDir } = configureUserData(app, debug.userDataSuffix);
+const { compileCacheDir } = configureUserData(app, dev?.userDataSuffix);
 
 // Before `ready`: the scheme behaves like https (standard origin, fetch and streams, CORS, code cache).
 protocol.registerSchemesAsPrivileged([

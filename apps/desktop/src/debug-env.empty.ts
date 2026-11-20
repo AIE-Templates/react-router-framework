@@ -6,7 +6,6 @@ import { PORT_ACK_COALESCE } from "~/port-options.ts";
 
 const UNSET: DebugEnv = {
   bootProfile: false,
-  userDataSuffix: undefined,
   ackCoalesce: () => PORT_ACK_COALESCE,
   smoke: false,
   smokeLayout: false,

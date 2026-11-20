@@ -46,9 +46,10 @@ class FakeWindow extends EventEmitter {
     this.destroyed = true;
     this.emit("closed");
   }
-  commit(url: string) {
+  /** A main-frame document answered with `status` commits and finishes loading. */
+  commit(url: string, status = 200) {
     this.url = url;
-    this.webContents.emit("did-navigate", {}, url);
+    this.webContents.emit("did-navigate", {}, url, status, "");
     this.webContents.emit("did-finish-load");
   }
 }
@@ -236,4 +237,51 @@ it("never reports a window ready for a failed load, and does once a later load s
 
   primary.commit("app://app/");
   expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+});
+
+it.each([
+  [500, "the protocol handler's or the server's own error page"],
+  [503, "the utility is not available"],
+  [504, "the utility did not answer in time"],
+  [404, "a missing document"],
+  [-1, "no HTTP response at all"],
+])("never reports a window ready for a main-frame document answered with %i (%s)", (status) => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  const { window } = registry.open("app://app/", "primary");
+  const primary = made[0];
+  // Such a document commits, paints (so the window is shown) and finishes loading like any other.
+  primary.visible = false;
+  primary.commit("app://app/", status);
+  primary.visible = true;
+  primary.emit("show");
+  primary.commit("app://app/", status);
+  expect(onReady).not.toHaveBeenCalled();
+
+  // Recovery: a later navigation answered with success is the first ready document, reported once.
+  primary.commit("app://app/");
+  expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+  primary.commit("app://app/", status);
+  primary.commit("app://app/");
+  primary.emit("show");
+  expect(onReady).toHaveBeenCalledOnce();
+});
+
+it("does not report a window ready for a successful document an error document has replaced", () => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  registry.open("app://app/", "primary");
+  const primary = made[0];
+  primary.visible = false;
+  primary.commit("app://app/");
+  // Replaced before the window was shown: by an error document, then by one still loading.
+  primary.commit("app://app/", 500);
+  primary.visible = true;
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+  primary.webContents.emit("did-navigate", {}, "app://app/", 200, "OK");
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+  primary.webContents.emit("did-finish-load");
+  expect(onReady).toHaveBeenCalledOnce();
 });

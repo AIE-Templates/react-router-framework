@@ -15,8 +15,9 @@ interface RegistryOptions extends WindowOptions {
     signal: AbortSignal,
   ): Promise<RecoveryChoice>;
   /**
-   * Called once per window, the first time it both holds a successfully loaded document and is
-   * visible, whichever comes last; never for a failed load or a hidden window. `fixedKey` is the
+   * Called once per window, the first time it both holds a successfully loaded document (one
+   * answered with a 2xx status) and is visible, whichever comes last; never for a failed load, an
+   * HTTP error document or a hidden window. `fixedKey` is the
    * identity the window was opened with (`open`'s), undefined for route-keyed and child windows.
    */
   onReady?(window: BrowserWindow, fixedKey: string | undefined): void;
@@ -105,12 +106,12 @@ export function createWindowRegistry(options: RegistryOptions) {
     };
     // Chromium also finishes an internal error document after did-fail-load.
     let committed = false;
-    contents.on("did-navigate", (_event, target) => {
-      committed = true;
-      entry.pid = contents.getOSProcessId();
-      updateRouteKey(target);
-    });
-    // Whether the document the window holds loaded; an error document is not one.
+    // Whether the committed document was answered with a 2xx status. An HTTP error is a document too
+    // (the server's own error page; the protocol handler's 500, 503 and 504 answers): it commits,
+    // paints, gets the window shown and finishes loading like any other.
+    let succeeded = false;
+    // Whether the document the window holds loaded successfully: committed with a 2xx status and
+    // finished. Neither Chromium's error document nor an HTTP error document is one.
     let loaded = false;
     let ready = false;
     const settleReady = (shown: boolean) => {
@@ -120,10 +121,18 @@ export function createWindowRegistry(options: RegistryOptions) {
     };
     // The event itself says the window is shown, whatever a platform reports while it is delivered.
     win.on("show", () => settleReady(true));
+    contents.on("did-navigate", (_event, target, httpResponseCode) => {
+      committed = true;
+      succeeded = httpResponseCode >= 200 && httpResponseCode < 300;
+      // The document before it is gone, and this one has not finished.
+      loaded = false;
+      entry.pid = contents.getOSProcessId();
+      updateRouteKey(target);
+    });
     contents.on("did-finish-load", () => {
       if (!committed) return;
       recovery.documentLoaded(contents.getURL());
-      loaded = true;
+      loaded = succeeded;
       settleReady(win.isVisible());
     });
     contents.on("did-navigate-in-page", (_event, target, isMainFrame) => {
@@ -131,7 +140,7 @@ export function createWindowRegistry(options: RegistryOptions) {
       recovery.sameDocumentNavigated(target, isMainFrame);
     });
     contents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) => {
-      if (isMainFrame && errorCode !== -3) committed = loaded = false;
+      if (isMainFrame && errorCode !== -3) committed = succeeded = loaded = false;
       recovery.didFailLoad({ errorCode, isMainFrame });
     });
     contents.on("render-process-gone", (_event, details) => recovery.rendererGone(details.reason));

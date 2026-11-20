@@ -121,8 +121,8 @@ describe("launch spec", () => {
       command: electronBinary(),
       args: [".", ...platformSwitches(electronBinary())],
       cwd: directory,
-      // The dev profile's way of moving the user data directory cannot move a test launch's.
-      env: { NODE_ENV: "production", DESKTOP_USER_DATA_SUFFIX: "" },
+      // Nothing about the user data directory: only the dev build reads DESKTOP_USER_DATA_SUFFIX.
+      env: { NODE_ENV: "production" },
       processDir: electronProcessDir(),
     });
   });
@@ -157,7 +157,7 @@ describe("launch spec", () => {
       command: packaged,
       args: platformSwitches(packaged),
       cwd: dirname(packaged),
-      env: { NODE_ENV: "production", DESKTOP_USER_DATA_SUFFIX: "" },
+      env: { NODE_ENV: "production" },
     });
     const other = join(directory, "elsewhere", "Desktop");
     expect(launchSpec("packaged", "test", { directory, executable: other, userDataDir })).toMatchObject({

@@ -1,17 +1,16 @@
 import type { AckCoalesceOptions } from "@repo/port-fetch";
 
 /**
- * The debug environment variables, the ones only dev and test builds honour, as one process read
- * them: `~/debug-env.ts` reads them in those builds; release builds get `~/debug-env.empty.ts` in its
- * place (vite.base.config.ts), which reads nothing and reports every one of them as unset. Nothing
- * else reads these variables. LOG_LEVEL, DESKTOP_CHROME_MODE and the system's XDG_* variables are
- * not debug variables: every build reads them where they are used.
+ * The debug environment variables, the ones only dev and test builds honour (DEBUG_ENV in
+ * ~/debug-env.names.ts), as one process read them: `~/debug-env.ts` reads them in those builds;
+ * release builds get `~/debug-env.empty.ts` in its place (vite.base.config.ts), which reads nothing
+ * and reports every one of them as unset. Nothing else reads these variables. LOG_LEVEL,
+ * DESKTOP_CHROME_MODE and the system's XDG_* variables are not debug variables: every build reads
+ * them where they are used. DESKTOP_USER_DATA_SUFFIX is the dev build's alone (~/main/dev-host.ts).
  */
 export interface DebugEnv {
   /** `DESKTOP_BOOT_PROFILE=1`: print the startup segments (src/main/boot-profile.ts). */
   bootProfile: boolean;
-  /** `DESKTOP_USER_DATA_SUFFIX`: a userData directory of its own (src/main/user-data.ts). */
-  userDataSuffix: string | undefined;
   /**
    * `DESKTOP_PORT_ACK_COALESCE`: unset, empty or `1` keeps `PORT_ACK_COALESCE` (src/port-options.ts),
    * `0` turns coalescing off, for the real-app benchmark, which runs both. Anything else throws when
