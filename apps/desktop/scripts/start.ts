@@ -63,12 +63,22 @@ verifyBuildProfile(child.stdout, spec.profile).catch((err: unknown) => {
 });
 child.stdout.pipe(process.stdout);
 
-// Ctrl+C reaches Electron through the terminal too; a plain `kill` of this script is passed on.
+// A signal to the whole process group (Ctrl+C in a terminal, `kill -- -<pgid>`) reaches Electron as
+// well, and Electron answers only the first such signal with an orderly quit: a second one kills the
+// main process in the middle of it. So a signal is passed on only if the app is still there a moment
+// later, which covers a plain `kill` of this script alone and an app that did not quit.
 // Windows has no POSIX signals to forward (only termination), and SIGHUP there is the console closing.
+const FORWARD_SIGNAL_AFTER_MS = 1000;
+let forwarding: NodeJS.Timeout | undefined;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => {
-    if (process.platform === "win32") child.kill();
-    else child.kill(signal);
+    if (process.platform === "win32") {
+      child.kill();
+      return;
+    }
+    forwarding ??= setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+    }, FORWARD_SIGNAL_AFTER_MS);
   });
 }
 child.once("error", (err) => {
@@ -76,6 +86,7 @@ child.once("error", (err) => {
   process.exitCode = 1;
 });
 child.once("close", (code, signal) => {
+  clearTimeout(forwarding);
   process.exitCode = wrongBuild ? 1 : (code ?? (signal ? 1 : 0));
   // An app that ran and left nothing there did not run on it, and wrote somewhere else.
   let entries: string[] = [];
