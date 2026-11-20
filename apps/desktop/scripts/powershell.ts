@@ -39,13 +39,14 @@ export function windowsProcess(process: ProcessInfo, action: "kill" | "check"): 
   const result = powershellOutput(
     [
       "$ErrorActionPreference = 'Stop'",
-      "try { $p = [Diagnostics.Process]::GetProcessById([int]$env:REAP_HELPER_PID) } catch [ArgumentException] { return }",
+      "try { $p = [Diagnostics.Process]::GetProcessById([int]$env:REAP_HELPER_PID) } catch [ArgumentException] { exit 0 }",
       "try {",
       "  $null = $p.Handle",
-      "  if ($p.HasExited -or [DateTimeOffset]::new($p.StartTime).ToUnixTimeMilliseconds() -ne [long]$env:REAP_HELPER_CREATED) { return }",
+      "  if ($p.HasExited -or [DateTimeOffset]::new($p.StartTime).ToUnixTimeMilliseconds() -ne [long]$env:REAP_HELPER_CREATED) { exit 0 }",
       ...(action === "kill" ? ["  $p.Kill()"] : []),
       "  'matched'",
       "} catch { if (!$p.HasExited) { throw } } finally { $p.Dispose() }",
+      "exit 0",
     ].join("\n"),
     { REAP_HELPER_PID: String(process.pid), REAP_HELPER_CREATED: String(process.startedAt) },
   );
