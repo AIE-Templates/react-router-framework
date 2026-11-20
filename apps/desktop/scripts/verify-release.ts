@@ -71,7 +71,8 @@
 // the deadline: no allowance is needed for it.
 // Runs on Node directly (type stripping).
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -241,7 +242,7 @@ interface Running {
   pid: number;
   stdout(): string;
   stderr(): string;
-  /** Resolves when the main process exited (or was killed at the deadline) and its output is in. */
+  /** Resolves after exit and output drain, or after the forced-stop grace period. finish() verifies exit. */
   exited: Promise<LaunchOutcome>;
   isRunning(): boolean;
   /** Extra stdio streams (fd 3 and up). */
@@ -269,8 +270,12 @@ function tempDir(label: string): string {
 }
 
 function dropTempDir(directory: string): void {
-  removeUserDataDir(directory);
   tempDirs.delete(directory);
+  if ([...launches].some(({ root }) => root.userDataDir === directory)) {
+    say(`cleanup unconfirmed; keeping user data in ${directory}`);
+    return;
+  }
+  removeUserDataDir(directory);
 }
 
 /** Kills a running main process's group (POSIX) or tree (Windows); a main process that exited is left alone, its PID may be another's now. */
@@ -278,7 +283,7 @@ function killRunningTree(app: Running): void {
   if (!app.isRunning()) return;
   if (isWindows) {
     try {
-      execFileSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
+      execFileSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore", timeout: QUIT_TIMEOUT_MS });
     } catch {}
   } else {
     kill(-app.pid);
@@ -322,30 +327,32 @@ function terminate(started: Launch, known: readonly ProcessInfo[] = []): void {
 /** Tears down every launch and temporary directory still around: on interruption and unexpected exit. */
 function cleanUpEverything(): void {
   for (const started of launches) terminate(started);
+  for (const directory of tempDirs) dropTempDir(directory);
   launches.clear();
-  for (const directory of tempDirs) {
-    try {
-      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    } catch {}
-  }
-  tempDirs.clear();
 }
 
 /**
  * Starts `command` as the leader of its own process group (POSIX), with a hard deadline that kills
  * the whole tree, after listing what runs already. Each line of stdout is passed to `onLine`.
  */
-function launch(
+export async function launch(
   command: string,
   args: string[],
   location: ProcessLocation,
   {
     deadlineMs,
+    stopGraceMs = OUTPUT_GRACE_MS,
     extraFds = 0,
     env = cleanEnv(),
     onLine,
-  }: { deadlineMs: number; extraFds?: number; env?: NodeJS.ProcessEnv; onLine?: (line: string) => void },
-): Launch {
+  }: {
+    deadlineMs: number;
+    stopGraceMs?: number;
+    extraFds?: number;
+    env?: NodeJS.ProcessEnv;
+    onLine?: (line: string) => void;
+  },
+): Promise<Launch> {
   const preexisting = new Set(listProcesses().map((process) => process.pid));
   const spawnedAt = Date.now();
   const userDataDir = args.find((arg) => arg.startsWith("--user-data-dir="))?.slice("--user-data-dir=".length);
@@ -355,6 +362,7 @@ function launch(
     detached: !isWindows,
     stdio: ["ignore", "pipe", "pipe", ...Array.from({ length: extraFds }, () => "pipe" as const)],
   });
+  await once(child, "spawn");
   const { pid, stdout: out, stderr: err } = child;
   if (pid === undefined || out === null || err === null) throw new Error(`could not start ${command}`);
   const root: LaunchRoot = { pid, spawnedAt, userDataDir };
@@ -375,6 +383,8 @@ function launch(
   err.on("data", (chunk: string) => (stderr += chunk));
   let timedOut = false;
   let running = true;
+  let stopTimer: NodeJS.Timeout | undefined;
+  let settle!: () => void;
   const app: Running = {
     pid,
     stdout: () => stdout,
@@ -383,16 +393,23 @@ function launch(
     isRunning: () => running,
     extra: child.stdio.slice(3).map((stream) => stream ?? null),
     expire: () => {
-      if (!running) return;
+      if (!running || timedOut) return;
       timedOut = true;
+      stopTimer = setTimeout(() => {
+        if (!running) return;
+        child.unref();
+        settle();
+      }, stopGraceMs);
       killRunningTree(app);
     },
   };
   const timer = setTimeout(app.expire, deadlineMs);
   app.exited = new Promise<LaunchOutcome>((resolveExit) => {
     let exit: { code: number | null; signal: string | null } | undefined;
-    const settle = () => {
+    settle = () => {
       clearTimeout(timer);
+      clearTimeout(stopTimer);
+      for (const pipe of child.stdio) pipe?.destroy();
       resolveExit({ code: exit?.code ?? null, signal: exit?.signal ?? null, timedOut, stdout });
     };
     child.once("error", (error) => {
@@ -422,7 +439,9 @@ function launch(
  * Once its main process has exited: what the launch created that is still running, after a moment
  * for helpers to follow it, killed and returned. Afterwards the launch is no longer tracked.
  */
-async function finish(started: Launch, launched: readonly ProcessInfo[] = []): Promise<ProcessInfo[]> {
+export async function finish(started: Launch, launched: readonly ProcessInfo[] = []): Promise<ProcessInfo[]> {
+  if (started.app.isRunning())
+    throw new Error(`Could not confirm exit of process ${started.app.pid} after termination`);
   const left = () =>
     leftoverProcesses(
       listProcesses(),
@@ -630,7 +649,7 @@ async function refusedLaunch(
   const userDataDir = tempDir("verify-release");
   try {
     const port = remoteSwitch === "remote-debugging-port" ? await freePort() : undefined;
-    const started = launch(
+    const started = await launch(
       pkg.executable,
       [
         ...releaseSwitches(userDataDir, gate),
@@ -647,7 +666,8 @@ async function refusedLaunch(
       answered = (await askOverPipe(app, REFUSAL_TIMEOUT_MS)) !== undefined;
     } else {
       // Polled for the whole life of the process, and once more after it.
-      while (app.isRunning() && !listened) listened = await listening(port);
+      const until = Date.now() + REFUSAL_TIMEOUT_MS + OUTPUT_GRACE_MS;
+      while (app.isRunning() && !listened && Date.now() < until) listened = await listening(port);
       if (listened) app.expire();
     }
     const outcome = await app.exited;
@@ -688,7 +708,7 @@ async function testPackageAnswers(
     }
     const port = remoteSwitch === "remote-debugging-port" ? await freePort() : undefined;
     const location = launchLocation("packaged", "test", { executable: spec.command });
-    const started = launch(
+    const started = await launch(
       spec.command,
       [...spec.args, port === undefined ? "--remote-debugging-pipe" : `--remote-debugging-port=${port}`],
       location,
@@ -774,7 +794,7 @@ async function checkStartup(pkg: Package, gate: LaunchGate): Promise<CheckResult
     const settled = new Promise<void>((resolveSettled) => {
       settle = resolveSettled;
     });
-    const started = launch(pkg.executable, releaseSwitches(userDataDir, gate), pkg.location, {
+    const started = await launch(pkg.executable, releaseSwitches(userDataDir, gate), pkg.location, {
       // The deadline of the whole launch; reaching ready has its own, below.
       deadlineMs: READY_TIMEOUT_MS + QUIT_TIMEOUT_MS + 5_000,
       onLine(line) {
@@ -835,7 +855,7 @@ async function checkStartup(pkg: Package, gate: LaunchGate): Promise<CheckResult
     const quitStarted = performance.now();
     let requestError: string | undefined;
     if (isWindows) {
-      const asked = spawnSync("taskkill", ["/PID", String(app.pid)], { encoding: "utf8" });
+      const asked = spawnSync("taskkill", ["/PID", String(app.pid)], { encoding: "utf8", timeout: QUIT_TIMEOUT_MS });
       if (asked.status !== 0) {
         requestError = `exit ${asked.status ?? asked.error?.message}: ${(asked.stderr || asked.stdout || "").trim()}`;
       }
