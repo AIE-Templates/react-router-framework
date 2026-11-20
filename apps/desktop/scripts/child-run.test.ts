@@ -14,6 +14,9 @@ const location: LaunchLocation = {
   target: "unpackaged",
   profile: "test",
 };
+// Windows puts ordinary children in a job that terminates them when their parent exits.
+// These helper fixtures must survive their parent to exercise the launcher's drain and reap paths.
+const helperDetached = process.platform === "win32";
 const profile = 'console.log(JSON.stringify({process:"main",buildProfile:"test"}));';
 function run(script: string, options: Parameters<typeof monitorTestChild>[3] = {}) {
   const at = Date.now();
@@ -55,7 +58,7 @@ describe("test child output and cleanup", () => {
       profile +
       'const c = require("node:child_process").spawn(process.execPath, ["-e", ' +
       JSON.stringify(helper) +
-      '], {stdio:["pipe",1,2]}); c.unref(); c.stdin.unref();';
+      `], {stdio:["pipe",1,2], detached:${helperDetached}}); c.unref(); c.stdin.unref();`;
     await expect(run(script, { requireSmokeResult: true }).finished).resolves.toBe(0);
   });
   it("cleans up its orphaned helper while a concurrent copy of the executable keeps running", async () => {
@@ -67,7 +70,7 @@ describe("test child output and cleanup", () => {
       [
         "-e",
         profile +
-          'const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{}, 20000)"], {stdio:"ignore"});' +
+          `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{}, 20000)"], {stdio:"ignore", detached:${helperDetached}});` +
           'console.log("helper=" + c.pid); c.unref(); process.stdin.resume(); process.stdin.on("end",()=>{});',
         "--",
         "--user-data-dir=" + marker,
@@ -103,7 +106,7 @@ describe("test child output and cleanup", () => {
   it("bounds draining when a helper holds stdout after its parent exits", async () => {
     const script =
       profile +
-      'require("node:child_process").spawn(process.execPath, ["-e","setTimeout(()=>{}, 10000)"], {stdio:["ignore",1,2]}).unref();';
+      `require("node:child_process").spawn(process.execPath, ["-e","setTimeout(()=>{}, 10000)"], {stdio:["ignore",1,2], detached:${helperDetached}}).unref();`;
     await expect(run(script, { drainMs: 150 }).finished).rejects.toThrow("helpers kept its output open");
   }, 15000);
 });
