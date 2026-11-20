@@ -1,4 +1,5 @@
 // Electron layer: host request and preference protocol.
+import { sanitizePreferences } from "./preferences.ts";
 import type { ChromeMode } from "./window-chrome.ts";
 
 /**
@@ -46,20 +47,11 @@ export function parseDesktopHeaders(headers: Headers): DesktopRequest {
 
 function parsePrefs(value: string | null): DesktopPrefs {
   if (!value) return {};
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(value);
+    return sanitizePreferences(JSON.parse(value));
   } catch {
     return {};
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-  const prefs: DesktopPrefs = {};
-  for (const [key, item] of Object.entries(parsed)) {
-    if (typeof item === "string" || typeof item === "boolean" || (typeof item === "number" && Number.isFinite(item))) {
-      prefs[key] = item;
-    }
-  }
-  return prefs;
 }
 
 /** Whether `name` is one of the desktop headers (any `x-desktop-*` header, case-insensitively). */
