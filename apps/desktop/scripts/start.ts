@@ -11,6 +11,19 @@
 // reports the test build profile; otherwise it stops the app and exits 1. The app runs on a fresh
 // user data directory, removed when it exits, unless the arguments name one
 // (`--user-data-dir=<dir>`, kept). The app's environment, stdin, output and exit status pass through.
+//
+// Signals (POSIX): the app runs in its own session and process group (as scripts/verify-release.ts
+// starts it), so a signal meant for this launcher (Ctrl+C, which the terminal sends to its foreground
+// process group, `kill -- -<pgid>`, or `kill <pid>`) never reaches the app's helper processes
+// directly. Killed with them, Chromium's GPU process dies under a main process that is still quitting,
+// and on Linux it then aborts ("GPU process isn't usable. Goodbye.", measured 30 of 30 runs); its
+// orderly quit also ends at the first signal, the next one kills it outright. Instead every SIGINT,
+// SIGTERM and SIGHUP this launcher receives is passed on at once to the app's main process, which
+// quits in order and takes its helpers with it. A second signal while the app still runs is passed on
+// too (Electron's default action for it ends a stuck app), and a third kills the app's whole process
+// group with SIGKILL, which also ends one that is stopped. The app has no controlling terminal; it
+// reads no input (stdin stays shared all the same). Windows has no such signals: each one terminates
+// the app.
 // Runs on Node directly (type stripping).
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -50,10 +63,13 @@ try {
 }
 process.stderr.write(`start: user data in ${userDataDir}${removeUserData ? " (removed on exit)" : ""}\n`);
 
+const isWindows = process.platform === "win32";
 const child = spawn(spec.command, [...spec.args, ...args], {
   cwd: spec.cwd,
   env: { ...process.env, ...spec.env },
   stdio: ["inherit", "pipe", "inherit"],
+  // POSIX: its own session and process group, so signals to this launcher's group miss it.
+  detached: !isWindows,
 });
 let wrongBuild = false;
 verifyBuildProfile(child.stdout, spec.profile).catch((err: unknown) => {
@@ -63,30 +79,51 @@ verifyBuildProfile(child.stdout, spec.profile).catch((err: unknown) => {
 });
 child.stdout.pipe(process.stdout);
 
-// A signal to the whole process group (Ctrl+C in a terminal, `kill -- -<pgid>`) reaches Electron as
-// well, and Electron answers only the first such signal with an orderly quit: a second one kills the
-// main process in the middle of it. So a signal is passed on only if the app is still there a moment
-// later, which covers a plain `kill` of this script alone and an app that did not quit.
-// Windows has no POSIX signals to forward (only termination), and SIGHUP there is the console closing.
-const FORWARD_SIGNAL_AFTER_MS = 1000;
-let forwarding: NodeJS.Timeout | undefined;
+const running = () => child.exitCode === null && child.signalCode === null;
+const note = (message: string) => process.stderr.write(`start: ${message}\n`);
+let received = 0;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => {
-    if (process.platform === "win32") {
+    if (!running()) return;
+    received++;
+    if (isWindows) {
       child.kill();
       return;
     }
-    forwarding ??= setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
-    }, FORWARD_SIGNAL_AFTER_MS);
+    const pid = child.pid!;
+    if (received >= 3) {
+      note(`${signal} again: killing the app's process group ${pid} with SIGKILL`);
+      killGroup(pid, "SIGKILL");
+      return;
+    }
+    if (received === 2)
+      note(`${signal} again: passing it on; the app (pid ${pid}) has not quit, a third signal kills it`);
+    try {
+      process.kill(pid, signal);
+    } catch {}
   });
 }
+
+function killGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {}
+}
+
+// Never leave quietly while the app still runs (this launcher failing): say so, and ask the app to
+// quit. Only a launcher killed outright (SIGKILL, or a signal it does not handle) cannot.
+process.once("exit", () => {
+  if (!running() || child.pid === undefined) return;
+  note(`exiting while the app (pid ${child.pid}) still runs: sent it SIGTERM; its user data stays in ${userDataDir}`);
+  // Its main process only, as for any signal: it takes its helpers with it.
+  child.kill("SIGTERM");
+});
 child.once("error", (err) => {
   process.stderr.write(`${err.message}\n`);
   process.exitCode = 1;
 });
 child.once("close", (code, signal) => {
-  clearTimeout(forwarding);
+  if (signal) note(`the app was ended by ${signal}`);
   process.exitCode = wrongBuild ? 1 : (code ?? (signal ? 1 : 0));
   // An app that ran and left nothing there did not run on it, and wrote somewhere else.
   let entries: string[] = [];
