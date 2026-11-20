@@ -1,68 +1,183 @@
-import { readFileSync } from "node:fs";
+import { writeSync } from "node:fs";
 import { join } from "node:path";
 
+import type { PortFetch } from "@repo/port-fetch";
 import { DESKTOP_PREFS_IPC, shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
-import { app, type BrowserWindow, dialog, nativeTheme, protocol, session } from "electron";
+import { app, type BrowserWindow, dialog, nativeTheme, protocol, safeStorage, session } from "electron";
 
-import { benchConfigFromEnv, runBench } from "./diagnostics/bench/bench.ts";
-import { runSmoke } from "./diagnostics/smoke/smoke.ts";
+import type { DebugEnv } from "~/debug-env.contract.ts";
+// These three are replaced per build profile (vite.base.config.ts): import them by exactly these names.
+import { readDebugEnv, utilityDebugEnv } from "~/debug-env.ts";
+import { selectMainRun } from "~/diagnostics/entry.ts";
+import { developmentHost } from "~/main/dev-host.ts";
+
 import { APP_ORIGIN, APP_SCHEME, isAppUrl } from "./main/app-url.ts";
-import { createBootProfile } from "./main/boot-profile.ts";
+import { type BootProfile, createBootProfile } from "./main/boot-profile.ts";
 import { resolveChromePolicy } from "./main/chrome-policy.ts";
 import { COOKIE_JAR_ORIGIN, createCookieJar, flushForQuit } from "./main/cookie-jar.ts";
-import { createDevProxyFetch } from "./main/dev-proxy.ts";
-import { createLogger } from "./main/log.ts";
+import {
+  checkCookieKeyProbe,
+  COOKIE_KEY_PROBE_TEXT,
+  cookieKeyProbeLine,
+  type CookieKeyOutcome,
+  cookieKeyWriterCrashHandler,
+  storeCookieKeyFirst,
+} from "./main/cookie-key.ts";
+import { createLogger, type Logger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
 import { createPrefsStore, installPrefsIpc } from "./main/prefs.ts";
 import { registerAppProtocol } from "./main/protocol.ts";
 import type { RecoveryChoice, RecoveryDialog } from "./main/recovery.ts";
-import { resolveRunModes } from "./main/run-modes.ts";
+import { refuseRemoteDebugging } from "./main/remote-debugging.ts";
 import { startServerProcess } from "./main/server-process.ts";
 import { configureUserData } from "./main/user-data.ts";
 import { createVisualThemeStore } from "./main/visual-theme.ts";
 import { createWindowRegistry } from "./main/window-registry.ts";
 import { isTrustedSender } from "./main/window.ts";
-import { portAckCoalesce } from "./port-options.ts";
+import {
+  COOKIE_KEY_CHECKED_MESSAGE,
+  COOKIE_KEY_MISMATCH_MESSAGE,
+  COOKIE_KEY_NO_PROBE_MESSAGE,
+  COOKIE_KEY_NOT_STORED_MESSAGE,
+  COOKIE_KEY_SKIPPED_MESSAGE,
+  COOKIE_KEY_STORED_MESSAGE,
+  COOKIE_KEY_UNKNOWN_MESSAGE,
+  COOKIE_KEY_WRITER_SWITCH,
+  MAIN_WINDOW_READY_MESSAGE,
+} from "./startup-signals.ts";
 
-// The main process must never die of an uncaught exception: Electron shows a blocking dialog for
-// those, which stalls the whole app. Log and carry on.
-const log = createLogger(process.env.LOG_LEVEL === "debug" ? "debug" : "info");
-process.on("uncaughtException", (err) => log.error({ err }, "uncaught exception in the main process"));
-process.on("unhandledRejection", (reason) => log.error({ err: reason }, "unhandled rejection in the main process"));
+// The order of a launch, up to `ready`:
+// 1. Release builds: a launch with a Chromium remote debugging switch ends here, before this process
+//    starts anything (src/main/remote-debugging.ts). Cookie key writers are launches like any other.
+// 2. Windows, test and release builds: a cookie key writer (COOKIE_KEY_WRITER_SWITCH, started by step
+//    5 of another launch) lets Chromium make the cookie key, prints its probe and quits at `ready`
+//    (`runCookieKeyWriter`): no log, no scheme, no lock, no window, no utility, and nothing of the app's
+//    own in userData. Chromium itself writes there what any start of it writes: Local State (which is
+//    the point) and directories of its own, such as Crashpad and caches.
+// 3. Logging, the build profile line, the debug variables, the userData directory.
+// 4. The single-instance lock; a second instance quits here.
+// 5. Windows, test and release builds: a profile whose Local State has no cookie key yet gets one from
+//    a key writer this launch runs and waits for (src/main/cookie-key.ts), holding the lock, so two
+//    launches started together never both run one.
+// 6. The scheme registration, then `main` once ready.
+if (DESKTOP_BUILD_PROFILE === "release") refuseRemoteDebugging();
 
-const profile = createBootProfile();
-const devServerUrl = DESKTOP_DEV_SERVER_URL;
-
-// A development instance keeps its own storage, apart from the installed app's.
-const { compileCacheDir } = configureUserData(app, process.env.DESKTOP_USER_DATA_SUFFIX);
-
-// Before `ready`: the scheme behaves like https (standard origin, fetch and streams, CORS, code cache).
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: APP_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-      corsEnabled: true,
-      codeCache: true,
-    },
-  },
-]);
+/** What the launch prepared before `ready`, for `main`. */
+interface Startup {
+  log: Logger;
+  debug: DebugEnv;
+  profile: BootProfile;
+  compileCacheDir: string;
+  cookieKey: CookieKeyOutcome;
+}
 
 /** The utility process, once started, so a failed startup can still shut it down. */
 let server: ReturnType<typeof startServerProcess> | undefined;
+// The dev build's host, whose pages come from `react-router dev`; undefined in test and release
+// builds, which bundle its empty implementation instead (~/main/dev-host.ts).
+const dev = developmentHost;
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
+if (
+  DESKTOP_BUILD_PROFILE !== "dev" &&
+  process.platform === "win32" &&
+  app.commandLine.hasSwitch(COOKIE_KEY_WRITER_SWITCH)
+) {
+  runCookieKeyWriter();
 } else {
+  start();
+}
+
+/**
+ * Step 2: a cookie key writer. It draws nothing, so no GPU; by `ready` Chromium has made the key,
+ * and quitting cleanly writes it to Local State. Before quitting it prints the probe its launch checks
+ * (src/main/cookie-key.ts), synchronously, as the only line on its stdout. An uncaught error ends it
+ * at once with a non-zero status: Electron's error dialog would block it, and the launch waiting for it.
+ */
+function runCookieKeyWriter(): void {
+  const crash = cookieKeyWriterCrashHandler((code) => process.exit(code));
+  process.on("uncaughtException", crash);
+  process.on("unhandledRejection", crash);
+  app.disableHardwareAcceleration();
+  void app.whenReady().then(finishCookieKeyWriter);
+}
+
+function finishCookieKeyWriter(): void {
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      writeSync(1, cookieKeyProbeLine(safeStorage.encryptString(COOKIE_KEY_PROBE_TEXT)));
+    }
+  } catch {
+    // No probe: the launch notes that it could not check.
+  }
+  app.quit();
+}
+
+/** Steps 3 to 6. */
+function start(): void {
+  // The main process must never die of an uncaught exception: Electron shows a blocking dialog for
+  // those, which stalls the whole app. Log and carry on.
+  const log = createLogger(process.env.LOG_LEVEL === "debug" ? "debug" : "info");
+  process.on("uncaughtException", (err) => log.error({ err }, "uncaught exception in the main process"));
+  process.on("unhandledRejection", (reason) => log.error({ err: reason }, "unhandled rejection in the main process"));
+  // Logged before anything else can fail, at info, which LOG_LEVEL cannot suppress (the logger's
+  // threshold is debug or info): launchers that spawn the app depend on this line to know they started
+  // the bundles they meant to (scripts/launch.ts). Playwright reads the app's stdout itself, so the
+  // same fact is also left where its driver can evaluate it, except in release builds.
+  log.info({ buildProfile: DESKTOP_BUILD_PROFILE }, "build profile");
+  if (DESKTOP_BUILD_PROFILE !== "release") globalThis.desktopBuildProfile = DESKTOP_BUILD_PROFILE;
+
+  // The debug variables of dev and test builds; a release build reads none of them (~/debug-env.ts).
+  const debug = readDebugEnv();
+  const profile = createBootProfile(debug.bootProfile);
+
+  // A development instance keeps its own storage, apart from the installed app's (the dev build's
+  // DESKTOP_USER_DATA_SUFFIX); test launches name theirs with --user-data-dir (scripts/launch.ts),
+  // which Electron has applied to the userData path already.
+  const { userData, compileCacheDir } = configureUserData(app, dev?.userDataSuffix);
+
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+
+  // Not in dev: its unpackaged Electron has no EnableCookieEncryption fuse, so its cookies are stored
+  // unencrypted and need no key, and it restarts too often to pay for a writer run. An unpackaged
+  // test launch has no such fuse either and runs the writer all the same: one extra start on a fresh
+  // profile, and the unpackaged tests then cover the same startup path as the packaged ones.
+  const cookieKey: CookieKeyOutcome =
+    DESKTOP_BUILD_PROFILE === "dev"
+      ? { kind: "none" }
+      : storeCookieKeyFirst({
+          platform: process.platform,
+          userData,
+          execPath: process.execPath,
+          appPath: process.defaultApp ? app.getAppPath() : undefined,
+          appVersion: app.getVersion(),
+        });
+  if (cookieKey.kind === "ran") profile.note("cookie-key-writer-ms", cookieKey.ms);
+  logCookieKey(log, cookieKey);
+
+  // Before `ready`: the scheme behaves like https (standard origin, fetch and streams, CORS, code cache).
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: APP_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
+        corsEnabled: true,
+        codeCache: true,
+      },
+    },
+  ]);
+
   // Not awaited at the top level: Electron defers `ready` until this module has evaluated. One
   // `catch` for both `whenReady` and `main` itself: a failure anywhere in startup exits.
   app
     .whenReady()
-    .then(main)
+    .then(() => main({ log, debug, profile, compileCacheDir, cookieKey }))
     .catch(async (err: unknown) => {
       log.error({ err }, "startup failed");
       await server?.shutdown().catch(() => {});
@@ -71,18 +186,45 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 /**
- * The electron-builder profile a packaged app was built with (`extraMetadata.desktopProfile` in
- * electron-builder.yml: "test", or "release" in electron-builder.release.yml); undefined unpackaged.
+ * What an unstored key costs: a packaged app (EnableCookieEncryption fuse) encrypts its cookies, an
+ * unpackaged launch (`electron <dir>`, no fuses) stores them in the clear and loses nothing.
  */
-function packagedProfile(): string | undefined {
-  try {
-    const metadata: unknown = JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8"));
-    return typeof metadata === "object" && metadata !== null && "desktopProfile" in metadata
-      ? String(metadata.desktopProfile)
-      : undefined;
-  } catch {
-    return undefined;
+function unstoredKeyRisk(): string {
+  return app.isPackaged
+    ? "a crash in this launch's first ~10 s loses its persistent cookies"
+    : "this unpackaged launch does not encrypt its cookies, so they are not at risk";
+}
+
+function logCookieKey(log: Logger, cookieKey: CookieKeyOutcome): void {
+  if (cookieKey.kind === "ran" && cookieKey.key === "stored") {
+    log.info({ ms: cookieKey.ms }, COOKIE_KEY_STORED_MESSAGE);
+  } else if (cookieKey.kind === "ran" && cookieKey.key === "missing") {
+    // Recorded: later launches of this version skip the writer for a day while the key is missing.
+    log.warn(
+      { ms: cookieKey.ms, status: cookieKey.status, error: cookieKey.error, risk: unstoredKeyRisk() },
+      COOKIE_KEY_NOT_STORED_MESSAGE,
+    );
+  } else if (cookieKey.kind === "ran") {
+    // Local State could not be read after the writer: nothing recorded, the next launch checks again.
+    log.warn(
+      { ms: cookieKey.ms, status: cookieKey.status, error: cookieKey.error, reason: cookieKey.readError },
+      COOKIE_KEY_UNKNOWN_MESSAGE,
+    );
+  } else if (cookieKey.kind === "skipped") {
+    log.warn({ failedAt: cookieKey.failedAt, risk: unstoredKeyRisk() }, COOKIE_KEY_SKIPPED_MESSAGE);
   }
+}
+
+/** Once ready: whether this launch runs on the key its writer stored (src/main/cookie-key.ts). */
+function checkCookieKey(log: Logger, cookieKey: CookieKeyOutcome): void {
+  if (cookieKey.kind !== "ran" || cookieKey.key !== "stored") return;
+  if (cookieKey.probe === undefined) {
+    log.warn({}, COOKIE_KEY_NO_PROBE_MESSAGE);
+    return;
+  }
+  const checked = checkCookieKeyProbe(cookieKey.probe, (encrypted) => safeStorage.decryptString(encrypted));
+  if (checked.ok) log.info({}, COOKIE_KEY_CHECKED_MESSAGE);
+  else log.error({ reason: checked.reason, risk: unstoredKeyRisk() }, COOKIE_KEY_MISMATCH_MESSAGE);
 }
 
 async function askRecovery(
@@ -116,8 +258,10 @@ async function askRecovery(
   return choices[result.response] ?? "wait";
 }
 
-async function main(): Promise<void> {
+async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup): Promise<void> {
   profile.mark("ready");
+  const development = dev !== undefined;
+  let mainWindowReady = false;
   const appSession = session.fromPartition("persist:app");
   installPermissionPolicy(appSession, log);
   // Preferences the page writes through the preload; every request carries the current ones.
@@ -149,9 +293,15 @@ async function main(): Promise<void> {
     appVersion: app.getVersion(),
     log,
     profile,
-    logRendererConsole: devServerUrl !== undefined || process.env.DESKTOP_SMOKE === "1",
+    logRendererConsole: DESKTOP_BUILD_PROFILE !== "release" && (development || debug.smoke),
     keyForUrl: (url) => (/^\/settings\/*$/i.test(url.pathname) ? "settings" : undefined),
     askRecovery,
+    // What an external verifier waits for: logged once, at info, in every build profile.
+    onReady(_window, fixedKey) {
+      if (fixedKey !== "primary" || mainWindowReady) return;
+      mainWindowReady = true;
+      log.info({}, MAIN_WINDOW_READY_MESSAGE);
+    },
   });
   installPrefsIpc(
     prefsStore,
@@ -171,48 +321,40 @@ async function main(): Promise<void> {
     prefs: prefsStore.current(),
   });
 
-  // Ack coalescing on the main↔utility port, the same on both ends (DESKTOP_PORT_ACK_COALESCE=0
-  // turns it off, for the benchmark's comparison).
-  const ackCoalesce = portAckCoalesce(process.env.DESKTOP_PORT_ACK_COALESCE);
-  // The bench and the e2e run (and their endpoints) only unpackaged or on the packaged test profile,
-  // never on the release profile; the smoke on any build (src/main/run-modes.ts).
-  const { bench, smoke, e2e, ignored } = resolveRunModes({
-    env: process.env,
-    development: devServerUrl !== undefined,
-    packaged: app.isPackaged,
-    profile: packagedProfile,
-  });
-  for (const { variable, reason } of ignored) log.warn({ reason }, `${variable} ignored`);
-  const benchConfig = bench ? benchConfigFromEnv(process.env) : undefined;
+  // Ack coalescing on the main↔utility port, the same on both ends (dev and test builds can turn it
+  // off, for the benchmark's comparison).
+  const ackCoalesce = debug.ackCoalesce();
+  // The benchmark, the smoke and the end-to-end run (and their endpoints) exist only in dev and test
+  // builds; in a release build this selects nothing (~/diagnostics/entry.ts).
+  const run = selectMainRun(debug, { development, log });
 
-  // Where pages come from: the utility process in production, `react-router dev` in development.
-  const internalOrigin = devServerUrl ?? INTERNAL_ORIGIN;
+  // Where pages come from: the utility process, or `react-router dev` in the dev build.
+  const internalOrigin = dev?.serverUrl ?? INTERNAL_ORIGIN;
   const clientDir = app.isPackaged
     ? join(process.resourcesPath, "client")
     : join(__dirname, "../../../web/build/client");
-  server = devServerUrl
-    ? undefined
-    : startServerProcess({
-        utilityPath: join(__dirname, "utility.mjs"),
-        clientDir,
-        compileCacheDir,
-        log,
-        onUtilityBoot: (ms) => profile.note("utility-boot-ms", ms),
-        onSpawn: () => profile.mark("utility-spawn"),
-        onReady: () => profile.mark("utility-ready"),
-        ackCoalesce,
-        // The utility's end follows this end; DESKTOP_BENCH, DESKTOP_SMOKE and DESKTOP_E2E reach it
-        // only when the bench, the smoke or the end-to-end run is this one.
-        env: {
-          DESKTOP_PORT_ACK_COALESCE: ackCoalesce ? "1" : "0",
-          DESKTOP_BENCH: bench ? "1" : "",
-          DESKTOP_SMOKE: smoke ? "1" : "",
-          DESKTOP_E2E: e2e ? "1" : "",
-        },
-        onLifecycle: registry.utilityChanged,
-      });
+  let upstream: PortFetch;
+  if (dev) {
+    upstream = dev.createFetch();
+  } else {
+    server = startServerProcess({
+      utilityPath: join(__dirname, "utility.mjs"),
+      clientDir,
+      compileCacheDir,
+      log,
+      onUtilityBoot: (ms) => profile.note("utility-boot-ms", ms),
+      onSpawn: () => profile.mark("utility-spawn"),
+      onReady: () => profile.mark("utility-ready"),
+      ackCoalesce,
+      // Dev and test builds: the utility's end follows this end, and learns which run, if any, is
+      // this one. A release build passes nothing on.
+      env: utilityDebugEnv({ ackCoalesce, ...run.modes }),
+      onLifecycle: registry.utilityChanged,
+    });
+    upstream = server.fetch;
+  }
   registerAppProtocol(appSession, {
-    upstream: server ? server.fetch : createDevProxyFetch(),
+    upstream,
     internalOrigin,
     desktop,
     // A `Domain` attribute may name the jar's host or the host the server sees (the dev server's).
@@ -224,11 +366,10 @@ async function main(): Promise<void> {
     log,
     profile,
   });
-  if (devServerUrl) {
-    log.info({ devServerUrl }, "development: forwarding app:// to react-router dev");
-    // scripts/dev.ts writes "reload" on stdin when the preload script was rebuilt.
-    process.stdin.on("data", (chunk: Buffer) => {
-      if (chunk.toString().includes("reload")) for (const win of registry.windows()) win.webContents.reload();
+  if (dev) {
+    log.info({ devServerUrl: dev.serverUrl }, "development: forwarding app:// to react-router dev");
+    dev.onReloadRequest(() => {
+      for (const win of registry.windows()) win.webContents.reload();
     });
   }
 
@@ -236,6 +377,8 @@ async function main(): Promise<void> {
   profile.mark("navigation-start");
   const first = openMainWindow();
   const initialLoad = first.loaded ?? Promise.resolve();
+  // After the first window is on its way, so the check never delays it.
+  checkCookieKey(log, cookieKey);
 
   let quitting = false;
   const reopenMainWindow = () => {
@@ -265,39 +408,22 @@ async function main(): Promise<void> {
   // did-fail-load is handled by recovery; startup failure must not bypass the native retry path.
   await initialLoad.catch((err: unknown) => {
     log.warn({ err }, "initial document failed; recovery owns retry");
-    if (process.env.DESKTOP_SMOKE === "1" || benchConfig) throw err;
+    if (debug.smoke || run.modes.bench) throw err;
   });
-  if (benchConfig && server) {
-    const utility = server;
-    await runBench({
-      win: first.window,
-      config: benchConfig,
-      ackCoalesce,
-      log,
-      getAppMetrics: () => app.getAppMetrics(),
-      utilityFetch: utility.fetch,
-      internalOrigin,
-      clientStats: () => utility.stats(),
-      exit: async (code) => {
-        quitting = true;
-        registry.shutdown();
-        await utility.shutdown();
-        app.exit(code);
-      },
-    });
-  } else if (smoke) {
-    await runSmoke(first.window, {
-      profile,
-      log,
-      development: devServerUrl !== undefined,
-      smokeRoutes: server !== undefined,
-      layout: process.env.DESKTOP_SMOKE_LAYOUT === "1",
-      exit: async (code) => {
-        quitting = true;
-        registry.shutdown();
-        await server?.shutdown();
-        app.exit(code);
-      },
-    });
-  }
+  await run.start({
+    window: first.window,
+    log,
+    bootProfile: profile,
+    development,
+    ackCoalesce,
+    internalOrigin,
+    server,
+    getAppMetrics: () => app.getAppMetrics(),
+    exit: async (code) => {
+      quitting = true;
+      registry.shutdown();
+      await server?.shutdown();
+      app.exit(code);
+    },
+  });
 }

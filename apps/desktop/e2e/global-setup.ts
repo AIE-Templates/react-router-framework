@@ -1,9 +1,19 @@
+import { SCREEN_LOCKED_REASON, screenLock } from "../scripts/session-state.ts";
 import { targetProcesses, type Target } from "./desktop.ts";
 
 const targets: Target[] = ["unpackaged", "packaged"];
 
 /** Refuses to start while an Electron of this checkout runs: the teardown could not tell them apart. */
 export default function globalSetup(): () => void {
+  // A locked macOS session makes window-state tests fail in ways that look like app defects (no
+  // `show` event, full screen never entered): stop before any test instead.
+  const lock = screenLock();
+  if ("locked" in lock && lock.locked) {
+    throw new Error(
+      `e2e: not run: ${SCREEN_LOCKED_REASON}, so tests of window visibility, focus and full screen (the ` +
+        "navigation and window tests among them) cannot pass truthfully. Unlock the screen and run again.",
+    );
+  }
   for (const target of targets) {
     const running = targetProcesses(target);
     if (running.length > 0) {

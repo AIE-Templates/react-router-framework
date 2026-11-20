@@ -9,18 +9,20 @@
     "dev": "pnpm --filter web dev",
     "dev:desktop": "pnpm --filter desktop dev",
     "dev:server": "pnpm --filter @repo/server dev",
-    "dist:desktop": "pnpm build:desktop && pnpm --filter desktop dist:release",
+    "dist:desktop": "pnpm --filter desktop build release --with-web && pnpm --filter desktop dist:release",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "pnpm typegen && oxlint",
     "lint:fix": "pnpm typegen && oxlint --fix",
     "package:desktop": "pnpm build:desktop && pnpm --filter desktop package",
     "preinstall": "node -e \"process.env.npm_config_user_agent?.startsWith('pnpm/') || (console.error('This project uses pnpm. Run: pnpm install'), process.exit(1))\"",
-    "release:desktop": "pnpm build:desktop && pnpm --filter desktop package:release",
+    "release:desktop": "pnpm --filter desktop build release --with-web && pnpm --filter desktop package:release",
     "start": "pnpm --filter web start",
     "test": "vitest",
     "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
-    "typegen": "pnpm --filter web exec react-router typegen"
+    "typegen": "pnpm --filter web exec react-router typegen",
+    "verify:build": "pnpm --filter desktop verify:build",
+    "verify:release": "pnpm --dir apps/desktop verify:release"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",

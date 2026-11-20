@@ -9,20 +9,21 @@
     "email": "desktop@example.com"
   },
   "type": "module",
-  "main": ".vite/build/main.cjs",
+  "main": ".vite/test/main.cjs",
   "scripts": {
     "bench": "node scripts/bench.ts",
     "build": "node scripts/build.ts",
     "dev": "node scripts/dev.ts",
-    "dist": "electron-builder",
-    "dist:release": "electron-builder --config electron-builder.release.yml",
-    "package": "electron-builder --dir",
-    "package:release": "electron-builder --dir --config electron-builder.release.yml",
-    "start": "electron .",
+    "dist:release": "node scripts/check-web-build.ts release && electron-builder --config electron-builder.release.yml",
+    "package": "node scripts/check-web-build.ts test && electron-builder --dir --config electron-builder.test.yml",
+    "package:release": "node scripts/check-web-build.ts release && electron-builder --dir --config electron-builder.release.yml",
+    "start": "node scripts/start.ts",
     "test:e2e": "playwright test",
     "test:e2e:demo": "playwright test --grep @demo",
     "test:e2e:host": "playwright test --grep-invert @demo",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "verify:build": "node scripts/verify-build.ts",
+    "verify:release": "node scripts/verify-release.ts"
   },
   "dependencies": {},
   "devDependencies": {

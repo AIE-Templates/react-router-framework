@@ -1,7 +1,11 @@
 // Development, the way `electron-forge start` works, without Forge: `react-router dev` for the web
-// app (desktop shell, own port), the three Vite builds in watch mode with the dev server address
-// baked in, then Electron on the result. Main or utility rebuilt → Electron restarts; preload
-// rebuilt → the window reloads. Runs on Node directly (type stripping).
+// app (desktop shell, own port), the three Vite builds of the dev profile in watch mode with the dev
+// server address baked in, then Electron on their directory the way scripts/launch.ts starts the dev
+// profile (`electron .vite/dev`, with a generated package.json carrying apps/desktop's name, product
+// name and version, so the app name, version and userData directory are those of `electron .`). The
+// main process must report the dev build profile. Main or utility rebuilt → Electron restarts;
+// preload rebuilt → the window reloads. This is the only build of the dev profile. Runs on Node
+// directly (type stripping).
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, watch } from "node:fs";
@@ -10,13 +14,14 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { stripVTControlCharacters } from "node:util";
 
-import { electronBinary } from "./bench.ts";
+import { BUILD_PROFILE_ENV, bundleDir } from "./build-profile.ts";
+import { launchSpec, verifyBuildProfile, writeDevPackageJson } from "./launch.ts";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 const repoDir = resolve(desktopDir, "../..");
 const DEV_PORT = Number(process.env.DESKTOP_DEV_PORT ?? 5174);
 const devServerUrl = `http://127.0.0.1:${DEV_PORT}`;
-const buildDir = join(desktopDir, ".vite/build");
+const buildDir = join(desktopDir, bundleDir("dev"));
 
 const children = new Set<ChildProcess>();
 let electron: ChildProcess | undefined;
@@ -27,7 +32,7 @@ const log = (msg: string) => process.stdout.write(`[dev] ${msg}\n`);
 function run(
   command: string,
   args: string[],
-  options: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: boolean },
+  options: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: boolean; showsWindows?: boolean },
 ): ChildProcess {
   const manager = command === "pnpm" ? process.env.npm_execpath : undefined;
   const nodeScript = manager && /\.(?:cjs|mjs|js)$/i.test(manager);
@@ -37,7 +42,11 @@ function run(
     stdio: [options.stdin ? "pipe" : "ignore", "pipe", "inherit"],
     // Its own process group, so the whole tree (pnpm → react-router → vite) dies with it.
     detached: process.platform !== "win32",
-    windowsHide: true,
+    // Windows: no console window flashing up for the console programs (pnpm, react-router, vite).
+    // Never for Electron (`showsWindows`): the option starts a process with SW_HIDE, which Windows applies
+    // to the first window it shows, so the app's main window stayed hidden or blank and never logged
+    // MAIN_WINDOW_READY_MESSAGE.
+    windowsHide: !options.showsWindows,
   });
   children.add(child);
   child.once("exit", () => children.delete(child));
@@ -97,12 +106,19 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
 }
 
 function startElectron(): ChildProcess {
-  const child = run(electronBinary(), ["."], {
-    cwd: desktopDir,
-    env: { DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev", NODE_ENV: "development" },
+  const spec = launchSpec("unpackaged", "dev");
+  const child = run(spec.command, spec.args, {
+    showsWindows: true,
+    cwd: spec.cwd,
+    env: { ...spec.env, DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev" },
     stdin: true,
   });
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
+  verifyBuildProfile(child.stdout!, spec.profile).catch((err: unknown) => {
+    if (shuttingDown || electron !== child) return;
+    log(err instanceof Error ? err.message : String(err));
+    shutdown(1);
+  });
   child.once("exit", (code, signal) => {
     if (shuttingDown || electron !== child) return;
     log(`electron exited with ${signal ?? code}`);
@@ -160,7 +176,7 @@ async function main(): Promise<void> {
   const entries = existsSync(webServerBuild) ? ["main", "preload", "utility"] : ["main", "preload"];
   if (entries.length === 2) log("no apps/web/build yet: skipping the utility build (not used in development)");
   log(`building ${entries.join(", ")} in watch mode`);
-  const buildEnv = { DESKTOP_WATCH: "1", DESKTOP_DEV_SERVER_URL: devServerUrl };
+  const buildEnv = { [BUILD_PROFILE_ENV]: "dev", DESKTOP_DEV_SERVER_URL: devServerUrl };
   await Promise.all(
     entries.map((entry) =>
       waitForOutput(
@@ -174,6 +190,7 @@ async function main(): Promise<void> {
     ),
   );
 
+  writeDevPackageJson(desktopDir);
   log("starting electron");
   electron = startElectron();
 

@@ -46,9 +46,10 @@ class FakeWindow extends EventEmitter {
     this.destroyed = true;
     this.emit("closed");
   }
-  commit(url: string) {
+  /** A main-frame document answered with `status` commits and finishes loading. */
+  commit(url: string, status = 200) {
     this.url = url;
-    this.webContents.emit("did-navigate", {}, url);
+    this.webContents.emit("did-navigate", {}, url, status, "");
     this.webContents.emit("did-finish-load");
   }
 }
@@ -59,7 +60,7 @@ vi.mock("electron", () => ({
   session: { defaultSession: {} },
 }));
 
-function setup() {
+function setup(onReady?: Parameters<typeof createWindowRegistry>[0]["onReady"]) {
   const choices: ((choice: RecoveryChoice) => void)[] = [];
   const askRecovery = vi.fn<Parameters<typeof createWindowRegistry>[0]["askRecovery"]>(
     () => new Promise((resolve) => choices.push(resolve)),
@@ -77,6 +78,7 @@ function setup() {
     },
     keyForUrl: (url) => (url.pathname === "/settings" ? "settings" : undefined),
     askRecovery,
+    onReady,
   });
   return { registry, choices, askRecovery };
 }
@@ -188,4 +190,177 @@ it("uses the last committed PID after a crash and ignores the finish of Chromium
   choices[1]("wait");
   await flush();
   expect([...registry.windows()]).toEqual([made[1]]);
+});
+
+it("reports a window ready once, when it both holds a loaded document and is visible", () => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  const { window } = registry.open("app://app/", "primary");
+  const primary = made[0];
+  primary.visible = false;
+  // Visible without a document, then a document without being visible: neither is ready.
+  primary.emit("show");
+  primary.commit("app://app/");
+  expect(onReady).not.toHaveBeenCalled();
+  primary.visible = true;
+  primary.emit("show");
+  expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+  primary.commit("app://app/next");
+  primary.emit("show");
+  expect(onReady).toHaveBeenCalledOnce();
+
+  // Shown first, loaded second; a window opened without a fixed identity reports none.
+  const settings = registry.open("app://app/settings").window;
+  made[1].commit("app://app/settings");
+  expect(onReady).toHaveBeenCalledTimes(2);
+  expect(onReady).toHaveBeenLastCalledWith(settings, undefined);
+});
+
+it("reports a window ready that this app showed after its document loaded, though no show event comes", () => {
+  // macOS sends no `show` event while the screen is locked (it follows occlusion); a first launch
+  // there finished its document before its first paint, then waited for the event in vain.
+  vi.useFakeTimers();
+  try {
+    const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+    const { registry } = setup(onReady);
+    const { window } = registry.open("app://app/", "primary");
+    const primary = made[0];
+    primary.visible = false;
+    primary.commit("app://app/");
+    expect(onReady).not.toHaveBeenCalled();
+    // The ready-to-show fallback shows it (FakeWindow.show emits no event, as macOS then).
+    primary.emit("ready-to-show");
+    vi.advanceTimersByTime(1000);
+    expect(primary.show).toHaveBeenCalledOnce();
+    expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+    primary.emit("show");
+    expect(onReady).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not report a window ready that showing left invisible", () => {
+  vi.useFakeTimers();
+  try {
+    const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+    const { registry } = setup(onReady);
+    registry.open("app://app/", "primary");
+    const primary = made[0];
+    primary.visible = false;
+    primary.commit("app://app/");
+    primary.show.mockImplementation(() => {});
+    primary.emit("ready-to-show");
+    vi.advanceTimersByTime(1000);
+    expect(primary.show).toHaveBeenCalledOnce();
+    expect(onReady).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("never reports a window ready for a failed load, and does once a later load succeeds", () => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  const { window } = registry.open("app://app/", "primary");
+  const primary = made[0];
+  // Chromium finishes loading its error document after the failure; the window may be shown for recovery.
+  primary.webContents.emit("did-fail-load", {}, -102, "ERR_CONNECTION_REFUSED", "app://app/", true);
+  primary.webContents.emit("did-finish-load");
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+
+  // A document that loaded while hidden and then failed to reload is not ready when shown either.
+  primary.visible = false;
+  primary.commit("app://app/");
+  primary.webContents.emit("did-fail-load", {}, -102, "ERR_CONNECTION_REFUSED", "app://app/", true);
+  primary.visible = true;
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+
+  primary.commit("app://app/");
+  expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+});
+
+it.each([
+  [500, "the protocol handler's or the server's own error page"],
+  [503, "the utility is not available"],
+  [504, "the utility did not answer in time"],
+  [404, "a missing document"],
+  [-1, "no HTTP response at all"],
+])("never reports a window ready for a main-frame document answered with %i (%s)", (status) => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  const { window } = registry.open("app://app/", "primary");
+  const primary = made[0];
+  // Such a document commits, paints (so the window is shown) and finishes loading like any other.
+  primary.visible = false;
+  primary.commit("app://app/", status);
+  primary.visible = true;
+  primary.emit("show");
+  primary.commit("app://app/", status);
+  expect(onReady).not.toHaveBeenCalled();
+
+  // Recovery: a later navigation answered with success is the first ready document, reported once.
+  primary.commit("app://app/");
+  expect(onReady).toHaveBeenCalledExactlyOnceWith(window, "primary");
+  primary.commit("app://app/", status);
+  primary.commit("app://app/");
+  primary.emit("show");
+  expect(onReady).toHaveBeenCalledOnce();
+});
+
+it("does not report a window ready for a successful document an error document has replaced", () => {
+  const onReady = vi.fn<(window: unknown, fixedKey: string | undefined) => void>();
+  const { registry } = setup(onReady);
+  registry.open("app://app/", "primary");
+  const primary = made[0];
+  primary.visible = false;
+  primary.commit("app://app/");
+  // Replaced before the window was shown: by an error document, then by one still loading.
+  primary.commit("app://app/", 500);
+  primary.visible = true;
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+  primary.webContents.emit("did-navigate", {}, "app://app/", 200, "OK");
+  primary.emit("show");
+  expect(onReady).not.toHaveBeenCalled();
+  primary.webContents.emit("did-finish-load");
+  expect(onReady).toHaveBeenCalledOnce();
+});
+
+it("destroys a closing window whose renderer is gone instead of reloading it, unless the page vetoed the close", async () => {
+  const { registry, askRecovery } = setup();
+  registry.open("app://app/", "primary");
+  const home = made[0];
+  home.commit(home.url);
+  // A quit asks every window to close; the renderer is killed before it answers.
+  home.emit("close", { defaultPrevented: false });
+  await flush();
+  home.crashed = true;
+  home.webContents.emit("render-process-gone", {}, { reason: "killed", exitCode: 15 });
+  expect(home.destroyed).toBe(true);
+  expect(home.loadURL).toHaveBeenCalledOnce(); // the initial load only
+  expect(registry.find("primary")).toBeUndefined();
+
+  // A close another listener prevented, or one the page vetoed, leaves the window to recovery.
+  registry.open("app://app/settings", "settings");
+  const prevented = made[1];
+  prevented.commit(prevented.url);
+  prevented.emit("close", { defaultPrevented: true });
+  await flush();
+  prevented.crashed = true;
+  prevented.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 11 });
+  expect(prevented.destroyed).toBe(false);
+
+  registry.open("app://app/chat", "chat");
+  const vetoed = made[2];
+  vetoed.commit(vetoed.url);
+  vetoed.emit("close", { defaultPrevented: false });
+  await flush();
+  vetoed.webContents.emit("will-prevent-unload", {});
+  vetoed.crashed = true;
+  vetoed.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 11 });
+  expect(vetoed.destroyed).toBe(false);
+  expect(askRecovery).not.toHaveBeenCalled();
 });

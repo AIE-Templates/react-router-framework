@@ -17,9 +17,13 @@ import {
   STARTUP_TIMEOUT_MS,
 } from "./server-process.ts";
 
-/** A utility process stand-in: spawns and reports ready on its own unless told otherwise. */
+/**
+ * A utility process stand-in: spawns and reports ready on its own unless told otherwise. Like
+ * Electron's, `kill()` does nothing before the process has spawned.
+ */
 class FakeChild extends EventEmitter implements ChildLike {
   alive = true;
+  spawned = false;
   posted: unknown[] = [];
   readonly autoReady: boolean;
   constructor(autoSpawn: boolean, autoReady: boolean) {
@@ -29,6 +33,7 @@ class FakeChild extends EventEmitter implements ChildLike {
   }
   spawn(): void {
     if (!this.alive) return;
+    this.spawned = true;
     this.emit("spawn");
   }
   postMessage(message: unknown): void {
@@ -45,6 +50,7 @@ class FakeChild extends EventEmitter implements ChildLike {
     this.emit("exit", code);
   }
   kill(): boolean {
+    if (!this.spawned) return false;
     this.exit(-1);
     return true;
   }
@@ -253,15 +259,20 @@ describe("startServerProcess", () => {
     await expect(h.server.fetch(new Request("http://app.desktop/"))).rejects.toThrow("shutting down");
   });
 
-  it("kills an instance that has not spawned yet on shutdown and ignores its late spawn", async () => {
+  it("kills an instance that had not spawned at shutdown as soon as it spawns, and waits for it", async () => {
     const h = harness({ autoSpawn: false });
-    const stopped = h.server.shutdown();
+    let done = false;
+    const stopped = h.server.shutdown().then(() => (done = true));
     await flush();
-    await stopped;
+    // Not killable yet, so still on its way.
+    expect(h.live()).toBe(1);
+    expect(done).toBe(false);
     h.children[0].spawn();
     await flush();
+    await stopped;
 
     expect(h.live()).toBe(0);
+    expect(h.logs).not.toContain("server process did not exit in time, killing it");
     expect(h.children[0].posted).toEqual([]);
     expect(h.server.state).toBe("stopped");
     expect(h.lifecycle.some((event) => event.state === "failed")).toBe(false);
@@ -287,13 +298,39 @@ describe("startServerProcess", () => {
     expect((await h.server.fetch(new Request("http://app.desktop/"))).status).toBe(200);
   });
 
-  it("retries a child that never spawns", async () => {
+  it("retries a child that never spawns, and kills it should it spawn after all", async () => {
     const h = harness({ autoSpawn: false });
     await flush();
     await vi.advanceTimersByTimeAsync(STARTUP_TIMEOUT_MS + 5_000);
 
     expect(h.children.length).toBeGreaterThanOrEqual(2);
+    h.children[0].spawn();
+    await flush();
     expect(h.children[0].alive).toBe(false);
+    expect(h.children[0].posted).toEqual([]);
+  });
+
+  it("does not keep a restart that began just before shutdown alive for the grace period", async () => {
+    // A signal to the whole process group kills the utility with the main process: the main process
+    // schedules a restart and is asked to quit while the replacement is still starting.
+    const h = harness({ autoSpawn: false });
+    await flush();
+    h.children[0].spawn();
+    await h.server.ready();
+    h.children[0].exit(15);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.children).toHaveLength(2);
+    let done = false;
+    const stopped = h.server.shutdown().then(() => (done = true));
+    await flush();
+    expect(done).toBe(false);
+    h.children[1].spawn();
+    await flush();
+    await stopped;
+
+    expect(h.live()).toBe(0);
+    expect(h.children[1].posted).toEqual([]);
+    expect(h.logs).not.toContain("server process did not exit in time, killing it");
   });
 
   it("kills a utility that ignores the shutdown message after the grace period", async () => {

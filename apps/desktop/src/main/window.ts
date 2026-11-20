@@ -20,7 +20,10 @@ export interface WindowOptions {
   appVersion: string;
   log: Logger;
   profile: BootProfile;
-  /** Development: forward the page's console to the main log, so Vite's HMR messages show up. */
+  /**
+   * Forward the page's console to the main log: in development, so Vite's HMR messages show up, and
+   * for the smoke. Never in a release build.
+   */
   logRendererConsole?: boolean;
   chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualThemeStore?: VisualThemeStore };
 }
@@ -81,6 +84,8 @@ function nativeOptions({ session, preloadPath, chrome, appVersion }: WindowOptio
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       webviewTag: false,
+      // Release builds have no DevTools. Every window gets these options, renderer-opened ones too.
+      ...(DESKTOP_BUILD_PROFILE === "release" ? { devTools: false } : {}),
       additionalArguments: [
         `--desktop-app-version=${appVersion}`,
         ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify(chrome.bootstrap)}`] : []),
@@ -89,10 +94,16 @@ function nativeOptions({ session, preloadPath, chrome, appVersion }: WindowOptio
   };
 }
 
+/**
+ * `onShown` runs right after this module shows the window (first paint, or the ready-to-show
+ * fallback): on macOS the `show` event follows the window's occlusion state, so while the screen is
+ * locked it does not come at all, although the window is shown.
+ */
 export function configureWindow(
   win: BrowserWindow,
   options: WindowOptions,
   children: { reuse(url: string): boolean; adopt(window: BrowserWindow, url: string): void },
+  onShown?: () => void,
 ) {
   const { chrome, profile, log, logRendererConsole } = options;
   const policy = chrome?.currentPolicy();
@@ -114,6 +125,7 @@ export function configureWindow(
     shown = true;
     log.debug({ reason }, "showing window");
     win.show();
+    onShown?.();
   };
   const onFirstPaint = (event: IpcMainEvent) => {
     if (!isTrustedSender(event, win)) return;

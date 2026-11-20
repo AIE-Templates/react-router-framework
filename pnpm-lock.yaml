@@ -4429,9 +4429,9 @@ snapshots:
       - supports-color
     optional: true
 
-  '@exodus/bytes@1.16.0': {}
-
   '@epic-web/invariant@1.0.0': {}
+
+  '@exodus/bytes@1.16.0': {}
 
   '@exodus/bytes@1.16.0(@noble/hashes@1.8.0)':
     optionalDependencies:

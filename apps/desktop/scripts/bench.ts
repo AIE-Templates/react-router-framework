@@ -2,25 +2,51 @@
 // `pnpm --filter desktop start` does) with DESKTOP_BENCH=1 in a fresh process per run, alternating
 // ack coalescing off and on (ABBA order across rounds), collects each run's BENCH_RESULT line into
 // a JSON Lines file and prints the comparison. Builds nothing: run `pnpm build:desktop` first, or
-// pass `--app` with a packaged test-profile executable (then the script needs only Node, no checkout).
-// Runs on Node directly (type stripping). See README, "Real-app benchmark".
+// pass `--app` with a packaged test-profile executable (then nothing needs building, but the script
+// still runs from this checkout: it imports scripts/launch.ts and the modules beside it; its fuses
+// must be the test profile's). Either way the app is started the way scripts/launch.ts says, each run
+// on a fresh user data directory removed afterwards, and must report the test build profile. Results
+// are compared within the files given (both modes of one run by default), never against a stored
+// baseline. Every record carries what it was measured on, the target (unpackaged or packaged) and
+// the fuses of the binary that ran, and runs that differ in either are never merged into one file
+// or compared (a packaged app's fuses change what it costs). Runs on Node directly (type
+// stripping). See README, "Real-app benchmark".
 //
 //   node scripts/bench.ts [run] [--rounds 5] [--measure-ms 10000] [--warmup-ms 2000]
 //                         [--cases api-c1,...] [--modes off,on] [--label text] [--out file.jsonl]
 //                         [--app path/to/packaged/executable]
 //   node scripts/bench.ts compare <file.jsonl>...
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
+import { getCurrentFuseWire } from "@electron/fuses";
 
-const desktopDir = resolve(import.meta.dirname, "..");
+import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
+import { describeFuses, fuseReadings } from "./fuses.ts";
+import {
+  appProcesses,
+  checkLaunchInputs,
+  desktopDir,
+  freshUserDataDir,
+  type LaunchLocation,
+  launchLocation,
+  launchSpec,
+  type LaunchTarget,
+  removeUserDataDir,
+  verifyBuildProfile,
+} from "./launch.ts";
 
 type Mode = "off" | "on";
 
-interface RunRecord {
+/** What a run was measured on; runs are comparable only when theirs are equal. */
+export interface RunMarker {
+  target: LaunchTarget;
+  /** The fuses of the binary that ran, as scripts/fuses.ts describes them (`name=value ...`). */
+  fuses: string;
+}
+
+interface RunRecord extends Partial<RunMarker> {
   round: number;
   mode: Mode;
   exitCode: number | null;
@@ -46,88 +72,67 @@ function isRunRecord(value: unknown): value is RunRecord {
     isRecord(value) &&
     typeof value.mode === "string" &&
     isMode(value.mode) &&
+    (value.target === undefined || value.target === "unpackaged" || value.target === "packaged") &&
+    (value.fuses === undefined || typeof value.fuses === "string") &&
     (value.result === undefined || isBenchResult(value.result))
   );
 }
 
-export function electronBinary(): string {
-  const binary: unknown = createRequire(import.meta.url)("electron");
-  if (typeof binary !== "string") throw new Error("Electron did not provide an executable path");
-  return binary;
+/** A record's marker as one string, or undefined for a record written before markers existed. */
+function markerKey(record: Partial<RunMarker>): string | undefined {
+  return record.target === undefined || record.fuses === undefined ? undefined : `${record.target}, ${record.fuses}`;
 }
 
 /**
- * What a run launches: this checkout's Electron on apps/desktop (the built, unpackaged app), or with
- * `--app <executable>` a packaged test-profile app (the release profile ignores DESKTOP_BENCH). `dist`
- * is the directory every process of a run has its executable under.
+ * Throws unless every record of `files` (records per file) carries the same marker, and `expected`
+ * when given: results from another target or from a binary with other fuses must not be merged into
+ * one file or compared. Records written before markers existed are refused too: nothing says what
+ * they were measured on.
  */
-interface Target {
-  command: string;
-  args: string[];
-  cwd: string;
-  dist: string;
-}
-let target: Target | undefined;
-
-function resolveTarget(app: string | undefined): Target {
-  if (app === undefined) {
-    const command = electronBinary();
-    return { command, args: ["."], cwd: desktopDir, dist: dirname(command) };
+export function checkRunMarkers(files: ReadonlyMap<string, readonly Partial<RunMarker>[]>, expected?: RunMarker): void {
+  const seen = new Map<string, string>();
+  if (expected) seen.set(markerKey(expected)!, "this run");
+  for (const [file, records] of files) {
+    for (const record of records) {
+      const key = markerKey(record);
+      if (key === undefined) {
+        throw new Error(
+          `${file} holds runs without a target and fuse marker (written by an older bench): ` +
+            "they cannot be compared with anything; measure again",
+        );
+      }
+      if (!seen.has(key)) seen.set(key, file);
+    }
   }
-  const command = resolve(app);
-  if (!existsSync(command)) throw new Error(`--app ${command} does not exist`);
-  // A macOS bundle's helpers live under Contents/Frameworks, beside Contents/MacOS.
-  const bundle = command.lastIndexOf(".app/Contents/MacOS/");
-  return {
-    command,
-    args: [],
-    cwd: dirname(command),
-    dist: bundle >= 0 ? command.slice(0, bundle + 4) : dirname(command),
-  };
+  if (seen.size > 1) {
+    throw new Error(
+      "Refusing to merge or compare runs measured on different targets or fuses:\n" +
+        [...seen].map(([key, where]) => `  ${where}: ${key}`).join("\n"),
+    );
+  }
 }
+
+function readRecords(file: string): RunRecord[] {
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line): unknown => JSON.parse(line))
+    .filter(isRunRecord);
+}
+
+/**
+ * What a run launches (scripts/launch.ts): this checkout's Electron on the unpackaged test bundles,
+ * or with `--app <executable>` a packaged test-profile app (release builds do not contain the benchmark).
+ */
+let target: LaunchLocation | undefined;
+/** `--app`, for `launchSpec` at each run. */
+let app: string | undefined;
 
 const isWindows = process.platform === "win32";
 
-/**
- * PIDs of the processes of the app under test, this script excluded. POSIX: command lines containing
- * the target's directory followed by a separator (pgrep -f), which covers a macOS bundle's helpers
- * under Contents/Frameworks. Windows: processes whose executable is exactly the target's (every
- * Electron helper there runs the same executable), so nothing else in that directory or in a
- * sibling directory sharing its prefix can match. A failed process listing throws instead of
- * reporting none.
- */
-export function appProcesses(executable: string, directory: string): number[] {
-  let output: string;
-  if (process.platform === "win32") {
-    output = execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        `Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $env:E2E_PROCESS_EXE, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.ProcessId }`,
-      ],
-      { encoding: "utf8", env: { ...process.env, E2E_PROCESS_EXE: executable } },
-    );
-  } else {
-    try {
-      output = execFileSync("pgrep", ["-f", "^" + directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/"], {
-        encoding: "utf8",
-      });
-    } catch (err) {
-      // pgrep exits 1 when nothing matches; anything else is a failure to list.
-      if (typeof err === "object" && err !== null && "status" in err && err.status === 1) return [];
-      throw err;
-    }
-  }
-  return output
-    .split(/\r?\n/)
-    .map(Number)
-    .filter((pid) => pid > 0 && pid !== process.pid);
-}
-
 function runProcesses(): number[] {
   if (!target) throw new Error("no target yet");
-  return appProcesses(target.command, target.dist);
+  return appProcesses(target.command, target.processDir);
 }
 
 /**
@@ -188,15 +193,39 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
 
 let current: ChildProcess | undefined;
 const groups = new Set<number>();
+/** The user data directories of runs not yet cleaned up, removed on any exit. */
+const userDataDirs = new Set<string>();
+
+function cleanup(): void {
+  for (const pgid of groups) killGroup(pgid, "SIGKILL");
+  for (const directory of userDataDirs) removeUserDataDir(directory);
+  userDataDirs.clear();
+}
 
 function cleanupAndExit(code: number): never {
-  for (const pgid of groups) killGroup(pgid, "SIGKILL");
+  cleanup();
   process.exit(code);
 }
 
-async function runOnce(round: number, mode: Mode, env: Record<string, string>, timeoutMs: number): Promise<RunRecord> {
+async function runOnce(
+  round: number,
+  mode: Mode,
+  env: Record<string, string>,
+  timeoutMs: number,
+  marker: RunMarker,
+): Promise<RunRecord> {
   const started = performance.now();
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env, DESKTOP_PORT_ACK_COALESCE: mode === "on" ? "1" : "0" };
+  // A user data directory of its own: no single-instance clash with a running app, no state from
+  // another run, nothing written to the installed app's.
+  const userDataDir = freshUserDataDir("bench");
+  userDataDirs.add(userDataDir);
+  const spec = launchSpec(target!.target, target!.profile, { executable: app, userDataDir });
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...spec.env,
+    ...env,
+    DESKTOP_PORT_ACK_COALESCE: mode === "on" ? "1" : "0",
+  };
   for (const key of [
     "DESKTOP_SMOKE",
     "DESKTOP_SMOKE_LAYOUT",
@@ -205,7 +234,7 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
     "ELECTRON_RUN_AS_NODE",
   ])
     delete childEnv[key];
-  const { command, args, cwd } = target!;
+  const { command, args, cwd } = spec;
   const child = spawn(command, args, {
     cwd,
     env: childEnv,
@@ -217,6 +246,12 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
   const pgid = child.pid!;
   groups.add(pgid);
   let result: RunRecord["result"];
+  // Either target must be the test profile (scripts/launch.ts); anything else ends the bench.
+  let wrongBuild: unknown;
+  verifyBuildProfile(child.stdout, target!.profile).catch((err: unknown) => {
+    wrongBuild = err;
+    killGroup(pgid, "SIGKILL");
+  });
   let buffered = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
@@ -250,7 +285,12 @@ async function runOnce(round: number, mode: Mode, env: Record<string, string>, t
     killGroup(pgid, "SIGKILL");
   }
   groups.delete(pgid);
-  return { round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
+  const used = readdirSync(userDataDir).length > 0;
+  removeUserDataDir(userDataDir);
+  userDataDirs.delete(userDataDir);
+  if (wrongBuild) throw wrongBuild;
+  if (!used) throw new Error(`run ${round}/${mode} left nothing in its user data directory ${userDataDir}`);
+  return { ...marker, round, mode, exitCode, durationMs: Math.round(performance.now() - started), result };
 }
 
 async function run(options: Map<string, string>): Promise<void> {
@@ -267,12 +307,18 @@ async function run(options: Map<string, string>): Promise<void> {
       join(desktopDir, "bench-results", `bench-${new Date().toISOString().replaceAll(":", "-")}.jsonl`),
   );
 
-  target = resolveTarget(options.get("app"));
-  if (!options.has("app")) {
-    for (const file of [".vite/build/main.cjs", ".vite/build/utility.mjs", "../web/build/server/index.js"]) {
-      if (!existsSync(join(desktopDir, file))) throw new Error(`${file} is missing: run \`pnpm build:desktop\` first`);
-    }
-  }
+  app = options.get("app");
+  target = launchLocation(app === undefined ? "unpackaged" : "packaged", "test", { executable: app });
+  // The executable exists; the unpackaged test bundles match the web build (a packaged app carries
+  // its own, and must have the test profile's fuses).
+  await checkLaunchInputs(target);
+  // What these runs are measured on, recorded with each of them; a file of runs on anything else is
+  // not appended to.
+  const marker: RunMarker = {
+    target: target.target,
+    fuses: describeFuses(fuseReadings(await getCurrentFuseWire(target.command))),
+  };
+  if (existsSync(out)) checkRunMarkers(new Map([[out, readRecords(out)]]), marker);
   const already = runProcesses();
   if (already.length > 0) {
     throw new Error(`The app under test is already running (pids ${already.join(", ")}); quit it first`);
@@ -285,14 +331,12 @@ async function run(options: Map<string, string>): Promise<void> {
     DESKTOP_BENCH: "1",
     DESKTOP_BENCH_MEASURE_MS: String(measureMs),
     DESKTOP_BENCH_WARMUP_MS: String(warmupMs),
-    // A user data directory of its own: no single-instance clash with a running app, no shared state.
-    DESKTOP_USER_DATA_SUFFIX: "bench",
-    NODE_ENV: "production",
     ...(cases ? { DESKTOP_BENCH_CASES: cases } : {}),
     ...(options.get("label") ? { DESKTOP_BENCH_LABEL: options.get("label")! } : {}),
   };
   process.stdout.write(
-    `bench: ${rounds} round(s) × [${modes.join(", ")}], warmup ${warmupMs} ms, measure ${measureMs} ms per case → ${out}\n`,
+    `bench: ${rounds} round(s) × [${modes.join(", ")}], warmup ${warmupMs} ms, measure ${measureMs} ms per case → ${out}\n` +
+      `bench: ${marker.target} target, fuses ${marker.fuses}\n`,
   );
   let failures = 0;
   try {
@@ -301,7 +345,7 @@ async function run(options: Map<string, string>): Promise<void> {
       const order = round % 2 === 0 ? modes : modes.toReversed();
       for (const mode of order) {
         process.stdout.write(`round ${round + 1}/${rounds} ack coalescing ${mode} … `);
-        const record = await runOnce(round, mode, env, timeoutMs);
+        const record = await runOnce(round, mode, env, timeoutMs, marker);
         appendFileSync(out, JSON.stringify(record) + "\n");
         const ok = record.exitCode === 0 && record.result?.ok === true;
         if (!ok) failures++;
@@ -399,13 +443,9 @@ function fmt(n: number): string {
 }
 
 function compare(files: string[]): void {
-  const records: RunRecord[] = files.flatMap((file) =>
-    readFileSync(file, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line): unknown => JSON.parse(line))
-      .filter(isRunRecord),
-  );
+  const byFile = new Map(files.map((file) => [file, readRecords(file)]));
+  checkRunMarkers(byFile);
+  const records: RunRecord[] = [...byFile.values()].flat();
   const good = records.filter((r) => r.exitCode === 0 && r.result?.ok && r.result.cases);
   if (good.length === 0) {
     process.stdout.write("no successful runs to compare\n");
@@ -470,6 +510,7 @@ async function main() {
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     if (current?.pid) killGroup(current.pid, "SIGKILL");
+    cleanup();
     process.exitCode = 1;
   }
 }
