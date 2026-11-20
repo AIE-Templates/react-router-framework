@@ -83,6 +83,28 @@ describe("layout composition", () => {
     expect(draft).toHaveValue("A retained draft");
   });
 
+  it("leaves Escape to the control that handled it", () => {
+    render(
+      <AppRoot>
+        <BasicShell>
+          <ModuleLayout
+            moduleId="editor"
+            title="Editor"
+            defaultSidebarOpen
+            sidebar={<textarea aria-label="Filter" onKeyDown={(event) => event.preventDefault()} />}
+          >
+            Body
+          </ModuleLayout>
+        </BasicShell>
+      </AppRoot>,
+    );
+    const field = screen.getByRole("textbox", { name: "Filter" });
+    field.focus();
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "Sidebar" })).toHaveAttribute("aria-expanded", "true");
+    expect(field).toHaveFocus();
+  });
+
   it("keeps controlled panels authoritative and application navigation independent", () => {
     const onSidebarOpenChange = vi.fn<(open: boolean) => void>();
     render(

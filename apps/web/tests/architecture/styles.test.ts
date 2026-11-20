@@ -108,7 +108,10 @@ it("keeps application CSS definitions in their namespaces and avoids transformed
           .map((match) => ({ text: match[0], index: match.index }));
     for (const region of regions) {
       for (const match of region.text.matchAll(/(?<![\w.-])(light-dark|rem)\s*\(/g)) {
-        report(region.index + match.index, `${match[1]}() is forbidden; use semantic colors or mantine.rem()`);
+        report(
+          region.index + match.index,
+          `${match[1]}() is forbidden; use semantic colors or explicit CSS length units`,
+        );
       }
     }
   }
