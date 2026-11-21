@@ -23,7 +23,7 @@ import { dirname, join, resolve } from "node:path";
 import { getCurrentFuseWire } from "@electron/fuses";
 
 import type { BenchCaseResult } from "../src/diagnostics/bench/bench";
-import { monitorTestChild } from "./child-run.ts";
+import { monitorDesktopChild } from "./child-run.ts";
 import { describeFuses, fuseReadings } from "./fuses.ts";
 import {
   appProcesses,
@@ -158,7 +158,7 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
   return n;
 }
 
-let current: ReturnType<typeof monitorTestChild> | undefined;
+let current: ReturnType<typeof monitorDesktopChild> | undefined;
 /** The user data directories of runs not yet cleaned up, removed on any exit. */
 const userDataDirs = new Set<string>();
 
@@ -217,7 +217,7 @@ async function runOnce(
     detached: !isWindows,
   });
   let result: RunRecord["result"];
-  const monitor = monitorTestChild(child, spec, spawnedAt, {
+  const monitor = monitorDesktopChild(child, spec, spawnedAt, {
     userDataDir,
     onLine(line) {
       if (line.startsWith("BENCH_RESULT ")) {

@@ -42,6 +42,7 @@ import {
   COOKIE_KEY_NOT_STORED_MESSAGE,
   COOKIE_KEY_SKIPPED_MESSAGE,
   COOKIE_KEY_STORED_MESSAGE,
+  COOKIE_KEY_UNREADABLE_MESSAGE,
   COOKIE_KEY_UNKNOWN_MESSAGE,
   COOKIE_KEY_WRITER_SWITCH,
   MAIN_WINDOW_READY_MESSAGE,
@@ -210,6 +211,8 @@ function logCookieKey(log: Logger, cookieKey: CookieKeyOutcome): void {
       { ms: cookieKey.ms, status: cookieKey.status, error: cookieKey.error, reason: cookieKey.readError },
       COOKIE_KEY_UNKNOWN_MESSAGE,
     );
+  } else if (cookieKey.kind === "unreadable") {
+    log.warn({ reason: cookieKey.reason, risk: unstoredKeyRisk() }, COOKIE_KEY_UNREADABLE_MESSAGE);
   } else if (cookieKey.kind === "skipped") {
     log.warn({ failedAt: cookieKey.failedAt, risk: unstoredKeyRisk() }, COOKIE_KEY_SKIPPED_MESSAGE);
   }

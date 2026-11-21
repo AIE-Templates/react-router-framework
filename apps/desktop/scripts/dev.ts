@@ -6,7 +6,7 @@
 // main process must report the dev build profile. Main or utility rebuilt → Electron restarts;
 // preload rebuilt → the window reloads. This is the only build of the dev profile. Runs on Node
 // directly (type stripping).
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, watch } from "node:fs";
 import { release } from "node:os";
@@ -16,7 +16,8 @@ import { stripVTControlCharacters } from "node:util";
 
 import { CLIENT_DIGEST_FILE } from "../../../build-tools/web-client-integrity.ts";
 import { BUILD_PROFILE_ENV, bundleDir } from "./build-profile.ts";
-import { launchSpec, verifyBuildProfile, writeDevPackageJson } from "./launch.ts";
+import { monitorDesktopChild } from "./child-run.ts";
+import { launchSpec, writeDevPackageJson } from "./launch.ts";
 
 const desktopDir = resolve(import.meta.dirname, "..");
 const repoDir = resolve(desktopDir, "../..");
@@ -24,7 +25,7 @@ const DEV_PORT = Number(process.env.DESKTOP_DEV_PORT?.trim() || 5174);
 const devServerUrl = `http://127.0.0.1:${DEV_PORT}`;
 const buildDir = join(desktopDir, bundleDir("dev"));
 
-const children = new Set<ChildProcess>();
+const workers = new Map<ChildProcess, Promise<void>>();
 let shuttingDown = false;
 
 const log = (msg: string) => process.stdout.write(`[dev] ${msg}\n`);
@@ -33,7 +34,8 @@ function run(
   command: string,
   args: string[],
   options: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: boolean; showsWindows?: boolean },
-): ChildProcess {
+) {
+  if (shuttingDown) throw new Error("Development session is closing");
   const manager = command === "pnpm" ? process.env.npm_execpath : undefined;
   const nodeScript = manager && /\.(?:cjs|mjs|js)$/i.test(manager);
   const child = spawn(nodeScript ? process.execPath : (manager ?? command), nodeScript ? [manager, ...args] : args, {
@@ -48,28 +50,61 @@ function run(
     // MAIN_WINDOW_READY_MESSAGE.
     windowsHide: !options.showsWindows,
   });
-  children.add(child);
-  child.once("exit", () => children.delete(child));
+  if (!options.showsWindows) {
+    const closed = new Promise<void>((done) =>
+      child.once("close", () => {
+        workers.delete(child);
+        done();
+      }),
+    );
+    workers.set(child, closed);
+  }
   return child;
 }
 
-function kill(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
-  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
+function stopWorker(child: ChildProcess, force: boolean): void {
+  if (!child.pid) return;
   try {
-    if (process.platform === "win32")
-      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-    else process.kill(-child.pid, signal);
+    if (process.platform === "win32") {
+      if (child.exitCode === null && child.signalCode === null)
+        execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", timeout: 3000 });
+    } else process.kill(-child.pid, force ? "SIGKILL" : "SIGTERM");
   } catch {
-    child.kill(signal);
+    child.kill(force ? "SIGKILL" : "SIGTERM");
   }
 }
 
-function shutdown(code: number): void {
+async function stopWorkers(): Promise<void> {
+  const closed = Promise.all(workers.values());
+  for (const child of workers.keys()) stopWorker(child, false);
+  const force = setTimeout(() => {
+    for (const child of workers.keys()) stopWorker(child, true);
+  }, 3000);
+  let deadline: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        deadline = setTimeout(() => reject(new Error("Development workers did not close")), 6000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(force);
+    clearTimeout(deadline);
+  }
+}
+
+async function shutdown(code: number): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  process.exitCode = code;
-  for (const child of children) kill(child);
-  setTimeout(() => process.exit(code), 500).unref();
+  const results = await Promise.allSettled([electron.stop(), stopWorkers()]);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      log(String(result.reason));
+      code = 1;
+    }
+  }
+  process.exit(code);
 }
 
 /** Resolves once `child` prints a line containing `marker`; output is passed through meanwhile. */
@@ -103,58 +138,106 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
   throw new Error(`${url} did not answer within ${timeoutMs} ms`);
 }
 
-function startElectron(): ChildProcess {
+function startElectron() {
   const spec = launchSpec("unpackaged", "dev");
+  const spawnedAt = Date.now();
   const child = run(spec.command, spec.args, {
     showsWindows: true,
     cwd: spec.cwd,
     env: { ...spec.env, DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev" },
     stdin: true,
   });
-  child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
-  verifyBuildProfile(child.stdout!, spec.profile).catch((err: unknown) => {
-    if (shuttingDown || electron.current !== child) return;
-    log(err instanceof Error ? err.message : String(err));
-    shutdown(1);
-  });
-  child.once("exit", (code, signal) => {
-    if (shuttingDown || electron.current !== child) return;
-    log(`electron exited with ${signal ?? code}`);
-    shutdown(code ?? 1);
-  });
-  return child;
-}
+  const monitor = monitorDesktopChild(child, spec, spawnedAt);
+  child.stdout?.pipe(process.stdout, { end: false });
+  const forced = new Error("Development app did not quit within three seconds");
+  const finished = (async () => {
+    try {
+      return await monitor.finished;
+    } catch (err) {
+      if (err !== forced) throw err;
+      return null;
+    } finally {
+      await monitor.reap();
+    }
+  })();
 
-/** Rebuilds during shutdown are included in the next launch, which reads the latest bundles. */
-export function devElectron(start: () => ChildProcess, stop: typeof kill, closing: () => boolean) {
-  let current: ChildProcess | undefined;
-  let restarting = false;
   return {
-    get current() {
-      return current;
-    },
-    restart() {
-      if (closing() || restarting) return;
-      const old = current;
-      if (!old || old.exitCode !== null || old.signalCode !== null) {
-        current = start();
-        return;
+    child,
+    finished,
+    async stop() {
+      if (child.pid && child.exitCode === null && child.signalCode === null) {
+        // Let Electron flush cookies and quit before stopping its network service.
+        if (process.platform === "win32") {
+          execFile("taskkill", ["/PID", String(child.pid)], { windowsHide: true, timeout: 3000 }, (err) => {
+            if (err) log(err.message);
+          });
+        } else child.kill("SIGTERM");
       }
-      restarting = true;
-      current = undefined;
-      const timer = setTimeout(() => stop(old, "SIGKILL"), 3000);
-      timer.unref();
-      old.once("exit", () => {
+      const timer = setTimeout(() => monitor.abort(forced), 3000);
+      try {
+        await finished;
+      } finally {
         clearTimeout(timer);
-        restarting = false;
-        if (!closing()) current = start();
-      });
-      stop(old);
+      }
     },
   };
 }
 
-const electron = devElectron(startElectron, kill, () => shuttingDown);
+/** Shutdown and overlapping rebuilds share the same stop, including helper cleanup. */
+export function devElectron(start: typeof startElectron, closing: () => boolean, exited: (code: number) => void) {
+  let active: ReturnType<typeof startElectron> | undefined;
+  let stopping: Promise<void> | undefined;
+  function stop() {
+    if (!active) return stopping ?? Promise.resolve();
+    const previous = active;
+    active = undefined;
+    stopping = previous.stop().finally(() => {
+      stopping = undefined;
+    });
+    return stopping;
+  }
+  function launch() {
+    if (closing()) return;
+    const app = start();
+    active = app;
+    void app.finished.then(
+      (code) => {
+        if (active !== app) return;
+        log(`electron exited with ${app.child.signalCode ?? code}`);
+        return exited(code ?? 1);
+      },
+      (err: unknown) => {
+        if (active === app) {
+          log(String(err));
+          exited(1);
+        }
+      },
+    );
+  }
+  return {
+    get current() {
+      return active?.child;
+    },
+    restart() {
+      if (closing() || stopping) return;
+      if (!active) launch();
+      else
+        void stop()
+          .then(launch)
+          .catch((err: unknown) => {
+            log(String(err));
+            exited(1);
+          });
+    },
+    stop,
+  };
+}
+
+const electron = devElectron(
+  startElectron,
+  () => shuttingDown,
+  (code) => void shutdown(code),
+);
 
 async function main(): Promise<void> {
   const shellEnv = {
@@ -266,10 +349,11 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-  process.on("SIGINT", () => shutdown(0));
-  process.on("SIGTERM", () => shutdown(0));
+  process.on("SIGINT", () => void shutdown(0));
+  process.on("SIGTERM", () => void shutdown(0));
+  process.on("SIGHUP", () => void shutdown(0));
   main().catch((err: unknown) => {
     log(err instanceof Error ? err.message : String(err));
-    shutdown(1);
+    return shutdown(1);
   });
 }

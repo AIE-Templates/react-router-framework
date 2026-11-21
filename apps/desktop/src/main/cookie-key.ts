@@ -109,11 +109,6 @@ export function readCookieKeyState(userData: string, read: (path: string) => str
   return typeof key === "string" && key !== "" ? { state: "stored" } : { state: "missing" };
 }
 
-/** Whether `<userData>/Local State` holds a cookie encryption key. Never throws. */
-export function hasStoredCookieKey(userData: string, read: (path: string) => string = readText): boolean {
-  return readCookieKeyState(userData, read).state === "stored";
-}
-
 function errorCode(err: unknown): unknown {
   return typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
 }
@@ -153,6 +148,7 @@ export interface CookieKeyLaunch {
 export type CookieKeyOutcome =
   /** Not Windows, or the key is stored: nothing to do. */
   | { kind: "none" }
+  | { kind: "unreadable"; reason: string }
   /**
    * A writer run of this app version on this profile failed less than COOKIE_KEY_FAILURE_TTL_MS ago
    * and the key is still not stored: not run again.
@@ -231,7 +227,17 @@ export function storeCookieKeyFirst(
       // Left there: it is ignored once it is a day old or the version changes.
     }
   };
-  if (hasStoredCookieKey(userData, read)) {
+  const readKey = () => {
+    let key = readCookieKeyState(userData, read);
+    for (let attempt = 1; key.state === "unknown" && attempt < COOKIE_KEY_READ_ATTEMPTS; attempt++) {
+      sleep(COOKIE_KEY_READ_RETRY_MS);
+      key = readCookieKeyState(userData, read);
+    }
+    return key;
+  };
+  const initial = readKey();
+  if (initial.state === "unknown") return { kind: "unreadable", reason: initial.reason };
+  if (initial.state === "stored") {
     forget();
     return { kind: "none" };
   }
@@ -247,11 +253,7 @@ export function storeCookieKeyFirst(
     timeout: timeoutMs,
   });
   const ms = Math.round(now() - start);
-  let key = readCookieKeyState(userData, read);
-  for (let attempt = 1; key.state === "unknown" && attempt < COOKIE_KEY_READ_ATTEMPTS; attempt++) {
-    sleep(COOKIE_KEY_READ_RETRY_MS);
-    key = readCookieKeyState(userData, read);
-  }
+  const key = readKey();
   const probe = parseCookieKeyProbe(result.stdout ?? "");
   const outcome: CookieKeyOutcome = {
     kind: "ran",

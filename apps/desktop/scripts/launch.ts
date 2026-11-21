@@ -24,6 +24,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   type RmOptions,
   statSync,
@@ -308,7 +309,7 @@ export function sandboxSwitches(
 
 /** A fresh, empty user data directory for one test launch (or one test's launches), under the system temp directory. */
 export function freshUserDataDir(label: string): string {
-  return mkdtempSync(join(tmpdir(), `desktop-${label}-`));
+  return mkdtempSync(join(realpathSync.native(tmpdir()), `desktop-${label}-`));
 }
 
 /**

@@ -678,11 +678,11 @@ function checkContents(pkg: Package): CheckResult {
 }
 
 /** One release launch with a remote debugging switch, watched until it exits and its processes are gone. */
-async function refusedLaunch(
+async function refusalAttempt(
   pkg: Package,
   gate: LaunchGate,
   remoteSwitch: "remote-debugging-port" | "remote-debugging-pipe",
-): Promise<{ ok: boolean; reason: string }> {
+): Promise<{ ok: boolean; reason: string; lateListener?: boolean }> {
   const userDataDir = tempDir("verify-release");
   try {
     const port = remoteSwitch === "remote-debugging-port" ? await freePort() : undefined;
@@ -708,10 +708,16 @@ async function refusedLaunch(
       if (listened) app.expire();
     }
     const outcome = await app.exited;
-    if (port !== undefined && !listened) listened = await listening(port);
+    const lateListener = port !== undefined && !listened && (await listening(port));
     // Its main process is gone; anything it created must be too.
     const stragglers = await finish(started);
     const verdict = judgeRefusal(outcome, remoteSwitch, { listened, answered }, stragglers);
+    if (verdict.ok && lateListener)
+      return {
+        ok: false,
+        lateListener: true,
+        reason: `port ${port} accepted a connection only after the release process exited`,
+      };
     const stderr = app.stderr().trim();
     return verdict.ok || stderr === ""
       ? verdict
@@ -790,13 +796,24 @@ async function testPackageAnswers(
   }
 }
 
+/** A late TCP listener alone cannot identify the exited process. Repeat once without relaxing any check. */
+export async function verifyRefusalPort(
+  attempt: () => Promise<{ ok: boolean; reason: string; lateListener?: boolean }>,
+) {
+  const first = await attempt();
+  if (!first.lateListener) return first;
+  const second = await attempt();
+  return { ok: second.ok, reason: `${first.reason}; repeated on a fresh port: ${second.reason}` };
+}
+
 async function checkRefusal(pkg: Package, gate: LaunchGate): Promise<CheckResult> {
   const name = "remote debugging refused";
   if (!gate.run) return report(3, name, "skipped", gate.note!);
   const failures: string[] = [];
   const passes: string[] = [];
   for (const remoteSwitch of ["remote-debugging-port", "remote-debugging-pipe"] as const) {
-    const verdict = await refusedLaunch(pkg, gate, remoteSwitch);
+    const attempt = () => refusalAttempt(pkg, gate, remoteSwitch);
+    const verdict = remoteSwitch === "remote-debugging-port" ? await verifyRefusalPort(attempt) : await attempt();
     (verdict.ok ? passes : failures).push(`--${remoteSwitch}: ${verdict.reason}`);
     const control = await testPackageAnswers(gate, remoteSwitch);
     if (control.ok) passes.push(`--${remoteSwitch} positive control: ${control.reason}`);

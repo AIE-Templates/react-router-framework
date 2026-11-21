@@ -17,7 +17,6 @@ import {
   type CookieKeySpawn,
   cookieKeyWriterArgs,
   cookieKeyWriterCrashHandler,
-  hasStoredCookieKey,
   parseCookieKeyProbe,
   readCookieKeyState,
   storeCookieKeyFirst,
@@ -74,9 +73,9 @@ it.each([
   ["os_crypt without a key", JSON.stringify({ os_crypt: { audit_enabled: true } }), false],
   ["an empty key", JSON.stringify({ os_crypt: { encrypted_key: "" } }), false],
   ["a key", WITH_KEY, true],
-])("hasStoredCookieKey: %s", (_name, content, expected) => {
+])("stored cookie key: %s", (_name, content, expected) => {
   const { read } = disk(content === undefined ? {} : { [LOCAL_STATE]: content });
-  expect(hasStoredCookieKey(USER_DATA, read)).toBe(expected);
+  expect(readCookieKeyState(USER_DATA, read).state === "stored").toBe(expected);
 });
 
 it("tells a missing key from an unreadable Local State", () => {
@@ -204,7 +203,7 @@ it("lets a failure record stop the writer only for the same version and for a da
   expect(ranWith(JSON.stringify({ failedAt: justUnderADay, status: 1 })).ran).toBe(true);
 });
 
-it("reads Local State again while it is unreadable right after the writer, and records nothing if it stays so", () => {
+it("retries transient reads after the writer", () => {
   // Held for two reads, then readable with the key: stored, after two short waits.
   const files = disk();
   let busyReads = 0;
@@ -225,9 +224,9 @@ it("reads Local State again while it is unreadable right after the writer, and r
     key: "stored",
   });
   expect(files.sleep.mock.calls).toEqual([[COOKIE_KEY_READ_RETRY_MS], [COOKIE_KEY_READ_RETRY_MS]]);
+});
 
-  // Never readable (a sharing violation, or a partial write that never completes): unknown, no
-  // failure record, and the next launch runs the writer again.
+it("skips a writer on unknown initial state and recovers on a later readable launch", () => {
   for (const fault of ["busy", "partial"] as const) {
     const held = disk(fault === "partial" ? { [LOCAL_STATE]: '{"os_crypt":' } : {});
     const heldRead = (path: string) => {
@@ -237,11 +236,14 @@ it("reads Local State again while it is unreadable right after the writer, and r
     const writer = vi.fn<CookieKeySpawn>(() => ({ status: 0, stdout: "" }));
     const deps = { ...held, read: heldRead, spawn: writer, now: () => 0, date: () => NOW };
     const outcome = storeCookieKeyFirst(launch, deps);
-    expect(outcome).toMatchObject({ kind: "ran", key: "unknown", readError: expect.any(String) });
+    expect(outcome).toMatchObject({ kind: "unreadable", reason: expect.any(String) });
     expect(held.sleep).toHaveBeenCalledTimes(COOKIE_KEY_READ_ATTEMPTS - 1);
     expect(held.write).not.toHaveBeenCalled();
     storeCookieKeyFirst(launch, deps);
-    expect(writer).toHaveBeenCalledTimes(2);
+    expect(writer).not.toHaveBeenCalled();
+    held.files.delete(LOCAL_STATE);
+    storeCookieKeyFirst(launch, { ...deps, read: held.read });
+    expect(writer).toHaveBeenCalledTimes(1);
   }
 });
 

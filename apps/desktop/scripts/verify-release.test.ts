@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import * as powershell from "./powershell.ts";
-import { finish, launch } from "./verify-release.ts";
+import { finish, launch, verifyRefusalPort } from "./verify-release.ts";
 
 const location = { command: process.execPath, processDir: dirname(process.execPath) };
 
@@ -86,3 +86,23 @@ it("keeps an unconfirmed helper tracked until a later stop succeeds", async () =
     expect(stopped.map((item) => item.pid)).toContain(pid);
   }
 }, 30000);
+
+it.each([true, false])("rechecks a late listener once and uses the full second verdict (%s)", async (ok) => {
+  const attempt = vi
+    .fn<Parameters<typeof verifyRefusalPort>[0]>()
+    .mockResolvedValueOnce({ ok: false, reason: "late connection", lateListener: true })
+    .mockResolvedValueOnce({ ok, reason: "second launch" });
+  expect(await verifyRefusalPort(attempt)).toEqual({
+    ok,
+    reason: "late connection; repeated on a fresh port: second launch",
+  });
+  expect(attempt).toHaveBeenCalledTimes(2);
+});
+
+it("retains a live listener failure without retrying", async () => {
+  const attempt = vi
+    .fn<Parameters<typeof verifyRefusalPort>[0]>()
+    .mockResolvedValue({ ok: false, reason: "listener during launch" });
+  expect(await verifyRefusalPort(attempt)).toEqual({ ok: false, reason: "listener during launch" });
+  expect(attempt).toHaveBeenCalledTimes(1);
+});
