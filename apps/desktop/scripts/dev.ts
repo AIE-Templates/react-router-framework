@@ -149,12 +149,14 @@ function startElectron() {
   });
   const monitor = monitorDesktopChild(child, spec, spawnedAt);
   child.stdout?.pipe(process.stdout, { end: false });
-  const forced = new Error("Development app did not quit within three seconds");
+  let stopping = false;
   const finished = (async () => {
     try {
       return await monitor.finished;
     } catch (err) {
-      if (err !== forced) throw err;
+      // A rebuild or shutdown may stop the app before it prints its profile.
+      // reap() must still confirm termination before the next instance starts.
+      if (!stopping) throw err;
       return null;
     } finally {
       await monitor.reap();
@@ -165,6 +167,7 @@ function startElectron() {
     child,
     finished,
     async stop() {
+      stopping = true;
       if (child.pid && child.exitCode === null && child.signalCode === null) {
         // Let Electron flush cookies and quit before stopping its network service.
         if (process.platform === "win32") {
@@ -173,7 +176,10 @@ function startElectron() {
           });
         } else child.kill("SIGTERM");
       }
-      const timer = setTimeout(() => monitor.abort(forced), 3000);
+      const timer = setTimeout(() => {
+        log("development app did not quit within three seconds; stopping its process tree");
+        monitor.kill();
+      }, 3000);
       try {
         await finished;
       } finally {
