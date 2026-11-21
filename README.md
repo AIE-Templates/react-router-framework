@@ -63,7 +63,7 @@ Clear `apps/desktop/.vite` and `apps/desktop/out` once when migrating from the o
 
 ## Design
 
-[Design specs](docs/specs/README.md) describe settled contracts; [ADRs](docs/adrs/) explain accepted decisions. AppRoot, AppShell and ModuleLayout separate environment, application framing and module state. Components use useAppEnvironment; document attributes only mirror its state.
+[Design specs](docs/specs/README.md) describe settled contracts and rationale. AppRoot, AppShell and ModuleLayout separate environment, application framing and module state. Components use useAppEnvironment; document attributes only mirror its state.
 
 ## Derived application identity
 

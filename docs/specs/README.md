@@ -1,6 +1,6 @@
 # Design specifications
 
-Settled design contracts; rationale belongs in [ADRs](../adrs/README.md).
+Settled design contracts and rationale.
 
 - [Application layout](layout.spec.md)
 - [Window chrome](window-chrome.spec.md)
