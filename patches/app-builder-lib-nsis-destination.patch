@@ -15,3 +15,14 @@ diff --git a/templates/nsis/installer.nsi b/templates/nsis/installer.nsi
    ${LogSet} on
 
    !ifmacrodef preInit
+diff --git a/templates/nsis/installSection.nsh b/templates/nsis/installSection.nsh
+--- a/templates/nsis/installSection.nsh
++++ b/templates/nsis/installSection.nsh
+@@ -1,3 +1,7 @@
+ !include installer.nsh
+
++!ifmacrodef customCheckInstallationDirectory
++  !insertmacro customCheckInstallationDirectory
++!endif
++
+ InitPluginsDir

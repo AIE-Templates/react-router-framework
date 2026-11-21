@@ -1,6 +1,6 @@
 ; The assisted directory page accepts arbitrary paths, including silent /D overrides.
-; A hidden, required first section runs on the final selection before electron-builder's
-; install section can uninstall an older version or extract any application files.
+; Validate the final scope and destination after any elevation and before the
+; builder can uninstall an older version or extract any application files.
 !macro RejectInstallation REASON
   MessageBox MB_OK|MB_ICONSTOP "${REASON}" /SD IDOK
   SetErrorLevel 3
@@ -159,28 +159,28 @@
       !insertmacro RejectInstallation "Cannot list '$INSTDIR' (Windows error $2). Choose a directory you can read."
     FunctionEnd
 
-    Section "-Check installation directory"
-      SectionIn RO
-      !insertmacro CheckDirectoryChain "$INSTDIR"
-      StrCpy $3 ""
-      StrCpy $4 0
-      StrCpy $5 0
-      !insertmacro CheckPreviousInstallation SHELL_CONTEXT $4
-      ${If} $installMode == "all"
-        ; A per-machine install also uninstalls an existing per-user version.
-        !insertmacro CheckPreviousInstallation HKCU $5
-      ${EndIf}
-      ${If} $3 != "owned"
-        Call CheckEmptyDestination
-      ${EndIf}
-      ${If} $4 == 1
-        !insertmacro RemoveStaleRegistration SHELL_CONTEXT
-      ${EndIf}
-      ${If} $5 == 1
-        !insertmacro RemoveStaleRegistration HKCU
-      ${EndIf}
-    SectionEnd
   !endif
+!macroend
+
+!macro customCheckInstallationDirectory
+  !insertmacro CheckDirectoryChain "$INSTDIR"
+  StrCpy $3 ""
+  StrCpy $4 0
+  StrCpy $5 0
+  !insertmacro CheckPreviousInstallation SHELL_CONTEXT $4
+  ${If} $installMode == "all"
+    ; A per-machine install also uninstalls an existing per-user version.
+    !insertmacro CheckPreviousInstallation HKCU $5
+  ${EndIf}
+  ${If} $3 != "owned"
+    Call CheckEmptyDestination
+  ${EndIf}
+  ${If} $4 == 1
+    !insertmacro RemoveStaleRegistration SHELL_CONTEXT
+  ${EndIf}
+  ${If} $5 == 1
+    !insertmacro RemoveStaleRegistration HKCU
+  ${EndIf}
 !macroend
 
 !macro customInstall
