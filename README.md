@@ -4,6 +4,13 @@ A pnpm workspace with React Router framework mode. The web application defaults 
 
 Use Node.js 24.15+ in the 24.x line, or Node.js 26 and newer and the pnpm version declared in package.json. Install with pnpm install; other package managers are rejected.
 
+## Quick start
+
+```bash
+pnpm install
+pnpm dev
+```
+
 ## Packages
 
 - [apps/web](apps/web/README.md): React Router application.
@@ -32,18 +39,12 @@ Vitest runs in watch mode by default; use pnpm exec vitest run for a finite run.
 
 ## Design
 
-[Design specs](docs/specs/README.md) describe settled contracts and rationale. AppRoot, AppShell and ModuleLayout separate environment, application framing and module state. Components use useAppEnvironment; document attributes only mirror its state.
+[Design specs](docs/specs/README.md) describe settled contracts and rationale:
 
-## Scroll and landmarks
+- **Layout and environment** ([layout.spec.md](docs/specs/layout.spec.md)): `AppRoot`, `AppShell` and `ModuleLayout` separate environment, application framing and module state. Components read `useAppEnvironment()`; `ContentScrollRestoration` manages container scroll per history key.
+- **Visual preferences** ([visual.spec.md](docs/specs/visual.spec.md)): `VisualManager` owns color scheme, text direction and reduced motion, with a prepaint head initializer and a body-only `AppUiProvider` slot for UI integrations.
+- **Source structure** ([structure.spec.md](docs/specs/structure.spec.md)): Feature routes and disposable demo code live under `apps/web/src/app/features`; global CSS enters through `styles/index.css` while component CSS Modules remain colocated.
 
-ContentScrollRestoration tracks root/module containers by history key, resets new navigation, restores back/forward and resolves fragments. It retains at most 100 entries within the current document. ModuleLayout defaults to div; choose one top-level contentAs="main" or provide one main element. moduleId must be unique per page. Use Router Link for application navigation.
+## Derived application identity
 
-## Visual preferences
-
-VisualManager owns color scheme (`auto`, `light`, `dark`), text direction (`ltr`, `rtl`) and reduced motion (`auto`, `reduce`, `full`). Read `useVisualState` and update through `useVisualActions`; `useVisualStatus` distinguishes initialization and persistence failures. Global providers are composed by AppRoot, while the domain provider and registries live under `managers/visual`.
-
-The head initializer applies saved preferences before paint. Core uses `data-color-scheme`, `dir` and `data-reduced-motion`; missing automatic values fall back to system CSS media queries. Set `APP_ID` in `packages/shared/src/app-identity.ts` before distributing an independent application. `config/storage.ts` derives Web keys through the shared `storageKey()` helper. The body-only AppUiProvider slot hosts UI integrations. See the [visual specification](docs/specs/visual.spec.md) for snapshot, reset and persistence behavior.
-
-## Source structure
-
-Feature routes and demo code live under `apps/web/src/app/features`; shared appearance controls live in `components/appearance-settings.tsx`. Environment contracts are consumed through `managers/environment/hooks` and `dom-props`, with the runtime owned by AppRoot. Global CSS enters through `styles/index.css`; component CSS Modules remain colocated. See the [structure specification](docs/specs/structure.spec.md) for boundaries, naming and migration rules.
+Before distributing an independent application, set `APP_ID` in `packages/shared/src/app-identity.ts` (storage and preference keys derive from it). Remove `apps/web/src/app/features/demo` and its route registrations in `apps/web/src/app/routes.ts` when replacing the template home page.
