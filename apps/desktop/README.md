@@ -2,7 +2,7 @@
 
 Electron hosts the shared web application through `app://app`. Main maps requests to an internal HTTP origin and sends them over port-fetch to a utility process running Hono. Production pages and API use no TCP listener. Preload is sandboxed CommonJS; main is CommonJS; utility is ESM. Static resources belong to the web host, not a second main-process server.
 
-The [host specification](../../docs/specs/electron-shell.spec.md), [layout specification](../../docs/specs/layout.spec.md), [window chrome specification](../../docs/specs/window-chrome.spec.md) and [ADRs](../../docs/adrs/) define the contracts and rationale.
+The [host specification](../../docs/specs/electron-shell.spec.md), [layout specification](../../docs/specs/layout.spec.md) and [window chrome specification](../../docs/specs/window-chrome.spec.md) define the contracts and rationale.
 
 ## Commands
 
@@ -20,7 +20,7 @@ pnpm verify:build
 pnpm verify:release
 ```
 
-Three build profiles are fixed at build time; HOST-11 in the host specification lists what differs between them and [ADR 0011](../../docs/adrs/0011-build-profiles.md) records why. `dev` exists only while `dev:desktop` runs. `test` is what `build:desktop:test`, `package:desktop:test`, Playwright, the smoke and the benchmark use; package-local `build:test` selects it and `build` defaults to release. `release` is the shipped build: no smoke, benchmark or E2E endpoints, no development code, no debug variables, no DevTools, and it exits with status 97 when started with `--remote-debugging-port` or `--remote-debugging-pipe`. Both packages get the same fuses except the Node inspector, which only the test package keeps for Playwright's driver.
+Three build profiles are fixed at build time; HOST-11 in the host specification lists what differs between them and why. `dev` exists only while `dev:desktop` runs. `test` is what `build:desktop:test`, `package:desktop:test`, Playwright, the smoke and the benchmark use; package-local `build:test` selects it and `build` defaults to release. `release` is the shipped build: no smoke, benchmark or E2E endpoints, no development code, no debug variables, no DevTools, and it exits with status 97 when started with `--remote-debugging-port` or `--remote-debugging-pipe`. Both packages get the same fuses except the Node inspector, which only the test package keeps for Playwright's driver.
 
 Development uses a separate Router server on port 5174 (DESKTOP_DEV_PORT overrides it), preserves app:// mapping, watches bundles, restarts after main/utility changes and reloads after preload changes. Development user data is `<userData>-dev` (DESKTOP_USER_DATA_SUFFIX changes the suffix). Root packaging commands build first; package-local `package:test`, `package` and `dist` package existing bundles after checking that they match the current Web build.
 
