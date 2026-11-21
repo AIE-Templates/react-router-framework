@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -303,6 +303,7 @@ describe("credential store", () => {
     const first = freshUserDataDir("unit");
     const second = freshUserDataDir("unit");
     try {
+      expect(first).toBe(realpathSync.native(first));
       expect(first).not.toBe(second);
       expect(readdirSync(first)).toEqual([]);
     } finally {

@@ -30,7 +30,7 @@
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 
-import { monitorTestChild } from "./child-run.ts";
+import { monitorDesktopChild } from "./child-run.ts";
 import { checkLaunchInputs, freshUserDataDir, launchSpec, removeUserDataDir } from "./launch.ts";
 
 function fail(err: unknown): never {
@@ -75,7 +75,7 @@ const child = spawn(spec.command, [...spec.args, ...args], {
   // POSIX: its own session and process group, so signals to this launcher's group miss it.
   detached: !isWindows,
 });
-const monitor = monitorTestChild(child, spec, spawnedAt, {
+const monitor = monitorDesktopChild(child, spec, spawnedAt, {
   // Only launcher-created directories are unique ownership markers.
   userDataDir: removeUserData ? userDataDir : undefined,
   requireSmokeResult: process.env.DESKTOP_SMOKE === "1",

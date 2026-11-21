@@ -51,6 +51,7 @@ export const COOKIE_KEY_MISMATCH_MESSAGE = "this launch does not use the cookie 
  * that applies.
  */
 export const COOKIE_KEY_NOT_STORED_MESSAGE = "the cookie key writer did not store the cookie key";
+export const COOKIE_KEY_UNREADABLE_MESSAGE = "cookie key writer skipped: cannot read the cookie key state";
 export const COOKIE_KEY_UNKNOWN_MESSAGE = "could not tell whether the cookie key writer stored the cookie key";
 export const COOKIE_KEY_SKIPPED_MESSAGE = "cookie key writer skipped: a run of this version failed within a day";
 export const COOKIE_KEY_NO_PROBE_MESSAGE = "the cookie key writer printed no probe; the key in use is not checked";
@@ -64,6 +65,7 @@ export const COOKIE_KEY_WRITER_FAILED_FILE = "cookie-key-writer-failed.json";
 export const COOKIE_KEY_WRITER_WARNINGS = [
   COOKIE_KEY_NOT_STORED_MESSAGE,
   COOKIE_KEY_UNKNOWN_MESSAGE,
+  COOKIE_KEY_UNREADABLE_MESSAGE,
   COOKIE_KEY_SKIPPED_MESSAGE,
   COOKIE_KEY_NO_PROBE_MESSAGE,
 ] as const;

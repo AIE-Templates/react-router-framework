@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { monitorTestChild } from "./child-run.ts";
+import { monitorDesktopChild } from "./child-run.ts";
 import type { LaunchLocation } from "./launch.ts";
 import { windowsProcess, windowsProcesses } from "./powershell.ts";
 
@@ -19,13 +19,13 @@ const location: LaunchLocation = {
 // These helper fixtures must survive their parent to exercise the launcher's drain and reap paths.
 const helperDetached = process.platform === "win32";
 const profile = 'console.log(JSON.stringify({process:"main",buildProfile:"test"}));';
-function run(script: string, options: Parameters<typeof monitorTestChild>[3] = {}) {
+function run(script: string, options: Parameters<typeof monitorDesktopChild>[3] = {}) {
   const at = Date.now();
   const child = spawn(process.execPath, ["-e", script], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
   });
-  return monitorTestChild(child, location, at, options);
+  return monitorDesktopChild(child, location, at, options);
 }
 
 describe("test child output and cleanup", () => {
@@ -34,7 +34,7 @@ describe("test child output and cleanup", () => {
     const child = spawn(join(dirname(process.execPath), "no-such-electron-review-binary"), [], {
       stdio: ["ignore", "pipe", "pipe"],
     });
-    await expect(monitorTestChild(child, location, at).finished).rejects.toThrow(/ENOENT|ENOTDIR/);
+    await expect(monitorDesktopChild(child, location, at).finished).rejects.toThrow(/ENOENT|ENOTDIR/);
   });
   it("requires a successful result from this smoke, even for an early clean exit with the right profile", async () => {
     const options = { requireSmokeResult: true };
@@ -58,7 +58,7 @@ describe("test child output and cleanup", () => {
     const child = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1000)"], { stdio: ["pipe", "pipe", "pipe"] });
     const closed = once(child, "close");
     const stop = vi.spyOn(child, "kill").mockReturnValue(false);
-    const monitor = monitorTestChild(child, location, at, { drainMs: 50 });
+    const monitor = monitorDesktopChild(child, location, at, { drainMs: 50 });
     try {
       if (process.platform === "win32") vi.stubEnv("PATH", "");
       monitor.abort(new Error("interrupted launch"));
@@ -86,7 +86,7 @@ describe("test child output and cleanup", () => {
       const at = Date.now();
       const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
       const closed = once(child, "close");
-      const monitor = monitorTestChild(child, location, at, {
+      const monitor = monitorDesktopChild(child, location, at, {
         drainMs: 200,
         onLine(line) {
           if (line.startsWith("helper=")) helperPid = Number(line.slice(7));
@@ -134,7 +134,7 @@ describe("test child output and cleanup", () => {
       ],
       { detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] },
     );
-    const monitor = monitorTestChild(child, location, launchedAt, {
+    const monitor = monitorDesktopChild(child, location, launchedAt, {
       userDataDir: marker,
       drainMs: 300,
       onLine(line) {

@@ -1,6 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { Readable } from "node:stream";
 
 import { verifyBuildProfile, type LaunchLocation } from "./launch.ts";
 import { windowsProcess, windowsProcesses } from "./powershell.ts";
@@ -31,8 +30,8 @@ export function killIfRunning(pid: number): boolean {
 }
 
 /** Wait for the app AND the end of its output. A helper inheriting a pipe gets a bounded grace period. */
-export function monitorTestChild(
-  child: ChildProcess & { stdout: Readable },
+export function monitorDesktopChild(
+  child: ChildProcess,
   location: LaunchLocation,
   spawnedAt: number,
   {
@@ -43,6 +42,8 @@ export function monitorTestChild(
     drainMs = 3_000,
   }: { onLine?: (line: string) => void; userDataDir?: string; requireSmokeResult?: boolean; drainMs?: number } = {},
 ) {
+  const stdout = child.stdout;
+  if (!stdout) throw new Error("Monitoring a desktop launch requires piped stdout");
   const root: LaunchRoot = { pid: child.pid ?? 0, spawnedAt, userDataDir };
   let resolve!: (code: number | null) => void;
   let reject!: (error: unknown) => void;
@@ -97,7 +98,7 @@ export function monitorTestChild(
       stopTaskkill();
       killRoot();
       child.stdin?.destroy();
-      child.stdout.destroy();
+      stdout.destroy();
       child.stderr?.destroy();
       child.unref();
       reject(failure);
@@ -111,7 +112,7 @@ export function monitorTestChild(
   };
   let smokePassed = false;
   if (onLine || requireSmokeResult) {
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const lines = createInterface({ input: stdout, crlfDelay: Infinity });
     lines.on("line", (line) => {
       if (failure) return;
       try {
@@ -127,7 +128,7 @@ export function monitorTestChild(
       }
     });
   }
-  const profile = verifyBuildProfile(child.stdout, location.profile).catch(abort);
+  const profile = verifyBuildProfile(stdout, location.profile).catch(abort);
   child.on("error", (err) => {
     if (child.pid) abort(err);
     else failure ??= err; // An unsuccessful spawn still emits close.
@@ -137,7 +138,7 @@ export function monitorTestChild(
     if (!failure && !closed)
       drain = setTimeout(() => {
         abort(new Error("The app exited but its helpers kept its output open"));
-        child.stdout.destroy();
+        stdout.destroy();
         child.stderr?.destroy();
       }, drainMs);
   });
