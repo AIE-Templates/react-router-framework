@@ -3,6 +3,7 @@
 Settled design contracts and rationale.
 
 - [Web runtime and engineering](web-runtime.spec.md)
+- [Fullstack host and API](fullstack-host.spec.md)
 - [Application layout](layout.spec.md)
 
 - [Global visual state](visual.spec.md)
