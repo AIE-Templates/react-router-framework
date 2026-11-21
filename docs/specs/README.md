@@ -2,6 +2,8 @@
 
 Settled design contracts and rationale.
 
+- [Web runtime and engineering](web-runtime.spec.md)
+- [Fullstack host and API](fullstack-host.spec.md)
 - [Application layout](layout.spec.md)
 - [Window chrome](window-chrome.spec.md)
 - [Electron host](electron-shell.spec.md)
