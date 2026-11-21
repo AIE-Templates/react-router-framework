@@ -30,7 +30,7 @@ Vitest runs in watch mode by default; use pnpm exec vitest run for a finite run.
 
 ## Design
 
-[Design specs](docs/specs/README.md) describe settled contracts; [ADRs](docs/adrs/) explain accepted decisions. AppRoot, AppShell and ModuleLayout separate environment, application framing and module state. Components use useAppEnvironment; document attributes only mirror its state.
+[Design specs](docs/specs/README.md) describe settled contracts and rationale. AppRoot, AppShell and ModuleLayout separate environment, application framing and module state. Components use useAppEnvironment; document attributes only mirror its state.
 
 ## Scroll and landmarks
 
