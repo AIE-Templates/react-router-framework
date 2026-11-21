@@ -10,4 +10,5 @@ allowBuilds:
 
 # The default Node entry in 8.5.0 returns HEAD before setting the document media type.
 patchedDependencies:
+  app-builder-lib@26.18.0: patches/app-builder-lib-nsis-destination.patch
   "@react-router/dev@8.5.0": patches/react-router-dev-head.patch

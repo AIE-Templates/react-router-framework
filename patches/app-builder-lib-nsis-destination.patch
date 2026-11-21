@@ -1,0 +1,17 @@
+diff --git a/templates/nsis/installer.nsi b/templates/nsis/installer.nsi
+--- a/templates/nsis/installer.nsi
++++ b/templates/nsis/installer.nsi
+@@ -49,7 +49,12 @@ Function .onInit
+ Function .onInit
+   Call setInstallSectionSpaceRequired
+
+-  SetOutPath $INSTDIR
++  !ifdef BUILD_UNINSTALLER
++    SetOutPath $INSTDIR
++  !else
++    InitPluginsDir
++    SetOutPath $PLUGINSDIR
++  !endif
+   ${LogSet} on
+
+   !ifmacrodef preInit
