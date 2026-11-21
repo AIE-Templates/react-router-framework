@@ -4,6 +4,9 @@ Core provides `ManagersRegistry` → `VisualManagerRegistry` → `VisualManagerP
 Registries are stateless composition boundaries. The provider creates one stable, document-scoped
 VisualManager and owns connection cleanup. Context carries the instance; hooks subscribe to immutable
 state/status snapshots and expose stable actions. Server requests never share a mutable instance.
+UI-library persistence and application state must not become competing writers; UI and host
+integrations consume the manager and report their own synchronization outcomes without changing
+preference authority.
 
 ## Preferences and persistence
 

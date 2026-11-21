@@ -4,7 +4,7 @@
 
 The layout has three responsibility boundaries. `AppRoot` owns the effective environment, runtime lifecycle and global provider composition. `AppShell` owns application navigation, module placement and window chrome composition. `ModuleLayout` owns its workspace, optional sidebar and auxiliary panel, and module-scoped layout state. A single-module application still uses an application shell; it may omit navigation.
 
-Modules must not branch on operating systems, estimate native button geometry or call window IPC. Route state determines the current module. Business providers own themes, sessions and organizations; do not duplicate an authoritative organization already encoded in the URL. Layout state is separate from business state. `moduleId` identifies a module definition, not a permanent instance identity. Unmounting releases subscriptions and temporary resources; persistence belongs to the caller.
+Modules must not branch on operating systems, estimate native button geometry or call window IPC. Core exports generic shell and window-chrome bridge contracts with shell, mode and fullscreen seeds so web, static and fullstack applications inherit it without host protocols; concrete hosts adapt their request context to those seeds instead of importing transport details into Core. Route state determines the current module. Business providers own themes, sessions and organizations; do not duplicate an authoritative organization already encoded in the URL. Layout state is separate from business state. `moduleId` identifies a module definition, not a permanent instance identity. Unmounting releases subscriptions and temporary resources; persistence belongs to the caller.
 
 ## Environment and rendering (LAY-02)
 
