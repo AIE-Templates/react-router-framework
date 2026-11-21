@@ -528,6 +528,14 @@ function accepts(port: number, host: string): Promise<boolean> {
 /** Whether anything accepts connections on the port: for the release launch, any listener is too many. */
 const listening = async (port: number) => (await accepts(port, "127.0.0.1")) || (await accepts(port, "::1"));
 
+/** Classify a connection when its probe completes: the main process can exit during the connect. */
+export async function pollRefusalPort(isRunning: () => boolean, probe: () => Promise<boolean>, until: number) {
+  while (isRunning() && Date.now() < until) {
+    if (await probe()) return isRunning() ? "live" : "late";
+  }
+  return undefined;
+}
+
 /** The `Browser` a DevTools endpoint reports on `/json/version`, or undefined when there is none. */
 async function devtoolsBrowser(port: number): Promise<string | undefined> {
   try {
@@ -696,7 +704,7 @@ async function refusalAttempt(
       { deadlineMs: REFUSAL_TIMEOUT_MS, extraFds: port === undefined ? 2 : 0 },
     );
     const { app } = started;
-    let listened = false;
+    let listener: "live" | "late" | undefined;
     let answered = false;
     if (port === undefined) {
       // Ask it something it would answer, were the pipe open.
@@ -704,19 +712,24 @@ async function refusalAttempt(
     } else {
       // Polled for the whole life of the process, and once more after it.
       const until = Date.now() + REFUSAL_TIMEOUT_MS + OUTPUT_GRACE_MS;
-      while (app.isRunning() && !listened && Date.now() < until) listened = await listening(port);
-      if (listened) app.expire();
+      listener = await pollRefusalPort(
+        () => app.isRunning(),
+        () => listening(port),
+        until,
+      );
+      if (listener === "live") app.expire();
     }
     const outcome = await app.exited;
-    const lateListener = port !== undefined && !listened && (await listening(port));
+    const lateListener =
+      listener === "late" || (listener === undefined && port !== undefined && (await listening(port)));
     // Its main process is gone; anything it created must be too.
     const stragglers = await finish(started);
-    const verdict = judgeRefusal(outcome, remoteSwitch, { listened, answered }, stragglers);
+    const verdict = judgeRefusal(outcome, remoteSwitch, { listened: listener === "live", answered }, stragglers);
     if (verdict.ok && lateListener)
       return {
         ok: false,
         lateListener: true,
-        reason: `port ${port} accepted a connection only after the release process exited`,
+        reason: `port ${port} had a connection confirmed only after the release process exited`,
       };
     const stderr = app.stderr().trim();
     return verdict.ok || stderr === ""

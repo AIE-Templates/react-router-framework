@@ -147,9 +147,9 @@ function startElectron() {
     env: { ...spec.env, DESKTOP_USER_DATA_SUFFIX: process.env.DESKTOP_USER_DATA_SUFFIX ?? "dev" },
     stdin: true,
   });
-  const monitor = monitorDesktopChild(child, spec, spawnedAt);
-  child.stdout?.pipe(process.stdout, { end: false });
   let stopping = false;
+  const monitor = monitorDesktopChild(child, spec, spawnedAt, { isStopping: () => stopping });
+  child.stdout?.pipe(process.stdout, { end: false });
   const finished = (async () => {
     try {
       return await monitor.finished;
