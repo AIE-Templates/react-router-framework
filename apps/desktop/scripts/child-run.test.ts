@@ -36,6 +36,12 @@ describe("test child output and cleanup", () => {
     });
     await expect(monitorDesktopChild(child, location, at).finished).rejects.toThrow(/ENOENT|ENOTDIR/);
   });
+  it("lets a requested stop finish after stdout closes before the profile is printed", async () => {
+    const monitor = run('require("node:fs").closeSync(1); setTimeout(() => process.exit(0), 250)', {
+      isStopping: () => true,
+    });
+    await expect(monitor.finished).resolves.toBe(0);
+  });
   it("requires a successful result from this smoke, even for an early clean exit with the right profile", async () => {
     const options = { requireSmokeResult: true };
     await expect(run(profile, options).finished).rejects.toThrow("without a successful SMOKE_RESULT");

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import * as powershell from "./powershell.ts";
-import { finish, launch, verifyRefusalPort } from "./verify-release.ts";
+import { finish, launch, pollRefusalPort, verifyRefusalPort } from "./verify-release.ts";
 
 const location = { command: process.execPath, processDir: dirname(process.execPath) };
 
@@ -86,6 +86,17 @@ it("keeps an unconfirmed helper tracked until a later stop succeeds", async () =
     expect(stopped.map((item) => item.pid)).toContain(pid);
   }
 }, 30000);
+
+it("classifies a successful probe that spans process exit as late", async () => {
+  let running = true;
+  const result = pollRefusalPort(
+    () => running,
+    () => Promise.resolve(true),
+    Infinity,
+  );
+  running = false;
+  await expect(result).resolves.toBe("late");
+});
 
 it.each([true, false])("rechecks a late listener once and uses the full second verdict (%s)", async (ok) => {
   const attempt = vi

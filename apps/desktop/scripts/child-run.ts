@@ -38,9 +38,16 @@ export function monitorDesktopChild(
     onLine,
     userDataDir,
     requireSmokeResult = false,
+    isStopping,
     // A bounded cleanup grace period, not a measured upper limit for Electron to drain.
     drainMs = 3_000,
-  }: { onLine?: (line: string) => void; userDataDir?: string; requireSmokeResult?: boolean; drainMs?: number } = {},
+  }: {
+    onLine?: (line: string) => void;
+    userDataDir?: string;
+    requireSmokeResult?: boolean;
+    isStopping?: () => boolean;
+    drainMs?: number;
+  } = {},
 ) {
   const stdout = child.stdout;
   if (!stdout) throw new Error("Monitoring a desktop launch requires piped stdout");
@@ -128,7 +135,10 @@ export function monitorDesktopChild(
       }
     });
   }
-  const profile = verifyBuildProfile(stdout, location.profile).catch(abort);
+  const profile = verifyBuildProfile(stdout, location.profile).catch((error: unknown) => {
+    // A requested dev stop owns the grace period even if stdout closes before the profile arrives.
+    if (!isStopping?.()) abort(error);
+  });
   child.on("error", (err) => {
     if (child.pid) abort(err);
     else failure ??= err; // An unsuccessful spawn still emits close.
