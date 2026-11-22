@@ -7,7 +7,7 @@ import { expect, targetProcesses, quit, test, waitForApp } from "./desktop.ts";
 // reload, a closed and reopened window (macOS keeps the app running), a full quit and relaunch and a
 // hard kill on the same user data directory. Server cookies go through the main process's jar
 // (src/main/cookie-jar.ts, spec HOST-09). The /__e2e/cookies endpoints exist only with DESKTOP_E2E=1
-// (src/e2e-routes.ts).
+// (src/diagnostics/e2e/routes.ts).
 
 async function writeAll(page: Page): Promise<void> {
   await page.evaluate(async () => {
