@@ -1,23 +1,6 @@
-// What every launcher of the desktop app shares: the Playwright fixtures (e2e/desktop.ts), the
-// benchmark (scripts/bench.ts), `pnpm --dir apps/desktop start:test` and with it the smoke
-// (scripts/start-test.ts), and development (scripts/dev.ts).
-// - `launchSpec()` is the one place that says how a target (unpackaged bundles or the packaged test
-//   app) of a build profile is started: executable, arguments, Chromium switches, working directory
-//   and environment. Callers add only what is theirs (a test's media switch, a user's arguments).
-//   Test launches always run on a user data directory the caller names (`--user-data-dir`), never
-//   on the installed app's, and on macOS and Linux keep away from the system keychain or keyring,
-//   which the packaged test app's cookie encryption fuse would otherwise reach for
-//   (scripts/fuses.ts).
-// - Each build profile lives in its own `.vite/<profile>` (scripts/build-profile.ts) and the main
-//   process logs the profile it was built with before anything else
-//   (`{"buildProfile":"test","msg":"build profile"}`). A launcher that spawns the app itself reads
-//   that line from its stdout (`verifyBuildProfile`) and fails when it is not the profile it meant to
-//   start, so a stale or mismatched build can never pass as the one under test. Playwright consumes
-//   the app's stdout itself; e2e/desktop.ts asks the main process instead (`desktopBuildProfile`).
-// - `checkLaunchInputs()` first makes sure the target exists and, unpackaged, that its bundles match
-//   the web build (scripts/check-web-build.ts); packaged, that the fuses of the binary are the test
-//   profile's (scripts/fuses.ts), so a package whose `afterPack` did not run is never launched.
-// Runs on Node directly (type stripping).
+// Shared launch configuration (`launchSpec`), input checks (`checkLaunchInputs`) and build-profile
+// verification (`verifyBuildProfile`) for Playwright, smoke, bench and dev launchers.
+// Contract: docs/specs/electron-shell.spec.md. Runs on Node directly (type stripping).
 import { execFileSync } from "node:child_process";
 import {
   existsSync,

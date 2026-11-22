@@ -1,17 +1,5 @@
-// The real-app transport benchmark runner: launches the built, unpackaged app (`electron .`, as
-// `pnpm --dir apps/desktop start:test` does) with DESKTOP_BENCH=1 in a fresh process per run, alternating
-// ack coalescing off and on (ABBA order across rounds), collects each run's BENCH_RESULT line into
-// a JSON Lines file and prints the comparison. Builds nothing: run `pnpm build:desktop:test` first, or
-// pass `--app` with a packaged test-profile executable (then nothing needs building, but the script
-// still runs from this checkout: it imports scripts/launch.ts and the modules beside it; its fuses
-// must be the test profile's). Either way the app is started the way scripts/launch.ts says, each run
-// on a fresh user data directory removed afterwards, and must report the test build profile. Results
-// are compared within the files given (both modes of one run by default), never against a stored
-// baseline. Every record carries what it was measured on, the target (unpackaged or packaged) and
-// the fuses of the binary that ran, and runs that differ in either are never merged into one file
-// or compared (a packaged app's fuses change what it costs). Runs on Node directly (type
-// stripping). See README, "Real-app benchmark".
-//
+// Real-app transport benchmark runner (ABBA rounds of ack coalescing off/on over fresh test launches).
+// Runs on Node directly (type stripping); see apps/desktop/README.md.
 //   node scripts/bench.ts [run] [--rounds 5] [--measure-ms 10000] [--warmup-ms 2000]
 //                         [--cases api-c1,...] [--modes off,on] [--label text] [--out file.jsonl]
 //                         [--app path/to/packaged/executable]
@@ -337,8 +325,6 @@ async function run(options: Map<string, string>): Promise<void> {
     process.exitCode = 1;
   }
 }
-
-// ---- compare -------------------------------------------------------------------------------
 
 interface Metric {
   label: string;

@@ -1,24 +1,7 @@
-// Checks that the two halves of the web app a desktop build ships come from the same web build: the
-// server build, bundled into `.vite/<profile>/utility.mjs` when the desktop was built, and the client
-// build in apps/web/build/client, which the utility serves unpackaged and packaging copies into the
-// app's resources. Rebuilding the web app without rebuilding the desktop (or the other way round)
-// leaves pages referencing hashed scripts and styles the client directory no longer has, or a
-// utility running older server code than the web build on disk; this catches both before packaging
-// and before every unpackaged launch, instead of as broken pages.
-//
-//   node scripts/check-web-build.ts [dev | test | release]   (default release)
-//
-// - The completed Web build records its client tree digest outside the client directory. The utility
-//   embeds that digest, so desktop-only rebuilds cannot silently bless a changed client build.
-// - Client half: every hashed `/assets/<name>-<hash>.<ext>` path the utility bundle references (the
-//   route manifest, entry and route modules, stylesheets) must exist in
-//   apps/web/build/client/assets. The reverse does not hold (assets that only other assets load are
-//   not in the server build), so the digest covers even the files the server does not reference.
-// - Server half: the utility build records the SHA-256 of the apps/web/build/server/index.js it
-//   bundled in `.vite/<profile>/web-server.json` (`recordWebServerBuild`, vite.utility.config.ts);
-//   that file must still have the same digest. The entry imports its chunks under content-hashed
-//   names, so a change anywhere in the server build changes it.
-// Runs on Node directly (type stripping); apps/web is only read.
+// Verifies that `.vite/<profile>/utility.mjs` and `apps/web/build/client` come from the same Web
+// build (client tree digest, referenced hashed assets, and server entry SHA-256).
+// Usage: node scripts/check-web-build.ts [dev | test | release]  (default: release)
+// Contract: docs/specs/electron-shell.spec.md (HOST-06). Runs on Node directly (type stripping).
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
