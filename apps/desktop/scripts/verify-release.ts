@@ -1,73 +1,7 @@
-// `pnpm verify:release`: checks the packaged release app in out/release from the outside, the way it
-// will be shipped. It starts, watches and stops its own instances independently of the manual
-// release launcher. Playwright and diagnostics exercise the test profile.
-//
-//   node scripts/verify-release.ts [--no-build] [--distribution] [--allow-no-sandbox]
-//
-// By default it first builds what it checks, through pnpm (as scripts/build.ts requires): the web app
-// and the release bundles (`build release --with-web`), the test bundles against the same web build
-// (`build test`; check 2 runs verify:build's checks on both), the release package (`package`)
-// and the test package (`package:test`, the positive controls of check 3). `--no-build` checks what is on
-// disk as it is: out/release, the .vite bundles and out/test.
-//
-// Five checks, each ending in one result line, `pass`, `fail` or `skipped` with its reason. Skipped
-// checks are never counted as passed. The exit status says which of three outcomes the run had:
-//   0  verified: checks 1 to 4 passed, and check 5 passed or was skipped for a local package;
-//   1  failed: at least one check failed;
-//   2  incomplete: nothing failed, but one of checks 1 to 4 was skipped (or check 5, for a package
-//      declared for distribution on macOS or Windows), as check 4 is on a macOS screen that is
-//      locked: the package was not verified, whatever else passed.
-// 1. Fuses: the six fuses read back from the packaged binary are the release column of
-//    scripts/fuses.ts.
-// 2. Package contents, from the final app.asar itself (scripts/asar.ts): exactly the release
-//    manifest and bundles (no other profile's bundles, nothing stray, nothing unpacked), entry
-//    `.vite/release/main.cjs`, every file matching the integrity the archive records (and on macOS
-//    the header the integrity Info.plist records); the bundles are byte for byte those whose module
-//    lists and text scripts/verify-build.ts checks here (with its test-profile control), and their
-//    text is checked again as shipped; the client assets the shipped utility references are in the
-//    package's resources.
-// 3. Remote debugging refused: the release app started with `--remote-debugging-port=<free port>`
-//    and with `--remote-debugging-pipe` (given pipes on fds 3 and 4, sent `Browser.getVersion`) must
-//    each exit with the refusal's own code and log line (src/startup-signals.ts) as its main process's
-//    only line, leave no process behind, never accept a connection on the port nor answer on the
-//    pipe. Positive controls: the packaged test app started the same way must answer `/json/version`
-//    on the port and the command on the pipe, or the check fails.
-// 4. Startup smoke: the release app on a fresh `--user-data-dir`, kept off the system credential
-//    store (`--use-mock-keychain` on macOS, `--password-store=basic` on Linux), must have its main
-//    process report the release build profile and then its main window ready
-//    (MAIN_WINDOW_READY_MESSAGE) within 30 s, then, asked to quit from outside (SIGTERM on macOS and
-//    Linux, `taskkill` without /F on Windows, which must itself succeed), exit 0 with every process it
-//    created gone. It must have written its data into that directory and left the installed app's
-//    userData directory as it was (absent stays absent). On Windows its main process must have run
-//    the cookie key writer on that fresh profile and checked its key (one COOKIE_KEY_STORED_MESSAGE
-//    and one COOKIE_KEY_CHECKED_MESSAGE line, no mismatch, no writer warning, no failure record);
-//    elsewhere none of those lines may appear. The decision is `judgeStartup`; a failure carries the
-//    main process's last log lines (with their times), what of the launch was running and the end of
-//    its stderr. On macOS a locked screen (scripts/session-state.ts) skips this check: macOS then
-//    reports no window as shown, so a ready window could not be told from a missing one.
-// 5. Signing: by intended use (scripts/release-verdicts.ts, `judgeSigning`). A local unsigned package
-//    is skipped; `--distribution` declares the package is for distribution, where a missing or
-//    invalid signature fails (macOS: codesign deep strict verify, stapled notarization, Gatekeeper;
-//    Windows: Authenticode for the app and, for distribution, its NSIS installer). Nothing here needs a signing key. Linux: nothing applies.
-// Linux hosts where Chromium's sandbox cannot start (scripts/launch.ts, `linuxSandboxBlocker`) skip
-// checks 3 and 4 (exit status 2), saying what would open the gate there, unless `--allow-no-sandbox`
-// lets them run with `--no-sandbox`, which their result lines then state. Checks 1, 2 and 5 run
-// anyway. The sandbox is probed on the package before this run packages it and again after: packaging
-// writes a new chrome-sandbox, so a helper someone made root-owned 4755 only counts with --no-build.
-// Processes: every launch is the leader of its own process group (POSIX), and the processes it
-// created are told apart from everything else by a listing taken just before it and their start
-// times (`launchProcesses`). Nothing the launch did not create is ever counted or killed. An
-// interrupted run (SIGINT, SIGTERM, SIGHUP) or one that ends unexpectedly kills what its launches
-// created and removes its temporary directories before it exits.
-// On macOS every launch carries `--use-mock-keychain` (measured: the release package then encrypts
-// its cookies with Chromium's mock key, and the login keychain is neither read for nor given a
-// "<product> Safe Storage" item), and a hard deadline that kills the launch's whole process tree. A
-// launch that does not get ready in time is killed and fails, never retried: a system dialog could be
-// waiting on screen (a keychain one, should the mock keychain ever have no effect). A first launch of a
-// freshly written package is slower (measured on macOS: ready in 1.8 to 2.0 s against 0.5 s for the
-// next launch, while the system checks the new helper executables on their first start), well within
-// the deadline: no allowance is needed for it.
-// Runs on Node directly (type stripping).
+// `pnpm verify:release`: verifies the packaged release app in out/release from outside.
+// Usage: node scripts/verify-release.ts [--no-build] [--distribution] [--allow-no-sandbox]
+// Exit codes: 0 verified, 1 failed, 2 incomplete (a required check was skipped).
+// Contract: docs/specs/electron-shell.spec.md (Verification requirements). Runs on Node directly.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
@@ -153,8 +87,6 @@ function say(line: string): void {
 
 const sleep = (ms: number) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
-// ---- the package ----------------------------------------------------------------------------------
-
 interface Package {
   executable: string;
   location: ProcessLocation;
@@ -216,15 +148,11 @@ function fingerprint(directory: string): string {
   return lines.join("\n");
 }
 
-// ---- processes ------------------------------------------------------------------------------------
-
 function kill(pid: number, signal: NodeJS.Signals = "SIGKILL"): void {
   try {
     process.kill(pid, signal);
   } catch {}
 }
-
-// ---- launches -------------------------------------------------------------------------------------
 
 /** The caller's environment without what would change what an Electron app does. */
 function cleanEnv(): NodeJS.ProcessEnv {
@@ -584,8 +512,6 @@ function releaseSwitches(userDataDir: string, gate: LaunchGate): string[] {
     ...gate.switches,
   ];
 }
-
-// ---- checks ---------------------------------------------------------------------------------------
 
 function report(id: number, name: string, status: CheckStatus, reason: string): CheckResult {
   say(`${id} ${name}: ${status}: ${reason}`);
@@ -1022,8 +948,6 @@ async function checkSigning(pkg: Package, distribution: boolean): Promise<CheckR
     );
   }
 }
-
-// ---- main -----------------------------------------------------------------------------------------
 
 /** Runs `pnpm <args>` in apps/desktop with the package manager that runs this script. */
 function pnpm(args: string[]): void {

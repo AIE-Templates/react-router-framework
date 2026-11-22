@@ -1,31 +1,6 @@
-// `pnpm --dir apps/desktop start:test`: the test build profile, the way the in-app smoke and manual checks
-// run it, for example `DESKTOP_SMOKE=1 pnpm --dir apps/desktop start:test`.
-//
-//   node scripts/start-test.ts [--packaged | --app <executable>] [electron arguments...]
-//
-// By default the unpackaged bundles (`electron .`, whose package.json `main` is
-// `.vite/test/main.cjs`); `--packaged` starts the packaged test app in out/test
-// (`pnpm package:desktop:test`), `--app` another packaged test-profile executable. Started the way
-// scripts/launch.ts says: it first checks the target exists (unpackaged: that the bundles match the
-// web build; packaged: that its fuses are the test profile's), then that the started main process
-// reports the test build profile; otherwise it stops the app and exits 1. The app runs on a fresh
-// user data directory, removed when it exits, unless the arguments name one
-// (`--user-data-dir=<dir>`, kept). The app's environment, stdin, output and exit status pass through.
-//
-// Signals (POSIX): the app runs in its own session and process group (as scripts/verify-release.ts
-// starts it), so a signal meant for this launcher (Ctrl+C, which the terminal sends to its foreground
-// process group, `kill -- -<pgid>`, or `kill <pid>`) never reaches the app's helper processes
-// directly. Killed with them, Chromium's GPU process dies under a main process that is still quitting,
-// and on Linux it then aborts ("GPU process isn't usable. Goodbye.", measured 30 of 30 runs). And
-// Electron answers only the first SIGINT or SIGTERM with its own quit and then restores the default
-// action, so the same signal arriving twice at once (the group's and a forwarded copy) cut that quit
-// short. Instead every SIGINT, SIGTERM and SIGHUP this launcher receives is passed on at once to the
-// app's main process alone, which then quits the way it does when asked (measured: exit 0 with every
-// process gone). A second signal while the app still runs is passed on too, on purpose: by then the
-// default action ends an app that did not quit. A third kills the app's whole process group with
-// SIGKILL, which also ends one that is stopped; so does a second one once the main process has exited
-// while a helper still holds its output open. The app has no controlling terminal; it reads no input
-// (stdin stays shared all the same). Windows has no such signals: each one terminates the app.
+// `pnpm --dir apps/desktop start:test`: launches the test profile (unpackaged, --packaged, or --app)
+// via scripts/launch.ts on a fresh user data directory unless `--user-data-dir` is supplied.
+// Usage: node scripts/start-test.ts [--packaged | --app <executable>] [electron arguments...]
 // Runs on Node directly (type stripping).
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -86,6 +61,8 @@ const running = () => child.exitCode === null && child.signalCode === null;
 const note = (message: string) => process.stderr.write(`start: ${message}\n`);
 let received = 0;
 let closed = false;
+// Forward POSIX signals to the main process only so Chromium's GPU process is not killed mid-quit
+// on Linux; the 2nd signal hits Electron's default action, and the 3rd SIGKILLs the process group.
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => {
     if (closed) return;

@@ -18,8 +18,6 @@ import type { AsarEntry } from "./asar.ts";
 import { bundleDir, BUILD_PROFILES, type Bundle, BUNDLES } from "./build-profile.ts";
 import type { ScreenLock } from "./session-state.ts";
 
-// ---- results ------------------------------------------------------------------------------------
-
 export type CheckStatus = "pass" | "fail" | "skipped";
 
 export interface CheckResult {
@@ -89,8 +87,6 @@ export function summarize(results: readonly CheckResult[], { signingRequired = f
   return { lines, passed, failed, skipped, exitCode: VERIFIED_EXIT };
 }
 
-// ---- launch gate --------------------------------------------------------------------------------
-
 export interface LaunchGate {
   /** Whether the release package may be launched here at all. */
   run: boolean;
@@ -157,8 +153,6 @@ export function launchGate(
       `${options.join("; ")}; or pass ${ALLOW_NO_SANDBOX_FLAG} to run it without the sandbox`,
   };
 }
-
-// ---- asar contents ------------------------------------------------------------------------------
 
 export interface Manifest {
   name: string;
@@ -273,8 +267,6 @@ export function checkBundleLink(
   return { problems, findings };
 }
 
-// ---- launches -----------------------------------------------------------------------------------
-
 export interface LaunchOutcome {
   code: number | null;
   signal: string | null;
@@ -385,8 +377,6 @@ export function pipeReply(data: string, id: number): Record<string, unknown> | u
   }
   return undefined;
 }
-
-// ---- processes ----------------------------------------------------------------------------------
 
 /** One row of a process listing. */
 export interface ProcessInfo {
@@ -644,8 +634,6 @@ export function missingKinds(processes: readonly ProcessInfo[], rootPid: number)
   return ["main", "renderer", "utility (node)"].filter((kind) => !kinds.has(kind));
 }
 
-// ---- startup smoke ------------------------------------------------------------------------------
-
 /** What scripts/verify-release.ts observed of one normal release launch. */
 export interface StartupObservation {
   platform: NodeJS.Platform;
@@ -896,8 +884,6 @@ export function judgeStartup(observed: StartupObservation): { status: CheckStatu
       `${real.path} untouched (${real.before === "absent" ? "absent before and after" : "unchanged"})`,
   };
 }
-
-// ---- signing ------------------------------------------------------------------------------------
 
 /** What scripts/verify-release.ts found out about the package's signature. */
 export type SignatureFacts =

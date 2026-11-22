@@ -1,27 +1,6 @@
-// `pnpm verify:build`: checks that each build profile bundles only what it may.
-//
-//   node scripts/verify-build.ts [--no-build]
-//
-// Two checks per profile, release first and test as its positive control:
-// - Modules, on the bundler's own module lists (scripts/bundle-modules.ts; PROFILE_ENTRIES in
-//   scripts/build-profile.ts). Release: main.cjs, preload.cjs and utility.mjs contain nothing of
-//   src/diagnostics (other than the empty entry), no development host or proxy and not the module
-//   that reads the debug environment variables; the bundles that import those entries hold the empty
-//   implementations instead. Test: the same detector must find the diagnostics and the debug
-//   environment module in main.cjs and utility.mjs, or the release result would prove nothing, and
-//   must not find the development host.
-// - Text, on the bundles themselves (scripts/bundle-markers.ts), for what a module list cannot see,
-//   such as a debug variable read in some other file. Release: no debug or development environment
-//   variable name, no diagnostic route prefix or result marker, no `desktopBuildProfile`, no
-//   `DESKTOP_*` name but the ones a release build reads; main.cjs carries the remote debugging
-//   refusal. Test: every one of those markers that belongs to it must be found, the development
-//   variable must not, and main.cjs has no refusal.
-// The dev profile exists only while scripts/dev.ts runs and is not checked here.
-// By default it first builds the test and release desktop bundles (scripts/build.ts; the web build
-// must exist), so what it checks is never out of date. `--no-build` checks the bundles on disk and
-// fails when one is missing or its module record was not written for it.
-// scripts/verify-release.ts runs the same checks (`checkBuiltBundles`) and ties the release package's
-// bundles to them by hash. Runs on Node directly (type stripping), through pnpm.
+// `pnpm verify:build`: verifies release bundle isolation (module lists + text markers) using test
+// bundles as positive controls. Usage: node scripts/verify-build.ts [--no-build]
+// Contract: docs/specs/electron-shell.spec.md (HOST-11). Runs on Node directly (type stripping).
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
