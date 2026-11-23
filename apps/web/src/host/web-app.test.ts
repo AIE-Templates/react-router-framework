@@ -59,6 +59,20 @@ describe("static files", () => {
     expect(await response.text()).toBe(body);
   });
 
+  it.each([
+    ["Bytes=1-2", 206, "bytes 1-2/4", "co"],
+    ["bytes=0-1, 2-3", 200, null, "icon"],
+    ["items=0-1", 200, null, "icon"],
+  ] as const)(
+    "normalizes single byte ranges and ignores unsupported syntax: %s",
+    async (range, status, contentRange, body) => {
+      const response = await web.request("/favicon.ico", { headers: { range } });
+      expect(response.status).toBe(status);
+      expect(response.headers.get("content-range")).toBe(contentRange);
+      expect(await response.text()).toBe(body);
+    },
+  );
+
   it("serves assets immutable and compressed, through the server's middleware", async () => {
     const response = await web.request("/assets/app.js", { headers: { "accept-encoding": "gzip" } });
 
