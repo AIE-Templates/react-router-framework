@@ -82,11 +82,17 @@ function staticFiles(clientDir: string, cacheControl: string, csp?: HostAppOptio
     const file = await resolveStaticFile(clientDir, path);
     const isHtml = file !== undefined && /\.html?$/i.test(file);
     const isDocument = isHtml || !/\.\w+$/.test(path) || /\.(html|data)$/.test(path);
-    if (file && c.req.raw.headers.has("range")) {
+    const range = c.req.raw.headers.get("range");
+    if (file && range !== null) {
       const validator = c.req.raw.headers.get("if-range");
+      const bytes = /^bytes=(\d+-\d*|-\d+)$/i.exec(range)?.[1];
       // This host only emits Last-Modified. An entity tag cannot match that validator.
-      if (isHtml || (validator !== null && validator !== (await stat(file)).mtime.toUTCString())) {
-        c.req.raw = withoutRange(c.req.raw);
+      const effective =
+        !isHtml && bytes && (validator === null || validator === (await stat(file)).mtime.toUTCString())
+          ? `bytes=${bytes}`
+          : undefined;
+      if (range !== effective) {
+        c.req.raw = withRange(c.req.raw, effective);
       }
     }
     let found = true;
@@ -159,14 +165,16 @@ async function resolveStaticFile(clientDir: string, path: string): Promise<strin
   return undefined;
 }
 
-/** `request` without its Range header: in place where headers are mutable, else a copy (GET/HEAD, no body). */
-function withoutRange(request: Request): Request {
+/** `request` with its Range header normalized or removed: in place where headers are mutable, else a copy (GET/HEAD, no body). */
+function withRange(request: Request, range?: string): Request {
   try {
-    request.headers.delete("range");
+    if (range) request.headers.set("range", range);
+    else request.headers.delete("range");
     return request;
   } catch {
     const headers = new Headers(request.headers);
-    headers.delete("range");
+    if (range) headers.set("range", range);
+    else headers.delete("range");
     return new Request(request.url, { method: request.method, headers, signal: request.signal });
   }
 }
