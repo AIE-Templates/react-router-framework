@@ -126,14 +126,33 @@ function waitForOutput(child: ChildProcess, marker: string, label: string): Prom
   });
 }
 
-async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
+export function watchRequiredWorker(
+  child: ChildProcess,
+  label: string,
+  closing: () => boolean,
+  exited: (code: number) => void,
+): void {
+  const fail = (reason: string) => {
+    if (closing()) return;
+    log(`${label} ${reason}; stopping development session`);
+    exited(1);
+  };
+  child.once("error", (err) => fail(`failed: ${err.message}`));
+  child.once("exit", (code, signal) => fail(`exited unexpectedly (${signal ?? code})`));
+}
+
+export async function waitForHttp(url: string, timeoutMs: number, fetchImpl: typeof fetch = fetch): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  while (true) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     try {
-      const response = await fetch(url);
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(remaining) });
       if (response.ok) return;
     } catch {}
-    await new Promise((r) => setTimeout(r, 250));
+    const pause = Math.min(250, deadline - Date.now());
+    if (pause <= 0) break;
+    await new Promise((r) => setTimeout(r, pause));
   }
   throw new Error(`${url} did not answer within ${timeoutMs} ms`);
 }
@@ -286,6 +305,12 @@ async function main(): Promise<void> {
   // `react-router dev` relaunches itself once with --conditions=development; the server that
   // answers first goes away again. Wait for the relaunched one to announce itself, then for health.
   await waitForOutput(web, "Local:", "web");
+  watchRequiredWorker(
+    web,
+    "web",
+    () => shuttingDown,
+    (code) => void shutdown(code),
+  );
   await waitForHttp(`${devServerUrl}/api/health`, 60_000);
 
   // Development never forks the utility (pages come from the dev server), and its bundle needs
@@ -298,16 +323,19 @@ async function main(): Promise<void> {
   log(`building ${entries.join(", ")} in watch mode`);
   const buildEnv = { [BUILD_PROFILE_ENV]: "dev", DESKTOP_DEV_SERVER_URL: devServerUrl };
   await Promise.all(
-    entries.map((entry) =>
-      waitForOutput(
-        run("pnpm", ["exec", "vite", "build", "--config", `vite.${entry}.config.ts`], {
-          cwd: desktopDir,
-          env: buildEnv,
-        }),
-        "built in",
+    entries.map(async (entry) => {
+      const watcher = run("pnpm", ["exec", "vite", "build", "--config", `vite.${entry}.config.ts`], {
+        cwd: desktopDir,
+        env: buildEnv,
+      });
+      await waitForOutput(watcher, "built in", `vite:${entry}`);
+      watchRequiredWorker(
+        watcher,
         `vite:${entry}`,
-      ),
-    ),
+        () => shuttingDown,
+        (code) => void shutdown(code),
+      );
+    }),
   );
 
   writeDevPackageJson(desktopDir);

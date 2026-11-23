@@ -88,7 +88,13 @@ export interface LaunchSpec extends LaunchLocation {
 /** The packaged app electron-builder's `--dir` writes for this machine, in `out/<profile>` (test by default). */
 export function packagedBinary(directory: string = desktopDir, profile: PackagedProfile = "test"): string {
   const metadata = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
-  return packagedExecutable(join(directory, "out", profile), metadata, process.platform, process.arch);
+  const out = join(directory, "out", profile);
+  const native = packagedExecutable(out, metadata, process.platform, process.arch);
+  if (process.platform === "darwin" && !existsSync(native)) {
+    const universal = packagedExecutable(out, metadata, "darwin", "universal");
+    if (existsSync(universal)) return universal;
+  }
+  return native;
 }
 
 /** A macOS bundle's helpers live under Contents/Frameworks, beside Contents/MacOS: take the bundle. */
