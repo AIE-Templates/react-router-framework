@@ -11,6 +11,7 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
   const container = useRef<HTMLDivElement>(null);
   const history = useRef(new Map<string, Positions>());
   const previous = useRef<ReturnType<typeof useLocation> | undefined>(undefined);
+  const pendingFragment = useRef<string | undefined>(undefined);
   const location = useLocation();
   const navigationType = useNavigationType();
 
@@ -22,6 +23,8 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
     const key =
       location.key === "default" ? JSON.stringify([location.pathname, location.search, location.hash]) : location.key;
     const saved = navigationType === NavigationType.Pop ? positions.get(key) : undefined;
+    const retryFragment = pendingFragment.current === key;
+    pendingFragment.current = undefined;
     const keepPanes =
       previous.current?.pathname === location.pathname &&
       previous.current.search === location.search &&
@@ -44,7 +47,7 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
       element.scrollTop = top;
     }
     let observer: MutationObserver | undefined;
-    if (!saved && location.hash) {
+    if ((!saved || retryFragment) && location.hash) {
       try {
         const id = decodeURIComponent(location.hash.slice(1));
         const scrollToTarget = () => {
@@ -56,8 +59,12 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
         if (!scrollToTarget()) {
           const fallback = root.querySelector("[data-hydrate-fallback]");
           if (fallback) {
+            pendingFragment.current = key;
             observer = new MutationObserver(() => {
-              if (scrollToTarget() || !root.contains(fallback)) observer?.disconnect();
+              if (scrollToTarget() || !root.contains(fallback)) {
+                if (pendingFragment.current === key) pendingFragment.current = undefined;
+                observer?.disconnect();
+              }
             });
             observer.observe(root, { childList: true, subtree: true });
           }

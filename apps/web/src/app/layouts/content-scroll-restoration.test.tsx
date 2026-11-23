@@ -1,4 +1,5 @@
 import { act, fireEvent, render } from "@testing-library/react";
+import { StrictMode } from "react";
 import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
@@ -96,6 +97,37 @@ describe("container scroll restoration", () => {
       { initialEntries: ["/#late"] },
     );
     const view = render(<RouterProvider router={router} />);
+    const target = document.createElement("h2");
+    target.id = "late";
+    const scrollIntoView = vi.fn<() => void>();
+    target.scrollIntoView = scrollIntoView;
+    const fallback = view.container.querySelector("main")!;
+    await act(async () => {
+      fallback.replaceWith(target);
+    });
+    expect(scrollIntoView).toHaveBeenCalledOnce();
+    target.replaceWith(fallback);
+  });
+
+  it("locates the initial fragment under StrictMode when hydration replaces the fallback", async () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <ContentScrollRestoration>
+              <main data-hydrate-fallback="" />
+            </ContentScrollRestoration>
+          ),
+        },
+      ],
+      { initialEntries: ["/#late"] },
+    );
+    const view = render(
+      <StrictMode>
+        <RouterProvider router={router} />
+      </StrictMode>,
+    );
     const target = document.createElement("h2");
     target.id = "late";
     const scrollIntoView = vi.fn<() => void>();
