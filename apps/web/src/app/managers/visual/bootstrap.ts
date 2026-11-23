@@ -24,7 +24,9 @@ export function visualKernel() {
     if (raw === null) return { kind: "missing" as const };
     try {
       const value = JSON.parse(raw);
-      if (!value || typeof value !== "object") return { kind: "invalid" as const };
+      if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.version !== "number") {
+        return { kind: "invalid" as const };
+      }
       if (value.version !== 1) return { kind: "unsupported-version" as const };
       return { kind: "valid" as const, preferences: parse(value.preferences) };
     } catch {
