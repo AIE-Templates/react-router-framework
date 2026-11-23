@@ -20,6 +20,7 @@ import {
   launchLocation,
   launchSpec,
   linuxSandboxBlocker,
+  packagedBinary,
   reportedBuildProfile,
   removeUserDataDir,
   type SandboxProbe,
@@ -483,4 +484,30 @@ describe("files on disk", () => {
     writeFileSync(join(assets, "entry.client-BECgCha7.js"), "");
     expect(() => checkUnpackagedBuild("test", desktopDir)).not.toThrow();
   });
+
+  it.runIf(process.platform === "darwin")(
+    "falls back to mac-universal when the host-arch macOS bundle is absent",
+    () => {
+      writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "desktop", productName: "My App" }));
+      const universal = packagedExecutable(
+        join(directory, "out", "release"),
+        { name: "desktop", productName: "My App" },
+        "darwin",
+        "universal",
+      );
+      const native = packagedExecutable(
+        join(directory, "out", "release"),
+        { name: "desktop", productName: "My App" },
+        "darwin",
+        process.arch,
+      );
+      expect(packagedBinary(directory, "release")).toBe(native);
+      mkdirSync(dirname(universal), { recursive: true });
+      writeFileSync(universal, "");
+      expect(packagedBinary(directory, "release")).toBe(universal);
+      mkdirSync(dirname(native), { recursive: true });
+      writeFileSync(native, "");
+      expect(packagedBinary(directory, "release")).toBe(native);
+    },
+  );
 });

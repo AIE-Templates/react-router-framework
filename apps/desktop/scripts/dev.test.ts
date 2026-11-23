@@ -2,7 +2,7 @@ import { ChildProcess } from "node:child_process";
 
 import { expect, it, vi } from "vitest";
 
-import { devElectron } from "./dev.ts";
+import { devElectron, waitForHttp, watchRequiredWorker } from "./dev.ts";
 
 function instance() {
   let resolve!: (code: number | null) => void;
@@ -50,4 +50,28 @@ it("waits for an in-flight restart on shutdown and does not launch its replaceme
   old.resolve(0);
   await stopped;
   expect(start).toHaveBeenCalledTimes(1);
+});
+
+it("shuts down when a required worker exits unexpectedly after startup, and ignores exits during shutdown", () => {
+  const exited = vi.fn<(code: number) => void>();
+  const crashed = new ChildProcess();
+  watchRequiredWorker(crashed, "vite:main", () => false, exited);
+  crashed.emit("exit", 1, null);
+  expect(exited).toHaveBeenCalledExactlyOnceWith(1);
+
+  const closing = new ChildProcess();
+  watchRequiredWorker(closing, "web", () => true, exited);
+  closing.emit("exit", 0, "SIGTERM");
+  expect(exited).toHaveBeenCalledTimes(1);
+});
+
+const stalledFetch: typeof fetch = (_input, init) =>
+  new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
+  });
+
+it("aborts a stalled health request when waitForHttp hits its deadline", async () => {
+  await expect(waitForHttp("http://127.0.0.1:5174/api/health", 40, stalledFetch)).rejects.toThrow(
+    "did not answer within 40 ms",
+  );
 });

@@ -82,6 +82,7 @@ describe("packaged desktop names", () => {
   it.each([
     ["darwin", "x64", ["mac", "My Product.app", "Contents", "MacOS", "My Product"]],
     ["darwin", "arm64", ["mac-arm64", "My Product.app", "Contents", "MacOS", "My Product"]],
+    ["darwin", "universal", ["mac-universal", "My Product.app", "Contents", "MacOS", "My Product"]],
     ["win32", "x64", ["win-unpacked", "My Product.exe"]],
     ["win32", "arm64", ["win-arm64-unpacked", "My Product.exe"]],
     ["linux", "x64", ["linux-unpacked", "desktop-shell"]],

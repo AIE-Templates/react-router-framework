@@ -27,7 +27,8 @@ export function packagedExecutable(
   const product = portableFilename(metadata.productName);
   const name = portableFilename(metadata.name).toLowerCase();
   if (platform === "darwin") {
-    return join(out, arch === "arm64" ? "mac-arm64" : "mac", `${product}.app`, "Contents", "MacOS", product);
+    const dir = arch === "universal" ? "mac-universal" : arch === "arm64" ? "mac-arm64" : "mac";
+    return join(out, dir, `${product}.app`, "Contents", "MacOS", product);
   }
   if (platform === "win32") {
     return join(out, arch === "arm64" ? "win-arm64-unpacked" : "win-unpacked", `${product}.exe`);
