@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -160,4 +160,28 @@ it("writes the mirror once per update, repeat command and reset", () => {
     act(command);
     expect(writes).toHaveBeenCalledOnce();
   }
+});
+
+function RetryButton() {
+  const { status, retry } = useVisualCookieStatus();
+  return (
+    <>
+      <output>{status}</output>
+      <button type="button" onClick={retry}>
+        Retry
+      </button>
+    </>
+  );
+}
+
+it("does not downgrade a future cookie version when retry is bound directly as a click handler", () => {
+  render(
+    <AppRoot>
+      <RetryButton />
+    </AppRoot>,
+  );
+  document.cookie = `${visualCookie.name}=${encodeURIComponent('{"version":2}')}; Path=/`;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(screen.getByRole("status")).toHaveTextContent("unsupported-version");
+  expect(readVisualCookie(document.cookie).kind).toBe("unsupported-version");
 });
