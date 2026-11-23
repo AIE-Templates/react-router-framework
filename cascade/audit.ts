@@ -10,7 +10,7 @@ import { ownedFileViolation, retiredWebPath } from "./ownership.ts";
 
 const { values } = parseArgs({
   options: {
-    repo: { type: "string", default: resolve(import.meta.dirname, "../..") },
+    repo: { type: "string", default: resolve(import.meta.dirname, "..") },
     reference: { type: "string" },
   },
 });

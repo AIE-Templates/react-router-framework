@@ -1,0 +1,14 @@
+{
+  "name": "react-router-framework-meta",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "audit:branches": "node cascade/audit.ts",
+    "cascade": "node cascade/cascade.ts",
+    "cascade:dry-run": "node cascade/cascade.ts --dry-run",
+    "test": "node --test cascade/*.test.ts"
+  }
+}

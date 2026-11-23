@@ -2,7 +2,7 @@
 /**
  * Propagates template branch changes downstream, following topology.json.
  *
- *   node tools/cascade/cascade.ts [--repo <path>] [--dry-run] [--skip-checks] [--keep-worktree]
+ *   node cascade/cascade.ts [--repo <path>] [--topology <file>] [--dry-run] [--skip-checks] [--force-checks] [--keep-worktree]
  *
  * Every input branch tip is fixed when the run starts. Branches are processed upstreams first in a
  * temporary worktree on detached commits: each upstream the branch does not contain yet is merged
@@ -60,7 +60,7 @@ interface NodeResult {
 
 const { values: options } = parseArgs({
   options: {
-    repo: { type: "string", default: resolve(import.meta.dirname, "../..") },
+    repo: { type: "string", default: resolve(import.meta.dirname, "..") },
     topology: { type: "string", default: join(import.meta.dirname, "topology.json") },
     "dry-run": { type: "boolean", default: false },
     "skip-checks": { type: "boolean", default: false },

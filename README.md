@@ -32,13 +32,12 @@ Business projects take a one-time snapshot of a template branch and evolve indep
 
 ## Maintenance
 
-- Branch topology, layer boundaries, and merge rules: [`BRANCH-PLAN.md`](BRANCH-PLAN.md)
-- Cascade automation and conflict recovery: [`tools/cascade/README.md`](tools/cascade/README.md)
-- Branch graph definition: [`tools/cascade/topology.json`](tools/cascade/topology.json)
+- Architecture, layer boundaries, merge contract, and cascade CLI reference: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Branch graph definition: [`cascade/topology.json`](cascade/topology.json)
 
 ```bash
-node --test tools/cascade/*.test.ts
-node tools/cascade/audit.ts
-node tools/cascade/cascade.ts --dry-run
-node tools/cascade/cascade.ts
+node --run test             # or: node --test cascade/*.test.ts
+node --run audit:branches   # or: node cascade/audit.ts
+node --run cascade:dry-run  # or: node cascade/cascade.ts --dry-run
+node --run cascade          # or: node cascade/cascade.ts
 ```
