@@ -1,0 +1,35 @@
+{
+  "branches": [
+    { "name": "starter/base", "upstreams": [], "enabled": true },
+    { "name": "starter/static", "upstreams": ["starter/base"], "enabled": true },
+    { "name": "starter/fullstack", "upstreams": ["starter/base"], "enabled": true },
+    { "name": "app/base/core", "upstreams": ["starter/base"], "enabled": true },
+    {
+      "name": "app/static/core",
+      "upstreams": ["app/base/core", "starter/static"],
+      "enabled": true
+    },
+    {
+      "name": "app/fullstack/core",
+      "upstreams": ["app/base/core", "starter/fullstack"],
+      "enabled": true
+    },
+    { "name": "app/base/mantine", "upstreams": ["app/base/core"], "enabled": true },
+    {
+      "name": "app/static/mantine",
+      "upstreams": ["app/base/mantine", "app/static/core"],
+      "enabled": true
+    },
+    {
+      "name": "app/fullstack/mantine",
+      "upstreams": ["app/base/mantine", "app/fullstack/core"],
+      "enabled": true
+    },
+    { "name": "platform/electron/core", "upstreams": ["app/fullstack/core"], "enabled": true },
+    {
+      "name": "platform/electron/mantine",
+      "upstreams": ["app/fullstack/mantine", "platform/electron/core"],
+      "enabled": true
+    }
+  ]
+}

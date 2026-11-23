@@ -1,0 +1,9 @@
+{
+  "name": "starter-cascade",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cascade": "node cascade.ts",
+    "test": "node --test"
+  }
+}
