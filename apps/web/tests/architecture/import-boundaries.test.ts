@@ -12,6 +12,23 @@ const feature = (path: string) => /^features\/([^/]+)\//.exec(path)?.[1];
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
+function staticSpecifier(node: unknown): string | undefined {
+  if (!record(node)) return undefined;
+  if (typeof node.value === "string") return node.value;
+  if (
+    node.type === "TemplateLiteral" &&
+    Array.isArray(node.expressions) &&
+    node.expressions.length === 0 &&
+    Array.isArray(node.quasis) &&
+    node.quasis.length === 1 &&
+    record(node.quasis[0]) &&
+    record(node.quasis[0].value) &&
+    typeof node.quasis[0].value.cooked === "string"
+  ) {
+    return node.quasis[0].value.cooked;
+  }
+  return undefined;
+}
 const testFile = (path: string) => /\.(test|spec)(?:\.[cm]?[jt]sx?)?$/.test(path) || path.startsWith("testing/");
 
 /** Check module references, including re-exports, dynamic imports and require, without matching comments/strings. */
@@ -46,14 +63,15 @@ function violations(path: string, source: string): string[] {
         String(node.type),
       )
     ) {
-      const reference = node.source;
-      if (record(reference) && typeof reference.value === "string") inspect(reference.value);
+      const specifier = staticSpecifier(node.source);
+      if (specifier !== undefined) inspect(specifier);
     }
     if (node.type === "CallExpression") {
       const callee = node.callee;
       if (record(callee) && (callee.type === "Import" || (callee.type === "Identifier" && callee.name === "require"))) {
         const argument: unknown = Array.isArray(node.arguments) ? node.arguments[0] : undefined;
-        if (record(argument) && typeof argument.value === "string") inspect(argument.value);
+        const specifier = staticSpecifier(argument);
+        if (specifier !== undefined) inspect(specifier);
       }
     }
     if (node.type === "TSImportType") {
@@ -84,7 +102,9 @@ it.each([
   ["components/button.tsx", 'import x from "~/features/demo/welcome"'],
   ["features/orders/page.tsx", 'export { x } from "~/features/accounts/model"'],
   ["features/orders/page.tsx", 'import("../../../host/app")'],
+  ["features/orders/page.tsx", "import(`../../../host/app`)"],
   ["lib/client.ts", 'require("../../host/app")'],
+  ["lib/client.ts", "require(`../../host/app`)"],
   ["root.tsx", 'import type { X } from "~/../host/app"'],
   ["lib/client.ts", 'type X = import("~/../host/app").X'],
   ["components/button.tsx", 'import { x } from "~/testing/render"'],
