@@ -99,6 +99,19 @@ describe("visual state ownership", () => {
     expect(manager.getSnapshot().preferences).toEqual({ colorScheme: "auto", direction: "ltr", reducedMotion: "auto" });
     disconnect();
   });
+  it.each(["{}", "[]"])("treats unversioned JSON %s as invalid and overwrites it on update", (raw) => {
+    localStorage.setItem(key, raw);
+    const manager = create();
+    const disconnect = manager.connect();
+    expect(manager.getStatus().persistence).toBe("ready");
+    manager.actions.setColorSchemePreference("dark");
+    expect(manager.getStatus().persistence).toBe("saved");
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
+      version: 1,
+      preferences: { colorScheme: "dark", direction: "ltr", reducedMotion: "auto" },
+    });
+    disconnect();
+  });
   it("protects future versions until an explicit complete reset", () => {
     localStorage.setItem(key, '{"version":2,"preferences":{"direction":"rtl"}}');
     const manager = create();
