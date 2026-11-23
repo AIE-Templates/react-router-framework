@@ -123,6 +123,50 @@ describe("startServer", () => {
     }
   });
 
+  it("waits for an already-started close() when a shutdown signal arrives mid-drain", async () => {
+    vi.resetModules();
+    const { startServer: startFreshServer } = await import("./node.ts");
+    const listeners = { SIGTERM: process.listeners("SIGTERM"), SIGINT: process.listeners("SIGINT") };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => void (release = resolve));
+    const slowApp = {
+      fetch: async () => {
+        await gate;
+        return new Response("done");
+      },
+    };
+    let exited = false;
+    const exitedDone = new Promise<void>((resolve) => {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      vi.spyOn(process, "exit").mockImplementation((() => {
+        exited = true;
+        resolve();
+      }) as typeof process.exit);
+    });
+    const running = await startFreshServer(slowApp, { ...options, handleSignals: true });
+    try {
+      const requested = new Promise<void>((resolve) => void running.httpServer.once("request", () => resolve()));
+      const responsePromise = fetch(running.url);
+      await requested;
+      const closing = running.close();
+      process.emit("SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(exited).toBe(false);
+      release();
+      expect(await (await responsePromise).text()).toBe("done");
+      await Promise.all([closing, exitedDone]);
+      expect(exited).toBe(true);
+    } finally {
+      release();
+      await running.close();
+      for (const signal of ["SIGTERM", "SIGINT"] as const) {
+        for (const listener of process.listeners(signal)) {
+          if (!listeners[signal].includes(listener)) process.off(signal, listener);
+        }
+      }
+    }
+  });
+
   it("runs two servers in one process", async () => {
     server = await startServer(app, options);
     const second = await startServer(app, options);

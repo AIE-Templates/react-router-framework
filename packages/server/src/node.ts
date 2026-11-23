@@ -101,7 +101,6 @@ export function startServer(
   const close = () =>
     (closing ??= new Promise<void>((resolve) => {
       shuttingDown = true;
-      signalled.delete(running);
       const timeout = setTimeout(() => {
         lifecycle.warn("Shutdown timed out, closing open connections");
         httpServer.closeAllConnections();
@@ -109,6 +108,7 @@ export function startServer(
       timeout.unref();
       httpServer.close(() => {
         clearTimeout(timeout);
+        signalled.delete(running);
         resolve();
       });
       closeIdleSockets();
