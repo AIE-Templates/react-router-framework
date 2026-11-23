@@ -64,8 +64,10 @@ export function VisualCookieProvider({
     // Commands mirror synchronously. Seeding above can already have replaced this render's preferences.
     if (mirrored.current !== preferences && preferences === manager.getSnapshot().preferences) sync();
   }, [enabled, initialized, manager, preferences, requestSeed, sync]);
+  const retry = useCallback(() => sync(false), [sync]);
+
   return (
-    <VisualCookieContext.Provider value={{ status: enabled ? status : "disabled", retry: sync }}>
+    <VisualCookieContext.Provider value={{ status: enabled ? status : "disabled", retry }}>
       {children}
     </VisualCookieContext.Provider>
   );
