@@ -2,15 +2,15 @@
 
 ## Rendering modes (WEB-01)
 
-SSR is the default; `SSR=false` at dev or build selects SPA. Application route exports must match the chosen mode deliberately rather than assuming every route can switch unchanged.
+This static branch builds in SPA mode (`ssr: false` in `apps/web/react-router.config.ts`) and ignores `SSR`. Application route exports must stay compatible with static SPA builds (plus optional `prerender` paths).
 
-SPA builds reject non-root server loaders, server actions, middleware, route headers and non-root `HydrateFallback`. The root loader runs at build time without a live user request. Components, `meta`, `links`, `ErrorBoundary` and client data APIs can support both modes, with a first-render skeleton followed by browser data loading. Moving SSR server-data routes to SPA requires rewriting them to client data APIs.
+SPA builds reject non-root server loaders, server actions, middleware, route headers and non-root `HydrateFallback`. The root loader runs at build time without a live user request. Components, `meta`, `links`, `ErrorBoundary` and client data APIs provide the static shell with browser data loading.
 
 In development, `future.unstable_optimizeDeps` lets React Router supply Vite with the client entry and route modules for cold-start dependency scanning. It does not change production data loading or revalidation and must be rechecked on React Router upgrades.
 
 ## Route discovery and revalidation (WEB-02)
 
-SSR keeps React Router's default lazy route discovery (`/__manifest`) so large route tables avoid shipping the full route manifest initially; rendered links normally prefetch discovery before clicks. Small apps with frequent programmatic navigation to new dynamic paths may opt into `routeDiscovery: { mode: "initial" }` in `react-router.config.ts`. SPA already uses initial discovery; do not force lazy discovery there.
+Static SPA builds always use initial route discovery; do not force lazy discovery (`/__manifest`) here.
 
 Keep default root revalidation. A custom `shouldRevalidate` defines the freshness contract of its own loader, including explicit refreshes and mutations. Never treat `currentUrl === nextUrl` as an explicit-refresh signal: `revalidate()` during an in-flight navigation targets the destination URL. Before opting out with `defaultShouldRevalidate: false`, check every reused loader affected by that navigation and keep dynamic identity and resource invalidation explicit.
 
