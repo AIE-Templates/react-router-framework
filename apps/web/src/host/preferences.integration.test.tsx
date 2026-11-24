@@ -38,8 +38,10 @@ function renderPreferences(shell: Shell) {
       platform: shell.platform,
       version: "1",
       bootstrap: { protocolVersion: 1, shell, mode: "system-decorated" },
+      visualTheme: null,
+      subscribeVisualTheme: () => () => {},
       subscribeWindowState: () => () => {},
-      updateOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
+      declareOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
       setPref: write,
       removePref: async (key) => {
         delete stored[key];

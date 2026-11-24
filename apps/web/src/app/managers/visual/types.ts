@@ -3,12 +3,18 @@ export interface VisualPreferences {
   direction: "ltr" | "rtl";
   reducedMotion: "auto" | "reduce" | "full";
 }
+export interface ColorSchemeSnapshot {
+  readonly revision: number;
+  readonly preference: VisualPreferences["colorScheme"];
+}
+
 export interface VisualState {
   readonly preferences: Readonly<VisualPreferences>;
   readonly resolved: Readonly<{ colorScheme: "light" | "dark"; direction: "ltr" | "rtl"; reducedMotion: boolean }>;
 }
 export interface VisualStatus {
   readonly initialized: boolean;
+  readonly colorSchemeSaveFailed?: boolean;
   readonly persistence: "unavailable" | "ready" | "saved" | "failed" | "unsupported-version";
 }
 export const DEFAULT_VISUAL_PREFERENCES: Readonly<VisualPreferences> = {
@@ -24,6 +30,8 @@ export interface VisualBootstrapConfig {
 export interface VisualBootstrapRecord {
   version: 1;
   storageKey: string;
+  fixedAppearance?: "light" | "dark";
+  externalColorScheme?: ColorSchemeSnapshot;
   state: VisualState;
   persistence: VisualStatus["persistence"];
 }

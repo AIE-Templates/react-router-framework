@@ -5,7 +5,7 @@ import {
   type DesktopWindowState,
   type OverlayAppearance,
   type OverlayAppearanceResult,
-  parseOverlayAppearance,
+  type VisualThemeSnapshot,
   parseOverlayDeclaration,
   isVisualThemePreference,
   type VisualThemeResult,
@@ -44,20 +44,22 @@ export function installWindowChrome(
   policy: ChromePolicy,
   trusted: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
   log: Logger,
-  themeStore?: VisualThemeStore,
+  themeStore: VisualThemeStore,
+  fixedAppearance?: "light" | "dark",
 ): () => void {
   // Electron's webContents getter throws once BrowserWindow is destroyed; retain the emitter for cleanup.
   const contents = win.webContents;
   let subscription: Subscription | undefined;
   let revision = 0;
-  let preference = policy.themePreference;
+  let themeFrame: WebFrameMain | undefined;
   let override: OverlayAppearance = {};
   let owner: string | undefined;
   let declarationRevision = 0;
   let themeRevision = 0;
   let visualDocument: string | undefined;
   const getVisualDocument = (event: IpcMainInvokeEvent) => (trusted(event) ? (visualDocument ??= randomUUID()) : null);
-  let appearance: OverlayAppearance = { ...policy.appearance };
+  // A child may have been created under an earlier theme. Cache only successful native writes.
+  let appearance: OverlayAppearance = {};
   const read = (): DesktopWindowState => ({
     revision,
     focused: win.isFocused(),
@@ -84,10 +86,8 @@ export function installWindowChrome(
   };
   const retireDocument = () => {
     clear();
+    themeFrame = undefined;
     visualDocument = undefined;
-  };
-  const navigate = () => {
-    retireDocument();
     override = {};
     owner = undefined;
     declarationRevision = 0;
@@ -105,9 +105,14 @@ export function installWindowChrome(
     if (trusted(event) && active && active.token === token && active.frame === event.senderFrame) clear();
   };
   const overlayAvailable = policy.resolvedMode === "native-overlay" && policy.platform !== "darwin";
+  const isDark = () => {
+    if (fixedAppearance) return fixedAppearance === "dark";
+    const { preference } = themeStore.current();
+    return preference === "dark" || (preference === "auto" && nativeTheme.shouldUseDarkColors);
+  };
   const applyOverlay = (): OverlayAppearanceResult => {
     if (!overlayAvailable) return { status: "unsupported", reason: "native-overlay-appearance-unavailable" };
-    const dark = preference === "dark" || (preference === "auto" && nativeTheme.shouldUseDarkColors);
+    const dark = isDark();
     const merged = { ...chromeAppearance(dark), height: policy.appearance.height, ...override };
     try {
       if (
@@ -126,21 +131,13 @@ export function installWindowChrome(
   const applyTheme = (): Pick<Extract<VisualThemeResult, { status: "processed" }>, "background" | "overlay"> => {
     let background: "applied" | "failed" = "applied";
     try {
-      const dark = preference === "dark" || (preference === "auto" && nativeTheme.shouldUseDarkColors);
+      const dark = isDark();
       win.setBackgroundColor(chromeAppearance(dark).color);
     } catch {
       background = "failed";
     }
     const result = applyOverlay();
     return { background, overlay: result.status === "rejected" ? "failed" : result.status };
-  };
-  const updateAppearance = (event: IpcMainInvokeEvent, input: unknown): OverlayAppearanceResult => {
-    if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
-    const next = parseOverlayAppearance(input);
-    if (!next) return { status: "rejected", reason: "invalid-appearance" };
-    if (!overlayAvailable) return { status: "unsupported", reason: "native-overlay-appearance-unavailable" };
-    override = { ...override, ...next };
-    return applyOverlay();
   };
   const declareAppearance = (event: IpcMainInvokeEvent, input: unknown): OverlayAppearanceResult => {
     if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
@@ -188,11 +185,37 @@ export function installWindowChrome(
     if (input.document !== visualDocument || input.revision <= themeRevision)
       return { status: "rejected", reason: "stale-document" };
     themeRevision = input.revision;
-    preference = input.preference;
-    return { status: "processed", ...applyTheme(), persistence: themeStore?.save(preference) ? "saved" : "failed" };
+    const previous = themeStore.current();
+    if (!themeStore.save(input.preference)) return { status: "rejected", reason: "persistence-failed" };
+    const snapshot = themeStore.current();
+    // A changed commit synchronously refreshed every window. An explicit retry can also repair a failed native write.
+    const native = snapshot.revision === previous.revision ? applyTheme() : lastNative;
+    return { status: "processed", ...native, persistence: "saved", snapshot };
+  };
+  let lastNative: ReturnType<typeof applyTheme> = {
+    background: "applied",
+    overlay: overlayAvailable ? "applied" : "unsupported",
+  };
+  const releaseTheme = themeStore.subscribe((snapshot) => {
+    if (win.isDestroyed()) return;
+    lastNative = applyTheme();
+    try {
+      if (!themeFrame || themeFrame.detached) return;
+      themeFrame.send(DESKTOP_CHROME_IPC.visualChanged, snapshot);
+    } catch {
+      themeFrame = undefined;
+    }
+  });
+  const readTheme = (event: IpcMainInvokeEvent): VisualThemeSnapshot | null => {
+    if (!trusted(event)) return null;
+    themeFrame = event.senderFrame!;
+    return themeStore.current();
+  };
+  const seedTheme = (event: IpcMainEvent) => {
+    event.returnValue = trusted(event) ? themeStore.current() : null;
   };
   const themeChanged = () => {
-    if (!win.isDestroyed() && preference === "auto") applyTheme();
+    if (!win.isDestroyed() && themeStore.current().preference === "auto") applyTheme();
   };
   if (themeListeners.size === 0) nativeTheme.on("updated", notifyThemeListeners);
   themeListeners.add(themeChanged);
@@ -200,10 +223,11 @@ export function installWindowChrome(
   contents.ipc.handle(DESKTOP_CHROME_IPC.declaration, declareAppearance);
   contents.ipc.handle(DESKTOP_CHROME_IPC.visualTheme, syncTheme);
   contents.ipc.handle(DESKTOP_CHROME_IPC.subscribe, subscribe);
-  contents.ipc.handle(DESKTOP_CHROME_IPC.appearance, updateAppearance);
+  contents.ipc.handle(DESKTOP_CHROME_IPC.visualSnapshot, readTheme);
+  contents.ipc.on(DESKTOP_CHROME_IPC.visualSeed, seedTheme);
   contents.ipc.on(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
   for (const event of STATE_EVENTS) win.on(event, refresh);
-  contents.on("did-navigate", navigate);
+  contents.on("did-navigate", retireDocument);
   contents.on("render-process-gone", retireDocument);
   let disposed = false;
   const dispose = () => {
@@ -211,16 +235,19 @@ export function installWindowChrome(
     disposed = true;
 
     clear();
+    releaseTheme();
+    themeFrame = undefined;
     themeListeners.delete(themeChanged);
     if (themeListeners.size === 0) nativeTheme.off("updated", notifyThemeListeners);
     contents.ipc.removeHandler(DESKTOP_CHROME_IPC.visualDocument);
     contents.ipc.removeHandler(DESKTOP_CHROME_IPC.subscribe);
-    contents.ipc.removeHandler(DESKTOP_CHROME_IPC.appearance);
+    contents.ipc.removeHandler(DESKTOP_CHROME_IPC.visualSnapshot);
+    contents.ipc.off(DESKTOP_CHROME_IPC.visualSeed, seedTheme);
     contents.ipc.removeHandler(DESKTOP_CHROME_IPC.declaration);
     contents.ipc.removeHandler(DESKTOP_CHROME_IPC.visualTheme);
     contents.ipc.off(DESKTOP_CHROME_IPC.unsubscribe, unsubscribe);
     for (const event of STATE_EVENTS) win.off(event, refresh);
-    contents.off("did-navigate", navigate);
+    contents.off("did-navigate", retireDocument);
     contents.off("render-process-gone", retireDocument);
     win.off("closed", dispose);
   };

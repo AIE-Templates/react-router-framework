@@ -1,3 +1,4 @@
+import type { VisualThemeSnapshot } from "@repo/shared";
 import { useContext, useEffect, useState } from "react";
 import {
   isRouteErrorResponse,
@@ -12,6 +13,7 @@ import {
 import { useAppEnvironment } from "~/managers/environment/hooks";
 import { DesktopPreferenceSync } from "~/platform/electron/preferences";
 import { desktopContext, shellContext } from "~/platform/electron/shell";
+import { desktopPrepaintTheme, desktopWindowAppearance } from "~/platform/electron/visual-prepaint";
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
@@ -39,12 +41,16 @@ export const links: Route.LinksFunction = () => [];
  * rendering modes; in a SPA build it runs once at build time, so it always reports the web shell.
  */
 export function loader({ request, context }: Route.LoaderArgs) {
+  const shell = context.get(shellContext);
+  const desktop = context.get(desktopContext);
   const result = {
-    shell: context.get(shellContext),
-    desktop: context.get(desktopContext),
+    shell,
+    desktop,
     nonce: context.get(cspNonceContext),
     managersInitialState: {
-      visual: context.get(shellContext).kind === "web" ? readVisualRequestSeed(request) : undefined,
+      visual: shell.kind === "web" ? readVisualRequestSeed(request) : undefined,
+      externalColorScheme:
+        shell.kind === "desktop" ? (desktop?.visualTheme ?? { revision: -1, preference: "auto" as const }) : undefined,
     },
   };
   return result;
@@ -62,7 +68,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       managersInitialState={data?.managersInitialState}
     >
       <DesktopVisualSync>
-        <Document nonce={nonce}>
+        <Document nonce={nonce} desktopTheme={data?.managersInitialState.externalColorScheme}>
           {data?.desktop && <DesktopPreferenceSync prefs={data.desktop.prefs} />}
           {children}
         </Document>
@@ -71,7 +77,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Document({ children, nonce }: { children: React.ReactNode; nonce?: string }) {
+function Document({
+  children,
+  nonce,
+  desktopTheme,
+}: {
+  children: React.ReactNode;
+  nonce?: string;
+  desktopTheme?: VisualThemeSnapshot;
+}) {
   const environment = useAppEnvironment();
   const visual = useVisualManager().getServerSnapshot().preferences;
   const { shell, fullscreen, windowState } = environment;
@@ -104,7 +118,10 @@ function Document({ children, nonce }: { children: React.ReactNode; nonce?: stri
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style id="window-chrome-safety">{CHROME_SAFETY_CSS}</style>
-        <VisualInitScript nonce={nonce} />
+        <VisualInitScript
+          nonce={nonce}
+          source={{ read: desktopPrepaintTheme, readFixedAppearance: desktopWindowAppearance, seed: desktopTheme }}
+        />
         <Meta />
         <Links nonce={nonce} />
       </head>

@@ -59,7 +59,7 @@ The entry supplies createWebApp({ shell }); requests cannot select identity. Tru
 
 ## Layout
 
-`AppRoot` provides the host environment and global providers. `BasicShell` and `NavigationShell` implement the App Shell, which frames the current app area and owns navigation between areas. `AppAreaLayout` organizes navigation, main content and optional panels within one area. The CRM demo has three pages: Leads (`/`), Deals (`/deals`) and Sales report (`/reports/sales`). With `?shell=basic`, all three share one area. In the default layout the shell switches between Sales (Leads and Deals) and Reports (Sales report). The App shell selector compares both layouts on the current page. Use `?header=standalone` to try a separate title bar. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.
+`AppRoot` provides the host environment and global providers. `BasicShell` and `NavigationShell` implement the App Shell, which frames the current app area and owns navigation between areas. `AppAreaLayout` organizes navigation, main content and optional panels within one area. The CRM demo has three pages: Leads (`/`), Deals (`/deals`) and Sales report (`/reports/sales`). With `?shell=basic`, all three share one area. In the default layout the shell switches between Sales (Leads and Deals) and Reports (Sales report). The App shell selector compares both layouts on the current page. Open `/?layout=editor` for a resizable two-column layout built directly with `WindowLayout` and `WindowColumn`. Use `?header=standalone` to try a separate title bar. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.
 
 ## Source organization
 
@@ -123,7 +123,7 @@ The fullstack Core host root suite also verifies web document attributes and hyd
 
 ## Electron adapters
 
-Electron-specific host contexts and preference helpers live in `~/platform/electron/shell` and `~/platform/electron/preferences`; visual synchronization remains beside them. Features may consume the preference API without implementing host branches. Application code never imports `src/host`; host integration can import the adapters through `~/`.
+Electron-specific host contexts and preference helpers live in `~/platform/electron/shell` and `~/platform/electron/preferences`; the visual adapter alongside them subscribes to main’s committed color scheme and forwards explicit user commands. Direction and motion still use the renderer preference store. Features may consume the preference API without implementing host branches. Application code never imports `src/host`; host integration can import the adapters through `~/`.
 
 `src/host/desktop-root.integration.test.tsx` covers Electron root host facts with an explicit jsdom environment and real host context. The pure safety/bootstrap fallback rendering test remains beside `root.tsx`.
 

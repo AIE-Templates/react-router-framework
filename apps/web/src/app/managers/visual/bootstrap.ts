@@ -2,7 +2,13 @@
 import { STORAGE_KEYS } from "~/config/storage";
 import { visualIntegration } from "~/config/visual-integration";
 
-import type { VisualBootstrapConfig, VisualBootstrapRecord, VisualPreferences, VisualState } from "./types";
+import type {
+  ColorSchemeSnapshot,
+  VisualBootstrapConfig,
+  VisualBootstrapRecord,
+  VisualPreferences,
+  VisualState,
+} from "./types";
 
 export const visualBootstrapConfig: VisualBootstrapConfig = {
   storageKey: STORAGE_KEYS.visualPreferences,
@@ -33,7 +39,7 @@ export function visualKernel() {
       return { kind: "invalid" as const };
     }
   }
-  function resolve(preferences: VisualPreferences, host?: Window): VisualState {
+  function resolve(preferences: VisualPreferences, host?: Window, fixedAppearance?: "light" | "dark"): VisualState {
     const matches = (query: string) => {
       try {
         return !!host?.matchMedia?.(query).matches;
@@ -45,11 +51,12 @@ export function visualKernel() {
       preferences,
       resolved: {
         colorScheme:
-          preferences.colorScheme === "auto"
+          fixedAppearance ??
+          (preferences.colorScheme === "auto"
             ? matches("(prefers-color-scheme: dark)")
               ? "dark"
               : "light"
-            : preferences.colorScheme,
+            : preferences.colorScheme),
         direction: preferences.direction,
         reducedMotion:
           preferences.reducedMotion === "auto"
@@ -58,7 +65,13 @@ export function visualKernel() {
       },
     };
   }
-  function read(config: VisualBootstrapConfig, seed?: VisualPreferences, host?: Window) {
+  function read(
+    config: VisualBootstrapConfig,
+    seed?: VisualPreferences,
+    host?: Window,
+    externalColorScheme?: ColorSchemeSnapshot,
+    fixedAppearance?: "light" | "dark",
+  ) {
     let storagePresent: boolean | undefined;
     let preferences = parse(seed);
     let persistence: VisualBootstrapRecord["persistence"] = host ? "ready" : "unavailable";
@@ -76,7 +89,13 @@ export function visualKernel() {
     return {
       version: 1 as const,
       storageKey: config.storageKey,
-      state: resolve(preferences, host),
+      externalColorScheme,
+      fixedAppearance,
+      state: resolve(
+        externalColorScheme ? { ...preferences, colorScheme: externalColorScheme.preference } : preferences,
+        host,
+        fixedAppearance,
+      ),
       persistence,
       storagePresent,
     };
@@ -93,13 +112,21 @@ export function visualKernel() {
 }
 
 export const visualCodec = visualKernel();
-export function visualScript(seed?: VisualPreferences) {
+export interface VisualPrepaintSource {
+  readFixedAppearance?: (host: Window) => "light" | "dark" | undefined;
+  seed?: ColorSchemeSnapshot;
+  read: (host: Window, seed?: ColorSchemeSnapshot) => ColorSchemeSnapshot | undefined;
+}
+
+export function visualScript(seed?: VisualPreferences, source?: VisualPrepaintSource) {
   const json = (value: unknown) =>
     JSON.stringify(value)
       .replace(/</g, "\\u003c")
       .replace(/\u2028/g, "\\u2028")
       .replace(/\u2029/g, "\\u2029");
-  return `(()=>{const k=(${visualKernel.toString()})();const c=${json(visualBootstrapConfig)};const r=k.read(c,${json(seed ?? null)},window);window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
+  const external = source ? `(${source.read.toString()})(window,${json(source.seed ?? null)})` : "undefined";
+  const fixed = source?.readFixedAppearance ? `(${source.readFixedAppearance.toString()})(window)` : "undefined";
+  return `(()=>{const k=(${visualKernel.toString()})();const c=${json(visualBootstrapConfig)};const r=k.read(c,${json(seed ?? null)},window,${external},${fixed});window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
 }
 
 /** Explicit request seeds must also select integration variables when scripts cannot run. */

@@ -10,6 +10,8 @@ import {
   parseOverlayAppearance,
   parseOverlayDeclaration,
   isVisualThemePreference,
+  isVisualThemeSnapshot,
+  type VisualThemeSnapshot,
   isVisualThemeResult,
   type PreferenceUpdateResult,
 } from "@repo/shared";
@@ -109,7 +111,37 @@ async function invokeForDocument(channel: string, input: object): Promise<unknow
 
 let visualRevision = 0;
 
+// Window creation arguments survive reloads. Read the current committed preference once per document instead.
+let seed: unknown;
+if (process.isMainFrame) {
+  try {
+    seed = ipcRenderer.sendSync(DESKTOP_CHROME_IPC.visualSeed);
+  } catch {
+    // The async subscription can still recover the current preference after preload.
+  }
+}
 const bridge: DesktopBridge = {
+  visualTheme: isVisualThemeSnapshot(seed) ? seed : null,
+  subscribeVisualTheme(listener) {
+    if (typeof listener !== "function") return () => {};
+    let active = true;
+    let revision = -1;
+    const receiveTheme = (value: unknown) => {
+      if (!active || !isVisualThemeSnapshot(value) || value.revision <= revision) return;
+      revision = value.revision;
+      listener(Object.freeze({ revision, preference: value.preference }));
+    };
+    const changed = (_event: Electron.IpcRendererEvent, value: VisualThemeSnapshot) => receiveTheme(value);
+    ipcRenderer.on(DESKTOP_CHROME_IPC.visualChanged, changed);
+    void ipcRenderer
+      .invoke(DESKTOP_CHROME_IPC.visualSnapshot)
+      .then(receiveTheme)
+      .catch(() => {});
+    return () => {
+      active = false;
+      ipcRenderer.off(DESKTOP_CHROME_IPC.visualChanged, changed);
+    };
+  },
   platform: process.platform,
   version: versionArg ? versionArg.slice("--desktop-app-version=".length) : "",
   bootstrap,
@@ -143,11 +175,6 @@ const bridge: DesktopBridge = {
       listeners.delete(owned);
       if (listeners.size === 0) stop();
     };
-  },
-  async updateOverlayAppearance(input): Promise<OverlayAppearanceResult> {
-    const appearance = parseOverlayAppearance(input);
-    if (!appearance) return { status: "rejected", reason: "invalid-appearance" };
-    return invokeAppearance(() => ipcRenderer.invoke(DESKTOP_CHROME_IPC.appearance, appearance));
   },
   declareOverlayAppearance(input) {
     const declaration = parseOverlayDeclaration(input);

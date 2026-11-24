@@ -51,6 +51,14 @@ export function VisualSettings() {
       <button data-native-control="" type="button" onClick={actions.resetVisualPreferences}>
         Reset appearance
       </button>
+      {status.colorSchemeSaveFailed && (
+        <>
+          <output>Color scheme could not be saved.</output>
+          <button data-native-control="" type="button" onClick={actions.retryColorScheme}>
+            Retry color scheme
+          </button>
+        </>
+      )}
       {(status.persistence === "failed" ||
         status.persistence === "unavailable" ||
         status.persistence === "unsupported-version") &&

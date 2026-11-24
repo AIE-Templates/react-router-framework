@@ -2,7 +2,13 @@ import { writeSync } from "node:fs";
 import { join } from "node:path";
 
 import type { PortFetch } from "@repo/port-fetch";
-import { DESKTOP_PREFS_IPC, shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
+import {
+  DESKTOP_PREFS_IPC,
+  shellFromEnv,
+  type DesktopBootstrap,
+  type DesktopRequest,
+  type VisualThemeSnapshot,
+} from "@repo/shared";
 import { app, type BrowserWindow, dialog, nativeTheme, protocol, safeStorage, session } from "electron";
 
 import type { DebugEnv } from "~/debug-env.contract.ts";
@@ -261,6 +267,10 @@ async function askRecovery(
   return choices[result.response] ?? "wait";
 }
 
+function applyNativeTheme({ preference }: VisualThemeSnapshot) {
+  nativeTheme.themeSource = preference === "auto" ? "system" : preference;
+}
+
 async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup): Promise<void> {
   profile.mark("ready");
   const development = dev !== undefined;
@@ -269,6 +279,8 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
   installPermissionPolicy(appSession, log);
   // Preferences the page writes through the preload; every request carries the current ones.
   const visualThemeStore = createVisualThemeStore(app.getPath("userData"), { log });
+  applyNativeTheme(visualThemeStore.current());
+  app.once("will-quit", visualThemeStore.subscribe(applyNativeTheme));
   const prefsStore = createPrefsStore(app.getPath("userData"), { log });
   const shell = shellFromEnv({
     WEB_SHELL: "desktop",
@@ -283,7 +295,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     resolveChromePolicy({
       platform: shell.platform,
       requestedMode: requested === "system-decorated" || requested === "custom-controls" ? requested : "native-overlay",
-      themePreference: visualThemeStore.current(),
+      themePreference: visualThemeStore.current().preference,
       darkColors: nativeTheme.shouldUseDarkColors,
     });
   const chromePolicy = currentChromePolicy();
@@ -297,6 +309,8 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     log,
     profile,
     logRendererConsole: DESKTOP_BUILD_PROFILE !== "release" && (development || debug.smoke),
+    childAppearance: (url) =>
+      url.pathname === "/" && url.searchParams.get("layout") === "editor" ? "dark" : undefined,
     keyForUrl: (url) => (/^\/settings\/*$/i.test(url.pathname) ? "settings" : undefined),
     askRecovery,
     // What an external verifier waits for: logged once, at info, in every build profile.
@@ -322,6 +336,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     chromeMode: chromePolicy.resolvedMode,
     fullscreen: registry.byContentsId(contentsId)?.isFullScreen() ?? false,
     prefs: prefsStore.current(),
+    visualTheme: visualThemeStore.current(),
   });
 
   // Ack coalescing on the main↔utility port, the same on both ends (dev and test builds can turn it

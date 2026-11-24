@@ -14,31 +14,37 @@ const log = {
 };
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "visual-mirror-"));
+  dir = mkdtempSync(join(tmpdir(), "visual-record-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
-it("loads only a valid versioned mirror and restores saved preferences on restart", () => {
-  expect(createVisualThemeStore(dir, { log }).current()).toBe("auto");
+it("loads only a valid versioned record and restores saved preferences on restart", () => {
+  expect(createVisualThemeStore(dir, { log }).current().preference).toBe("auto");
   writeFileSync(join(dir, VISUAL_THEME_FILE), JSON.stringify({ version: 2, colorScheme: "dark" }));
-  expect(createVisualThemeStore(dir, { log }).current()).toBe("auto");
+  expect(createVisualThemeStore(dir, { log }).current().preference).toBe("auto");
   writeFileSync(join(dir, "prefs.json"), JSON.stringify({ theme: "light", width: 200 }));
   const store = createVisualThemeStore(dir, { log });
   expect(store.save("dark")).toBe(true);
-  expect(createVisualThemeStore(dir, { log }).current()).toBe("dark");
+  expect(createVisualThemeStore(dir, { log }).current().preference).toBe("dark");
   expect(JSON.parse(readFileSync(join(dir, "prefs.json"), "utf8"))).toEqual({ theme: "light", width: 200 });
 });
-it("reports persistence failure without changing the last durable mirror and retries", () => {
+it("reports persistence failure without changing the last durable record and retries", () => {
   const rename = vi.fn<(from: string, to: string) => void>((from, to) => nodeFs.renameSync(from, to));
   const store = createVisualThemeStore(dir, { log, fs: { ...nodeFs, renameSync: rename } });
+  const listener = vi.fn<() => void>();
+  const unsubscribe = store.subscribe(listener);
   expect(store.save("dark")).toBe(true);
+  expect(listener).toHaveBeenCalledExactlyOnceWith({ preference: "dark", revision: 1 });
   rename.mockImplementationOnce(() => {
     throw new Error("disk unavailable");
   });
   expect(store.save("light")).toBe(false);
-  expect(store.current()).toBe("dark");
-  expect(createVisualThemeStore(dir, { log }).current()).toBe("dark");
+  expect(store.current()).toEqual({ preference: "dark", revision: 1 });
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect(createVisualThemeStore(dir, { log }).current().preference).toBe("dark");
   expect(store.save("light")).toBe(true);
-  expect(createVisualThemeStore(dir, { log }).current()).toBe("light");
+  expect(listener).toHaveBeenLastCalledWith({ preference: "light", revision: 2 });
+  unsubscribe();
+  expect(createVisualThemeStore(dir, { log }).current().preference).toBe("light");
 });

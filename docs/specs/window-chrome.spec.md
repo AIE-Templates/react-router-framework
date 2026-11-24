@@ -21,7 +21,7 @@ Unrecognized or missing `DESKTOP_CHROME_MODE` requests the default. There is no 
 
 These alignment values assume default fonts and 100% page zoom. Electron API units must not be equated with zoomed CSS pixels. Do not rescale WCO/DOM coordinates using display scale or derive viewport coordinates by simply dividing screen DIP by page zoom.
 
-The versioned `visual-theme.json` mirror supplies the initial theme preference. Explicit `dark` or `light` selects colors; `auto`, missing or invalid data follows `nativeTheme`. Generic preferences do not supply the theme. Dark color/symbolColor defaults are `#17191d`/`#f3f4f6`; light defaults are `#ffffff`/`#202124`. Desktop environment/session strings are diagnostic hints, not proof that Chromium uses Wayland. Native theme/button parity is not guaranteed across every Linux or macOS configuration.
+Main reads the application-wide theme from the versioned `visual-theme.json` before creating a window. A committed theme change updates every window. Explicit `dark` or `light` selects colors; `auto`, missing or invalid data follows `nativeTheme`. Generic preferences do not supply the theme. Dark color/symbolColor defaults are `#17191d`/`#f3f4f6`; light defaults are `#ffffff`/`#202124`. Desktop environment/session strings are diagnostic hints, not proof that Chromium uses Wayland. Native theme/button parity is not guaranteed across every Linux or macOS configuration.
 
 ## Runtime contract (CHR-03)
 
@@ -31,13 +31,13 @@ Window state contains monotonically increasing `revision`, `focused`, `maximized
 
 `AppEnvironment` contains effective shell, mode, enhancement status (`pending`, `available`, `unavailable`), optional window state, and bounded diagnostics (`invalid-bootstrap`, `host-mismatch`, `bridge-failed`). Missing window state means unknown, not an invented all-false state. Diagnostics reveal differing field names, not full payloads.
 
-The runtime provides `getSnapshot()`, `getServerSnapshot()`, `subscribe(listener)`, `connect(bridge)` and `updateOverlayAppearance(input)`. Subscriptions/connections return cleanup functions. Construction does not access the DOM or call the bridge. Snapshot references remain stable without state changes, supporting `useSyncExternalStore`.
+The runtime provides `getSnapshot()`, `getServerSnapshot()`, `subscribe(listener)`, `connect(bridge)` and `declareOverlayAppearance(owner, appearance)`. Subscriptions/connections return cleanup functions. Construction does not access the DOM or call the bridge. Snapshot references remain stable without state changes, supporting `useSyncExternalStore`.
 
 Window revision is a host state sequence, not the whole runtime sequence. Old revisions, previous connection generations and late appearance results must not overwrite a new connection. Reload obtains fresh dynamic state rather than replaying static bootstrap.
 
 ## Bridge contract (CHR-04)
 
-The chrome bridge exposes bootstrap, state subscription and appearance updates. It does not expose arbitrary IPC, Electron objects or minimize/maximize/close commands. Platform-specific preference methods are a host concern.
+The chrome bridge exposes bootstrap, window state subscription and the window’s overlay declaration. It does not expose arbitrary IPC, Electron objects or minimize/maximize/close commands. Platform-specific preference methods are a host concern.
 
 Bootstrap is synchronous immutable creation data, not a synchronous IPC request. The Electron host passes JSON through `--desktop-bootstrap=` in additional arguments. It contains no credentials, dynamic state or geometry. Version 1 limits the argument to 2048 characters, individual OS/session strings to 128, and platform to darwin/win32/linux. Fields are allowlisted; invalid input returns null. Hydration and bootstrap precedence follow the layout specification.
 
@@ -47,11 +47,11 @@ Appearance updates allow only color, symbolColor and height, with at least one v
 
 The host shares one system theme listener across open windows. Each window following the system applies the update with its own appearance overrides. Main issues one visual token to the current trusted document for theme and declaration writes. A committed main-document navigation or renderer exit retires the token. Same-document navigation keeps it.
 
-The theme layer owns window background and default overlay colors. Appearance writes only change the overlay layer and never change the background. Each missing overlay field inherits the theme default. System or explicit theme changes retain all declared overrides. `declareOverlayAppearance` accepts an owner token, increasing revision and a complete appearance snapshot or null release. Removed fields return to theme defaults; stale revisions and conflicting active owners are rejected. An old owner release cannot clear another owner. A committed main-document navigation clears overrides; cancelled or failed navigation attempts retain the current document state. AppShell is the only appearance owner. Every IPC checks the registered window, current main frame and trusted app URL; lifecycle cleanup invalidates listeners, tokens and asynchronous results.
+The theme layer owns window background and default overlay colors. Appearance writes only change the overlay layer and never change the background. Omitted colors inherit the current theme and an omitted height inherits the window policy height. System or explicit theme changes retain all declared overrides. `declareOverlayAppearance` accepts an owner token, increasing revision and a complete appearance snapshot or null release. Removed fields return to their current defaults; stale revisions and conflicting active owners are rejected. An old owner release cannot clear another owner. A committed main-document navigation or renderer exit clears the window’s override; cancelled or failed navigation attempts retain the current document state. Each window’s App Shell owns its overlay declaration. Components observe window state through `useAppEnvironment()`. Every IPC checks the registered window, current main frame and trusted app URL; lifecycle cleanup invalidates listeners, tokens and asynchronous results.
 
 ## Geometry and interaction (CHR-05)
 
-WCO CSS environment variables supply safety geometry. Root fallback and fused handoff follow the layout specification. Do not invent measured button rectangles when geometry is unavailable.
+WCO CSS environment variables supply safety geometry. Root fallback and fused handoff follow LAY-04 and LAY-05 in [the layout specification](./layout.spec.md). A custom area shares the shell’s native control clearance and drag handling through `WindowLayout` and `WindowColumn`. Do not invent measured button rectangles when geometry is unavailable.
 
 `getDragRegionProps()` adds `data-window-drag`; `getInteractiveProps()` adds `data-window-interactive`, preserving caller props. Drag regions are explicit. Buttons, inputs and portal surfaces require no-drag. A transparent full-window portal root must not erase every drag region. Native drag, double-click, system menu, resize and Snap behavior use the native path rather than JavaScript window-manager emulation.
 

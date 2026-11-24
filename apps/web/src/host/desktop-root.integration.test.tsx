@@ -14,7 +14,8 @@ const facts: DesktopRequest = {
   titlebar: "custom",
   chromeMode: "system-decorated",
   fullscreen: true,
-  prefs: { theme: "dark" },
+  prefs: { theme: "light" },
+  visualTheme: { preference: "dark", revision: 4 },
 };
 
 function loaderArgs(context: RouterContextProvider): Parameters<typeof loader>[0] {
@@ -45,7 +46,7 @@ describe("root loader", () => {
       shell: desktop,
       desktop: facts,
       nonce: undefined,
-      managersInitialState: { visual: undefined },
+      managersInitialState: { visual: undefined, externalColorScheme: facts.visualTheme },
     });
   });
 });
@@ -69,6 +70,7 @@ describe("Layout", () => {
     const html = renderLayout(createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts }));
 
     await waitFor(() => expect(html.dataset.shell).toBe("desktop"));
+    expect(html.dataset.colorScheme).toBe("dark");
     expect(html.dataset.platform).toBe("darwin");
     expect(html.dataset.titlebar).toBe("native");
     expect(html.dataset.fullscreen).toBe("true");

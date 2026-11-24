@@ -1,5 +1,11 @@
 import { visualBootstrapConfig, visualCodec } from "./bootstrap";
-import { DEFAULT_VISUAL_PREFERENCES, type VisualPreferences, type VisualState, type VisualStatus } from "./types";
+import {
+  DEFAULT_VISUAL_PREFERENCES,
+  type ColorSchemeSnapshot,
+  type VisualPreferences,
+  type VisualState,
+  type VisualStatus,
+} from "./types";
 
 function freeze(value: VisualState): VisualState {
   return Object.freeze({
@@ -12,22 +18,48 @@ export type VisualManager = ReturnType<typeof createVisualManager>;
 export function createVisualManager({
   initialPreferences = DEFAULT_VISUAL_PREFERENCES,
   host,
+  externalColorScheme: serverColorScheme,
   applyToDocument = true,
 }: {
   initialPreferences?: Readonly<VisualPreferences>;
   host?: Window;
+  externalColorScheme?: ColorSchemeSnapshot;
   applyToDocument?: boolean;
 } = {}) {
   const config = visualBootstrapConfig;
-  const server = freeze(visualCodec.resolve(visualCodec.parse(initialPreferences)));
+  const server = freeze(
+    visualCodec.resolve(
+      visualCodec.parse({
+        ...initialPreferences,
+        colorScheme: serverColorScheme?.preference ?? initialPreferences.colorScheme,
+      }),
+    ),
+  );
   const bootstrap = host?.frameworkVisualBootstrap;
   const validBootstrap =
     bootstrap?.version === 1 && bootstrap.storageKey === config.storageKey && bootstrap.state?.preferences;
-  const stored = visualCodec.read(config, initialPreferences, host);
+  const fixedAppearance = validBootstrap ? bootstrap.fixedAppearance : undefined;
+  let externalColorScheme = serverColorScheme;
+  const prepaintColor = validBootstrap && bootstrap.externalColorScheme;
+  if (prepaintColor && (!externalColorScheme || prepaintColor.revision >= externalColorScheme.revision))
+    externalColorScheme = prepaintColor;
+  let writeColorScheme: ((value: VisualPreferences["colorScheme"]) => void) | undefined;
+  let failedColorScheme: VisualPreferences["colorScheme"] | undefined;
+  const stored = visualCodec.read(config, initialPreferences, host, externalColorScheme, fixedAppearance);
   // The bootstrap is a fallback for inaccessible storage, not a replayable preference authority.
   const initial =
     validBootstrap && stored.persistence === "unavailable"
-      ? { ...stored, state: visualCodec.resolve(visualCodec.parse(bootstrap.state.preferences), host) }
+      ? {
+          ...stored,
+          state: visualCodec.resolve(
+            visualCodec.parse({
+              ...bootstrap.state.preferences,
+              colorScheme: externalColorScheme?.preference ?? bootstrap.state.preferences.colorScheme,
+            }),
+            host,
+            fixedAppearance,
+          ),
+        }
       : stored;
   let state = freeze(initial.state);
   let storagePresent = initial.storagePresent;
@@ -40,12 +72,20 @@ export function createVisualManager({
   let cleanup: (() => void) | undefined;
   let unsaved = false;
   function setStatus(next: VisualStatus) {
-    if (next.initialized === status.initialized && next.persistence === status.persistence) return;
+    if (
+      next.initialized === status.initialized &&
+      next.persistence === status.persistence &&
+      next.colorSchemeSaveFailed === status.colorSchemeSaveFailed
+    )
+      return;
     status = Object.freeze(next);
     for (const notify of statusListeners) notify();
   }
   function publish(preferences: VisualPreferences) {
-    const next = freeze(visualCodec.resolve(preferences, host));
+    const effective = externalColorScheme
+      ? { ...preferences, colorScheme: externalColorScheme.preference }
+      : preferences;
+    const next = freeze(visualCodec.resolve(effective, host, fixedAppearance));
     if (JSON.stringify(state) !== JSON.stringify(next)) {
       state = next;
       if (connections && host && applyToDocument) visualCodec.apply(config, state, host.document.documentElement);
@@ -60,7 +100,10 @@ export function createVisualManager({
         unsaved = true;
         return;
       }
-      host.localStorage.setItem(config.storageKey, JSON.stringify({ version: 1, preferences }));
+      const localPreferences = externalColorScheme
+        ? { direction: preferences.direction, reducedMotion: preferences.reducedMotion }
+        : preferences;
+      host.localStorage.setItem(config.storageKey, JSON.stringify({ version: 1, preferences: localPreferences }));
       unsaved = false;
       storagePresent = true;
       setStatus({ ...status, persistence: "saved" });
@@ -68,6 +111,14 @@ export function createVisualManager({
       unsaved = true;
       setStatus({ ...status, persistence: "failed" });
     }
+  }
+  function reportColorSchemeFailure(preference?: VisualPreferences["colorScheme"]) {
+    failedColorScheme = preference;
+    setStatus({ ...status, colorSchemeSaveFailed: preference !== undefined });
+  }
+  function requestColorScheme(preference: VisualPreferences["colorScheme"]) {
+    if (writeColorScheme) writeColorScheme(preference);
+    else reportColorSchemeFailure(preference);
   }
   function update(patch: Partial<VisualPreferences>, reset = false) {
     let base = state.preferences;
@@ -81,7 +132,9 @@ export function createVisualManager({
     }
     const next = visualCodec.parse(reset ? DEFAULT_VISUAL_PREFERENCES : { ...base, ...patch });
     // Persist even when the value is unchanged: a repeated command retries a failed save.
-    persist(next, reset);
+    if (!externalColorScheme || reset || patch.direction !== undefined || patch.reducedMotion !== undefined)
+      persist(next, reset);
+    if (externalColorScheme && (reset || patch.colorScheme !== undefined)) requestColorScheme(next.colorScheme);
     publish(next);
     for (const notify of commandListeners) notify(reset ? "reset" : "update");
   }
@@ -106,9 +159,26 @@ export function createVisualManager({
     resetDirection: () => update({ direction: "ltr" }),
     resetReducedMotionPreference: () => update({ reducedMotion: "auto" }),
     resetVisualPreferences: () => update({}, true),
+    retryColorScheme: () => {
+      if (failedColorScheme) requestColorScheme(failedColorScheme);
+    },
   });
   return {
+    fixedAppearance,
     actions,
+    reportColorSchemeFailure,
+    hasExternalColorScheme: () => externalColorScheme !== undefined,
+    applyExternalColorScheme(snapshot: ColorSchemeSnapshot) {
+      if (externalColorScheme && snapshot.revision <= externalColorScheme.revision) return;
+      externalColorScheme = snapshot;
+      publish(state.preferences);
+    },
+    bindColorSchemeWriter(writer: (preference: VisualPreferences["colorScheme"]) => void) {
+      writeColorScheme = writer;
+      return () => {
+        if (writeColorScheme === writer) writeColorScheme = undefined;
+      };
+    },
     subscribeCommands(this: void, listener: (command: "update" | "reset") => void) {
       commandListeners.add(listener);
       return () => {
@@ -142,7 +212,7 @@ export function createVisualManager({
             storagePresent && next.storagePresent === false ? DEFAULT_VISUAL_PREFERENCES : next.state.preferences;
           if (next.storagePresent !== undefined) storagePresent = next.storagePresent;
           publish(preferences);
-          setStatus({ initialized: true, persistence: next.persistence });
+          setStatus({ ...status, initialized: true, persistence: next.persistence });
         } else {
           publish(state.preferences);
           setStatus({ ...status, initialized: true });

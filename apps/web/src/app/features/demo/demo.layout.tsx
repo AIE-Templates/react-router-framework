@@ -6,6 +6,7 @@ import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
 import { AccountMenu } from "./account-menu";
 import { CrmArea } from "./crm-area";
 import { DemoIcon } from "./demo-icon";
+import { EditorArea } from "./editor-area";
 
 import classes from "./home.route.module.css";
 
@@ -18,6 +19,13 @@ export default function DemoLayout() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const draft = useState("");
   const basic = params.get("shell") === "basic";
+  if (params.get("layout") === "editor") {
+    return (
+      <BasicShell title="Editor" headerMode={headerMode}>
+        <EditorArea />
+      </BasicShell>
+    );
+  }
   const area = <CrmArea basic={basic} report={Boolean(report)} draft={draft} />;
   if (basic) {
     return (

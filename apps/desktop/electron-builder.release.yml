@@ -18,3 +18,7 @@ directories:
   output: out/release
 afterPack: ./scripts/fuses.ts
 artifactBuildCompleted: ./scripts/installer-receipt.ts
+mac:
+  extraResources:
+    - from: .vite/release/window-appearance.node
+      to: window-appearance.node

@@ -554,6 +554,11 @@ function checkContents(pkg: Package): CheckResult {
 
   // Electron validates the archive's header against what the app records (the asar integrity fuse).
   if (process.platform === "darwin") {
+    const addon = "window-appearance.node";
+    const installed = join(pkg.resources, addon);
+    const built = join(desktopDir, bundleDir("release"), addon);
+    if (!existsSync(installed) || !existsSync(built) || sha256(readFileSync(installed)) !== sha256(readFileSync(built)))
+      problems.push("macOS window appearance addon missing or differs from the release build");
     const plist = join(pkg.bundle!, "Contents", "Info.plist");
     const recorded = spawnSync(
       "plutil",

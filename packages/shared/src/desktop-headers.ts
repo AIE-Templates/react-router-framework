@@ -1,4 +1,5 @@
 // Electron layer: host request and preference protocol.
+import { isVisualThemeSnapshot, type VisualThemeSnapshot } from "./desktop-protocol.ts";
 import { sanitizePreferences } from "./preferences.ts";
 import type { ChromeMode } from "./window-chrome.ts";
 
@@ -18,6 +19,7 @@ export const DESKTOP_HEADERS = {
   fullscreen: `${DESKTOP_HEADER_PREFIX}fullscreen`,
   /** A JSON object of string, number or boolean preferences, e.g. `{"theme":"dark","sidebarWidth":280}`. */
   prefs: `${DESKTOP_HEADER_PREFIX}prefs`,
+  visualTheme: `${DESKTOP_HEADER_PREFIX}visual-theme`,
 } as const;
 
 export type DesktopPrefs = Record<string, string | number | boolean>;
@@ -28,6 +30,7 @@ export interface DesktopRequest {
   chromeMode: ChromeMode;
   fullscreen: boolean;
   prefs: DesktopPrefs;
+  visualTheme?: VisualThemeSnapshot;
 }
 
 /**
@@ -36,7 +39,18 @@ export interface DesktopRequest {
  * finite numbers or booleans are dropped.
  */
 export function parseDesktopHeaders(headers: Headers): DesktopRequest {
+  let visualTheme: VisualThemeSnapshot | undefined;
+  const raw = headers.get(DESKTOP_HEADERS.visualTheme);
+  if (raw && raw.length <= 128) {
+    try {
+      const snapshot: unknown = JSON.parse(raw);
+      if (isVisualThemeSnapshot(snapshot)) visualTheme = snapshot;
+    } catch {
+      /* A malformed seed is absent. */
+    }
+  }
   return {
+    ...(visualTheme ? { visualTheme } : {}),
     titlebar: headers.get(DESKTOP_HEADERS.titlebar)?.trim() === "custom" ? "custom" : "native",
     chromeMode:
       headers.get(DESKTOP_HEADERS.chromeMode)?.trim() === "native-overlay" ? "native-overlay" : "system-decorated",

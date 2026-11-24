@@ -1,8 +1,9 @@
-import type { DesktopBridge, DesktopWindowState } from "@repo/shared";
+import type { DesktopBridge, DesktopWindowState, VisualThemeSnapshot } from "@repo/shared";
 import { DESKTOP_CHROME_IPC, DESKTOP_PREFS_IPC } from "@repo/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const wire = vi.hoisted(() => ({
+  sendSync: vi.fn<() => unknown>(() => ({ revision: 0, preference: "auto" })),
   expose: vi.fn<(key: string, bridge: DesktopBridge) => void>(),
   invoke: vi.fn<(channel: string, payload: unknown) => Promise<unknown>>(),
   on: vi.fn<(channel: string, callback: (event: unknown, payload: unknown) => void) => void>(),
@@ -90,17 +91,24 @@ describe("sandbox preload chrome bridge", () => {
 
   it("rejects unsafe appearance before IPC and exposes structured native results", async () => {
     const bridge = await load();
-    expect(await bridge.updateOverlayAppearance({ height: 500 })).toEqual({
-      status: "rejected",
-      reason: "invalid-appearance",
-    });
+    expect(await bridge.declareOverlayAppearance({ owner: "shell", revision: 1, appearance: { height: 500 } })).toEqual(
+      {
+        status: "rejected",
+        reason: "invalid-appearance",
+      },
+    );
     expect(wire.invoke).not.toHaveBeenCalled();
-    wire.invoke.mockResolvedValueOnce({ status: "unsupported", reason: "native-overlay-appearance-unavailable" });
-    expect(await bridge.updateOverlayAppearance({ height: 40 })).toEqual({
+    wire.invoke
+      .mockResolvedValueOnce("document")
+      .mockResolvedValueOnce({ status: "unsupported", reason: "native-overlay-appearance-unavailable" });
+    expect(await bridge.declareOverlayAppearance({ owner: "shell", revision: 1, appearance: { height: 40 } })).toEqual({
       status: "unsupported",
       reason: "native-overlay-appearance-unavailable",
     });
-    expect(wire.invoke).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.appearance, { height: 40 });
+    expect(wire.invoke).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.declaration, {
+      document: "document",
+      declaration: { owner: "shell", revision: 1, appearance: { height: 40 } },
+    });
   });
 });
 
@@ -113,7 +121,7 @@ it("shares one main-issued document token across concurrent visual writes and re
     .mockResolvedValue({ status: "unsupported", reason: "native-overlay-appearance-unavailable" });
   expect(await bridge.syncVisualTheme!("auto")).toEqual({ status: "rejected", reason: "bridge-unavailable" });
   const declaration = { owner: "shell", revision: 1, appearance: null };
-  const writes = [bridge.syncVisualTheme!("dark"), bridge.declareOverlayAppearance!(declaration)];
+  const writes = [bridge.syncVisualTheme!("dark"), bridge.declareOverlayAppearance(declaration)];
   expect(wire.invoke.mock.calls.map(([channel]) => channel)).toEqual([
     DESKTOP_CHROME_IPC.visualDocument,
     DESKTOP_CHROME_IPC.visualDocument,
@@ -162,6 +170,7 @@ it("does not expose the bridge, register teardown or announce paint in a sub-fra
   const paint = vi.fn<() => void>();
   vi.stubGlobal("requestAnimationFrame", paint);
   await import("./preload.ts");
+  expect(wire.sendSync).not.toHaveBeenCalled();
   expect(wire.expose).not.toHaveBeenCalled();
   expect(window.addEventListener).not.toHaveBeenCalled();
   expect(paint).not.toHaveBeenCalled();
@@ -197,4 +206,36 @@ it("ignores malformed preference subscriptions before registering native callbac
   }
   expect(wire.on).not.toHaveBeenCalled();
   expect(wire.invoke).not.toHaveBeenCalled();
+});
+
+it("exposes the document seed and subscribes before reading the current revision", async () => {
+  const bridge = await load();
+  expect(bridge.visualTheme).toEqual({ revision: 0, preference: "auto" });
+  const first = deferred();
+  wire.invoke.mockReturnValueOnce(first.promise);
+  const listener = vi.fn<(snapshot: VisualThemeSnapshot) => void>();
+  const stop = bridge.subscribeVisualTheme(listener);
+  const [, changed] = wire.on.mock.calls[0];
+  expect(wire.on.mock.invocationCallOrder[0]).toBeLessThan(wire.invoke.mock.invocationCallOrder[0]);
+  changed({}, { revision: 4, preference: "dark" });
+  changed({}, { revision: 5, preference: "bogus" });
+  first.resolve({ revision: 3, preference: "light" });
+  await first.promise;
+  stop();
+  changed({}, { revision: 6, preference: "auto" });
+  expect(listener).toHaveBeenCalledExactlyOnceWith({ revision: 4, preference: "dark" });
+  expect(wire.off).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.visualChanged, changed);
+});
+
+it("preserves the bridge and can reconcile when the document seed is unavailable", async () => {
+  wire.sendSync.mockImplementationOnce(() => {
+    throw new Error("seed unavailable");
+  });
+  const bridge = await load();
+  expect(bridge.visualTheme).toBeNull();
+  wire.invoke.mockResolvedValueOnce({ revision: 3, preference: "dark" });
+  const listener = vi.fn<(snapshot: VisualThemeSnapshot) => void>();
+  const stop = bridge.subscribeVisualTheme(listener);
+  await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ revision: 3, preference: "dark" }));
+  stop();
 });

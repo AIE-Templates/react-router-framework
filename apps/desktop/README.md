@@ -52,13 +52,13 @@ External sub-frame navigation and redirects are blocked without opening the syst
 
 ### Controlled failures
 
-`e2e/demo-visual.spec.ts` includes a storage-failure recovery example, tagged `@demo`. It fails only the appearance key's `Storage.setItem` after startup, drives the real controls, checks the warning and continued editing, then restores storage and verifies the next command saves the unsaved preferences across a reload. The original method is restored in `finally`; each test has isolated user data. Run it against both targets after building/packaging:
+`e2e/demo-visual.spec.ts` includes a storage-failure recovery example, tagged `@demo`. It fails only the appearance key's `Storage.setItem` after startup, drives the real controls, checks the warning and continued editing, then restores storage and verifies the next command saves the unsaved motion preference across a reload. The original method is restored in `finally`; each test has isolated user data. Run it against both targets after building/packaging:
 
 ```sh
 pnpm --filter desktop test:e2e demo-visual.spec.ts --grep 'failed appearance save'
 ```
 
-Use the same approach for derived application failures: intercept a specific request or storage/bridge boundary while keeping production components and providers intact. Assert the user-visible failure, absence of incorrect state changes, successful recovery and unexpected page errors. Use deferred gates for delayed/out-of-order responses; arbitrary sleeps are not evidence of correct ordering. Do not add production fault switches or make host tests depend on disposable demo UI. Network interception validates the client's response to a constructed failure, not the real service's reasons for returning it. This storage test covers localStorage persistence, not native mirror failures or disk durability.
+Use the same approach for derived application failures: intercept a specific request or storage/bridge boundary while keeping production components and providers intact. Assert the user-visible failure, absence of incorrect state changes, successful recovery and unexpected page errors. Use deferred gates for delayed/out-of-order responses; arbitrary sleeps are not evidence of correct ordering. Do not add production fault switches or make host tests depend on disposable demo UI. Network interception validates the client's response to a constructed failure, not the real service's reasons for returning it. A separate desktop theme test blocks the temporary file for visual-theme.json, verifies that both windows keep their committed theme, then restores the write path and retries the failed command.
 
 ### Running checks
 
@@ -124,3 +124,7 @@ Runtime window, storage and transport code stays in `src/main`. Benchmark runner
 `DESKTOP_SMOKE=1 pnpm --dir apps/desktop start:test` runs the application suite (bootstrap, transport, styles, window safety and reload/error recovery). It does not require the demo homepage. `DESKTOP_SMOKE=1 DESKTOP_SMOKE_LAYOUT=1 pnpm --dir apps/desktop start:test` additionally runs the template layout fixture matrix against `features/demo`. Template acceptance must explicitly enable this matrix; a requested matrix with missing controls fails rather than silently skipping. The result identifies `suite: application` or `suite: template-layout`. Business projects may delete demo and its route registration and keep the application suite. `test:e2e:host` runs host contracts against the real application root without requiring demo controls; `test:e2e:demo` selects the `@demo` suites in `demo-layout.spec.ts` and `demo-visual.spec.ts`. The full `test:e2e` command includes both and remains required for template acceptance. Derived projects can remove or replace the demo suites without removing host tests.
 
 The layout fixture uses named `data-demo-shell` / `data-demo-header` controls and `data-area-panel-toggle` attributes, independent of control order and translated button labels.
+
+### Fixed window appearance on macOS
+
+The main build compiles `native/window-appearance.mm` with Xcode Command Line Tools and the Node-API headers included with Node. It emits a universal arm64/x86_64 addon beside the main bundle. macOS packages ship it in `Contents/Resources`. Only the main process loads it, when opening a child whose creation policy selects light or dark. The demo’s **Open editor** link opens a fixed-dark child.

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Page } from "@playwright/test";
@@ -17,6 +17,39 @@ async function choose(page: Page, label: string, value: string, option: string) 
 
 // These controls and layout expectations belong to the disposable demo.
 test.describe("demo appearance", { tag: "@demo" }, () => {
+  test("a fixed dark editor keeps its window appearance when the application theme changes", async ({
+    desktop: { app, page: home },
+  }) => {
+    const open = async (name: string) => {
+      const child = app.waitForEvent("window");
+      await home.getByRole("link", { name, exact: true }).press("Enter");
+      const page = await child;
+      await waitForApp(page);
+      return page;
+    };
+    const settings = await open("Settings");
+    await choose(settings, "Color scheme", "light", "Light");
+    const editor = await open("Open editor");
+    const root = editor.locator("html");
+    const textArea = editor.getByRole("textbox", { name: "Brief.md" });
+    await editor.getByRole("combobox", { name: "Font size" }).selectOption("18");
+    await expect(textArea).toHaveCSS("font-size", "18px");
+    await editor.getByRole("combobox", { name: "Line wrapping" }).selectOption("off");
+    await expect(textArea).toHaveAttribute("wrap", "off");
+    await expect(root).toHaveAttribute("data-color-scheme", "dark");
+    await expect(home.locator("html")).toHaveAttribute("data-color-scheme", "light");
+    for (const value of ["dark", "light"] as const) {
+      await choose(settings, "Color scheme", value, value === "dark" ? "Dark" : "Light");
+      await expect(home.locator("html")).toHaveAttribute("data-color-scheme", value);
+      await expect(root).toHaveAttribute("data-color-scheme", "dark");
+    }
+    await editor.reload();
+    await waitForApp(editor);
+    await expect(root).toHaveAttribute("data-color-scheme", "dark");
+    await editor.close();
+    await expect(home.locator("html")).toHaveAttribute("data-color-scheme", "light");
+  });
+
   test("settings update Home and Chat while all three windows keep their state", async ({
     desktop: { app, page: home },
   }) => {
@@ -24,15 +57,16 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       await home.bringToFront();
       const link = home.getByRole("link", { name, exact: true });
       await expect(link).toHaveAttribute("target", "_blank");
-      const opened = app.waitForEvent("window");
-      await link.click();
-      const page = await opened;
+      const [page] = await Promise.all([app.waitForEvent("window"), link.press("Enter")]);
       await waitForApp(page);
       expect(await page.evaluate(() => window.opener === null)).toBe(true);
       return page;
     };
     const note = home.getByRole("textbox", { name: "Follow-up note" });
     await note.fill("Home draft");
+    await home.getByRole("combobox", { name: "Title bar" }).selectOption("standalone");
+    await expect(home).toHaveURL("app://app/?header=standalone");
+    await expect(home.locator(".app-shell")).toHaveAttribute("data-header-mode", "standalone");
     const chat = await openFromHome("Chat demo");
     await expect(chat).toHaveURL("app://app/chat");
     await chat.bringToFront();
@@ -45,7 +79,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
 
     const settings = await openFromHome("Settings");
     await expect(settings).toHaveURL("app://app/settings");
-    await expect(home).toHaveURL("app://app/");
+    await expect(home).toHaveURL("app://app/?header=standalone");
     expect(app.windows()).toHaveLength(3);
     await settings.bringToFront();
     await choose(settings, "Color scheme", "dark", "Dark");
@@ -56,6 +90,8 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
       await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
     }
+    await expect(home.locator(".app-shell")).toHaveAttribute("data-header-mode", "standalone");
+    await expect(chat.locator(".app-shell")).toHaveAttribute("data-header-mode", "fused");
     await settings.close();
     await expect(note).toHaveValue("Home draft");
     await expect(sent).toBeVisible();
@@ -153,7 +189,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     });
     const notice = page.getByText("Appearance is available for this session; settings could not be saved.");
     try {
-      await choose(page, "Color scheme", "light", "Light");
+      await choose(page, "Direction", "rtl", "RTL");
       const saved = await page.evaluate((key) => localStorage.getItem(key), preferenceKey);
       expect(saved).not.toBeNull();
       // Fail only this persistence boundary, after startup; use the real controls and manager.
@@ -167,8 +203,8 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
         };
       }, preferenceKey);
       try {
-        await choose(page, "Color scheme", "dark", "Dark");
-        await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+        await choose(page, "Motion", "reduce", "Reduced");
+        await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
         await expect(notice).toBeVisible();
         expect(await page.evaluate((key) => localStorage.getItem(key), preferenceKey)).toBe(saved);
         const draft = page.getByRole("textbox", { name: "Follow-up note" });
@@ -179,13 +215,13 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
           Storage.prototype.setItem = setItem;
         }, original);
       }
-      // A new command must save both the unsaved color scheme and the new direction.
-      await choose(page, "Direction", "rtl", "RTL");
+      // A new command must save both the unsaved motion preference and the new direction.
+      await choose(page, "Direction", "ltr", "LTR");
       await expect(notice).toBeHidden();
       await page.reload();
       await waitForApp(page);
-      await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
-      await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+      await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
+      await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
       await expect(notice).toBeHidden();
       expect(errors).toEqual([]);
     } finally {
@@ -194,16 +230,63 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     }
   });
 
+  test("a failed desktop theme commit keeps all windows on the saved theme and supports retry", async ({
+    desktop: { app, page },
+    userDataDir,
+  }) => {
+    await choose(page, "Color scheme", "light", "Light");
+    const themeFile = join(userDataDir, "visual-theme.json");
+    const readTheme = async () => JSON.parse(await readFile(themeFile, "utf8")) as unknown;
+    await expect(async () => {
+      expect(await readTheme()).toEqual({ version: 1, colorScheme: "light" });
+    }).toPass({ timeout: 10_000 });
+    const opened = app.waitForEvent("window");
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    const settings = await opened;
+    await waitForApp(settings);
+    const retry = settings.getByRole("button", { name: "Retry color scheme" });
+    const temp = themeFile + ".tmp";
+    await mkdir(temp);
+    try {
+      await choose(settings, "Color scheme", "dark", "Dark");
+      await expect(retry).toBeVisible();
+      for (const win of [page, settings]) {
+        await expect(win.locator("html")).toHaveAttribute("data-color-scheme", "light");
+        const native = await app.browserWindow(win);
+        expect(await native.evaluate((w) => w.getBackgroundColor().toLowerCase())).toBe("#ffffff");
+      }
+      expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("light");
+      expect(await readTheme()).toEqual({ version: 1, colorScheme: "light" });
+    } finally {
+      await rmdir(temp);
+    }
+    await retry.click();
+    await expect(retry).toBeHidden();
+    for (const win of [page, settings]) {
+      await expect(win.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+    }
+    expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
+    expect(await readTheme()).toEqual({ version: 1, colorScheme: "dark" });
+  });
+
   for (const scenario of [
     { system: "dark", preference: "light", option: "Light", background: "rgb(250, 250, 250)" },
     { system: "light", preference: "dark", option: "Dark", background: "rgb(23, 25, 29)" },
   ] as const) {
     test(`explicit ${scenario.preference} styles override the ${scenario.system} system preference`, async ({
-      desktop: { page },
+      desktop: { app, page },
     }) => {
       await page.emulateMedia({ colorScheme: scenario.system });
       try {
         await choose(page, "Color scheme", scenario.preference, scenario.option);
+        await expect
+          .poll(() =>
+            app.evaluate(({ nativeTheme }) => ({
+              source: nativeTheme.themeSource,
+              dark: nativeTheme.shouldUseDarkColors,
+            })),
+          )
+          .toEqual({ source: scenario.preference, dark: scenario.preference === "dark" });
         // Native theme synchronization must not remove the opposing renderer media emulation.
         expect(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(
           scenario.system === "dark",
@@ -256,7 +339,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     }
   });
 
-  test("visual controls persist through reload and synchronize the independent native mirror", async ({
+  test("visual controls persist through reload and use the durable desktop color scheme", async ({
     desktop: { app, page },
   }) => {
     const errors: string[] = [];
@@ -287,10 +370,12 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
         app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase()),
       )
       .toBe("#ffffff");
+    // Use Chromium's native media value for the System check instead of Playwright's media override.
+    await page.emulateMedia({ colorScheme: null });
     await choose(page, "Color scheme", "auto", "System");
-    const systemDark = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches);
+    await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("system");
+    const systemDark = await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
     await expect(page.locator("html")).toHaveAttribute("data-color-scheme", systemDark ? "dark" : "light");
-    expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("system");
     // Mantine integrations also exercise the real native pointer path through portals.
     const preview = page.getByRole("button", { name: "Preview options", exact: true });
     if (await preview.count()) {
@@ -305,9 +390,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     expect(errors).toEqual([]);
   });
 
-  test("reopening a macOS window uses the current mirror before renderer synchronization", async ({
-    desktop: { app, page },
-  }) => {
+  test("reopening a macOS window uses the committed theme at creation", async ({ desktop: { app, page } }) => {
     test.skip(process.platform !== "darwin", "Other platforms quit after their last window closes");
     const systemDark = await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
     const preference = systemDark ? "light" : "dark";

@@ -1,9 +1,21 @@
+import { createRequire } from "node:module";
+import { join } from "node:path";
+
 import { DESKTOP_BOOTSTRAP_ARGUMENT, type DesktopBootstrap } from "@repo/shared";
-import { BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, type Session, screen, shell } from "electron";
+import {
+  app,
+  Menu,
+  BrowserWindow,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type Session,
+  screen,
+  shell,
+} from "electron";
 
 import { isAppUrl } from "./app-url.ts";
 import type { BootProfile } from "./boot-profile.ts";
-import { chromeWindowOptions, type ChromePolicy } from "./chrome-policy.ts";
+import { chromeAppearance, chromeWindowOptions, type ChromePolicy } from "./chrome-policy.ts";
 import { installWindowChrome } from "./chrome.ts";
 import { redactLogUrls, safeUrl } from "./log-url.ts";
 import type { Logger } from "./log.ts";
@@ -16,6 +28,8 @@ export const IPC = {
 
 export interface WindowOptions {
   session: Session;
+  childAppearance?(url: URL): "light" | "dark" | undefined;
+  fixedAppearance?: "light" | "dark";
   preloadPath: string;
   appVersion: string;
   log: Logger;
@@ -25,7 +39,7 @@ export interface WindowOptions {
    * for the smoke. Never in a release build.
    */
   logRendererConsole?: boolean;
-  chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualThemeStore?: VisualThemeStore };
+  chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualThemeStore: VisualThemeStore };
 }
 
 const CASCADE_STEP = 24;
@@ -71,11 +85,21 @@ export function createAppWindow(options: WindowOptions): BrowserWindow {
   return new BrowserWindow({ width: 1200, height: 800, ...nativeOptions(options) });
 }
 
-function nativeOptions({ session, preloadPath, chrome, appVersion }: WindowOptions) {
+function nativeOptions({ session, preloadPath, chrome, appVersion, fixedAppearance }: WindowOptions) {
   const policy = chrome?.currentPolicy();
   return {
     show: false,
-    ...(policy ? chromeWindowOptions(policy) : { backgroundColor: "#ffffff" }),
+    ...(policy
+      ? chromeWindowOptions(
+          fixedAppearance
+            ? {
+                ...policy,
+                appearance: { ...chromeAppearance(fixedAppearance === "dark"), height: policy.appearance.height },
+                backgroundColor: chromeAppearance(fixedAppearance === "dark").color,
+              }
+            : policy,
+        )
+      : { backgroundColor: "#ffffff" }),
     webPreferences: {
       session,
       preload: preloadPath,
@@ -88,7 +112,7 @@ function nativeOptions({ session, preloadPath, chrome, appVersion }: WindowOptio
       ...(DESKTOP_BUILD_PROFILE === "release" ? { devTools: false } : {}),
       additionalArguments: [
         `--desktop-app-version=${appVersion}`,
-        ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify(chrome.bootstrap)}`] : []),
+        ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify({ ...chrome.bootstrap, fixedAppearance })}`] : []),
       ],
     },
   };
@@ -107,8 +131,38 @@ export function configureWindow(
 ) {
   const { chrome, profile, log, logRendererConsole } = options;
   const policy = chrome?.currentPolicy();
+  if (options.fixedAppearance && process.platform === "darwin") {
+    const addon = join(app.isPackaged ? process.resourcesPath : __dirname, "window-appearance.node");
+    const setAppearance: unknown = createRequire(__filename)(addon);
+    if (typeof setAppearance !== "function") throw new Error("Invalid macOS window appearance addon");
+    setAppearance(win.getNativeWindowHandle(), options.fixedAppearance === "dark");
+  }
+  win.webContents.on("context-menu", (_event, params) => {
+    if (!params.isEditable && !params.selectionText) return;
+    const { canCut, canCopy, canPaste, canSelectAll } = params.editFlags;
+    Menu.buildFromTemplate([
+      ...(params.isEditable ? [{ role: "cut" as const, enabled: canCut }] : []),
+      { role: "copy", enabled: canCopy },
+      ...(params.isEditable ? [{ role: "paste" as const, enabled: canPaste }] : []),
+      { type: "separator" },
+      { role: "selectAll", enabled: canSelectAll },
+    ]).popup({
+      window: win,
+      frame: params.frame ?? undefined,
+      sourceType: params.menuSourceType,
+      x: params.x,
+      y: params.y,
+    });
+  });
   if (chrome && policy) {
-    installWindowChrome(win, policy, (event) => isTrustedSender(event, win), log, chrome.visualThemeStore);
+    installWindowChrome(
+      win,
+      policy,
+      (event) => isTrustedSender(event, win),
+      log,
+      chrome.visualThemeStore,
+      options.fixedAppearance,
+    );
     log.info(
       {
         requestedMode: policy.requestedMode,
@@ -171,7 +225,7 @@ export function configureWindow(
         action: "allow",
         outlivesOpener: true,
         overrideBrowserWindowOptions: {
-          ...nativeOptions(options),
+          ...nativeOptions({ ...options, fixedAppearance: options.childAppearance?.(new URL(url)) }),
           // Leave room to stagger children even when their opener fills the display.
           ...(!named.has("width") &&
             !named.has("innerwidth") && { width: Math.min(bounds.width, Math.max(1, area.width - CASCADE_STEP * 2)) }),

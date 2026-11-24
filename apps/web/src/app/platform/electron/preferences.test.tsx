@@ -21,8 +21,10 @@ function fakeBridge(prefs: Record<string, unknown> = {}): DesktopBridge {
     platform: "darwin",
     version: "1",
     bootstrap: { protocolVersion: 1, shell: desktopShell, mode: "system-decorated" },
+    visualTheme: null,
+    subscribeVisualTheme: () => () => {},
     subscribeWindowState: () => () => {},
-    updateOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
+    declareOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
     setPref: vi.fn<DesktopBridge["setPref"]>(async (key, value) => {
       if (key === "rejected") return { status: "rejected", reason: "too-large" };
       prefs[key] = value;
