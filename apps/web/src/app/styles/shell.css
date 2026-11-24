@@ -39,33 +39,33 @@
     box-shadow: var(--app-shadow-surface);
   }
 
-  .module-sidebar {
+  .app-area-sidebar {
     border-inline-end: 1px solid var(--app-color-border);
   }
 
-  .module-auxiliary {
+  .app-area-auxiliary {
     border-inline-start: 1px solid var(--app-color-border);
   }
 
-  .module-sidebar,
-  .module-auxiliary {
+  .app-area-sidebar,
+  .app-area-auxiliary {
     background: var(--app-color-card);
   }
 
-  .module-header,
+  .app-area-header,
   .shell-titlebar-content {
     border-block-end: 1px solid var(--app-color-border);
     background: var(--app-color-card);
   }
 
-  .module-header-title,
+  .app-area-header-title,
   .shell-titlebar-content > strong {
     font-size: 0.8125rem;
     font-weight: 600;
     letter-spacing: -0.015em;
   }
 
-  .module-header button,
+  .app-area-header button,
   .shell-navigation-toggle {
     align-items: center;
     justify-content: center;
@@ -83,19 +83,19 @@
       color 120ms;
   }
 
-  .module-header button:hover,
+  .app-area-header button:hover,
   .shell-navigation-toggle:hover {
     background: var(--app-color-muted);
     color: var(--app-color-foreground);
   }
 
-  .module-header button[aria-expanded="true"] {
+  .app-area-header button[aria-expanded="true"] {
     background: var(--app-color-muted);
     color: var(--app-color-foreground);
     border-color: var(--app-color-input);
   }
 
-  .module-header button[aria-label^="Close"] {
+  .app-area-header button[aria-label^="Close"] {
     width: 2rem;
     padding: 0;
     border-color: transparent;
@@ -111,11 +111,11 @@
     box-shadow: 0 2px 8px rgb(0 0 0 / 0.08);
   }
 
-  .module-workspace > .module-scroll {
+  .app-area-workspace > .app-area-scroll {
     padding: 0;
   }
 
-  .module-scroll {
+  .app-area-scroll {
     scrollbar-width: thin;
     scrollbar-color: var(--app-color-input) transparent;
   }
@@ -131,12 +131,12 @@
     }
   }
 
-  :root[data-reduced-motion="reduce"] :is(.shell-nav-content a, .module-header button, .shell-navigation-toggle) {
+  :root[data-reduced-motion="reduce"] :is(.shell-nav-content a, .app-area-header button, .shell-navigation-toggle) {
     transition: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    :root:not([data-reduced-motion]) :is(.shell-nav-content a, .module-header button, .shell-navigation-toggle) {
+    :root:not([data-reduced-motion]) :is(.shell-nav-content a, .app-area-header button, .shell-navigation-toggle) {
       transition: none;
     }
   }

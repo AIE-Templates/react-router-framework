@@ -24,7 +24,7 @@ function fixture() {
           {
             path: "/:page",
             Component: () => (
-              <div data-scroll-restoration-id="module:workspace">
+              <div data-scroll-restoration-id="example:workspace">
                 <h1 id="target">Page</h1>
               </div>
             ),
@@ -36,12 +36,12 @@ function fixture() {
   );
   const { container, unmount } = render(<RouterProvider router={router} />);
   const root = container.querySelector<HTMLElement>(".root-content")!;
-  const pane = () => container.querySelector<HTMLElement>('[data-scroll-restoration-id="module:workspace"]')!;
+  const pane = () => container.querySelector<HTMLElement>('[data-scroll-restoration-id="example:workspace"]')!;
   return { router, root, pane, unmount };
 }
 
 describe("container scroll restoration", () => {
-  it("resets new routes and restores both root and module positions on back and forward", async () => {
+  it("resets new routes and restores both root and area scroll positions on back and forward", async () => {
     const { router, root, pane } = fixture();
     scroll(root, 420, 8);
     scroll(pane(), 230, 12);

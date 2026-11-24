@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { AppAreaLayout } from "~/layouts/app-area/app-area-layout";
 import { BasicShell } from "~/layouts/app-shell/app-shell";
-import { ModuleLayout } from "~/layouts/module/module-layout";
 
 import classes from "./chat.route.module.css";
 
@@ -37,7 +37,7 @@ export default function Chat() {
 
   return (
     <BasicShell title="Chat demo">
-      <ModuleLayout moduleId="chat" contentAs="main" title="Chat demo">
+      <AppAreaLayout areaId="chat" contentAs="main" title="Chat demo">
         <div className={classes.chat}>
           <h1 id="chat-title">Design review</h1>
           <div role="log" aria-labelledby="chat-title" ref={thread} className={classes.thread}>
@@ -65,7 +65,7 @@ export default function Chat() {
             </div>
           </form>
         </div>
-      </ModuleLayout>
+      </AppAreaLayout>
     </BasicShell>
   );
 }
