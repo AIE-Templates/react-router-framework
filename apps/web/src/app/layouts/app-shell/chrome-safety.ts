@@ -1,3 +1,12 @@
+// Select the same visible primary header for fallback handoff, fused styles and drawer anchoring.
+const primaryPath =
+  '>[data-window-columns]:not([hidden])>[data-window-column]:not([hidden])>[data-window-header="primary"]:not([hidden])';
+const activeLayout = `[data-window-layout]:not([hidden]):nth-child(1 of [data-window-layout]:not([hidden]))`;
+const fusedShell = '.root-frame>.root-content>.app-shell[data-chrome-ready][data-header-mode="fused"]:not([hidden])';
+// :has() cannot be nested in the root fallback selector.
+const activeFrame = `${fusedShell}>.shell-body:not([hidden])>${activeLayout}:has(${primaryPath}[data-window-drag])`;
+const fusedHeader = `${activeFrame}>[data-window-columns]>[data-window-column]>[data-window-header][data-window-drag]`;
+
 /**
  * Keep the complete safety handoff here, inline in Layout, rather than in the business stylesheet.
  *
@@ -24,41 +33,41 @@ html,body{margin:0;height:100%;min-width:0}
 .shell-titlebar-content{min-height:var(--app-window-header-height);display:flex;flex-wrap:wrap;align-items:center;gap:1rem;padding:0 1rem}
 .shell-titlebar-content>strong{flex:1 1 0;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .shell-titlebar-content>[data-window-interactive]{display:flex;flex-wrap:wrap;align-items:center;min-width:0;max-width:100%}
+[data-window-header] :is(button,input,textarea,select,a[href],summary,[tabindex],label,[contenteditable]:not([contenteditable="false"]),[role="button"]){app-region:no-drag;-webkit-app-region:no-drag}
 .shell-nav{flex:0 0 4.5rem;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .shell-nav-chrome{display:none;flex-shrink:0}
 html[data-chrome-mode="native-overlay"]{--app-window-rail-band:max(var(--app-window-header-height),var(--app-window-safe-top))}
-.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{display:block;height:var(--app-window-rail-band,var(--app-window-safe-top))}
+@media (width > 48em){
+ .shell-body:has(>${activeLayout}${primaryPath}[data-window-drag])>.shell-nav>.shell-nav-chrome{display:block;height:var(--app-window-rail-band,var(--app-window-safe-top))}
+}
 .shell-nav-content{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:1rem;padding:1rem .5rem}
 .shell-navigation-toggle{display:none}
-.app-area-layout{--app-window-outer-left:env(titlebar-area-x,0px);--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)));--app-layout-sidebar-span:0px;--app-layout-auxiliary-span:0px;container-type:inline-size;flex:1;min-width:0;min-height:0;height:100%;position:relative}
+.app-area-layout{--app-layout-sidebar-span:0px;--app-layout-auxiliary-span:0px}
+[data-window-layout]{container-type:inline-size;flex:1;min-width:0;min-height:0;height:100%;position:relative}
 .app-area-layout[data-sidebar-open="true"]{--app-layout-sidebar-span:15rem}
 .app-area-layout[data-auxiliary-open="true"]{--app-layout-auxiliary-span:20rem}
-.app-area-columns{--app-layout-visible-sidebar-span:var(--app-layout-sidebar-span);--app-layout-visible-auxiliary-span:var(--app-layout-auxiliary-span);height:100%;display:grid;position:relative;grid-template-columns:var(--app-layout-visible-sidebar-span) minmax(0,1fr) var(--app-layout-visible-auxiliary-span);grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}
-.app-area-panel{display:grid;grid-row:1/-1;grid-template-rows:subgrid;min-width:0;min-height:0;overflow:hidden}
+.app-area-columns{--app-layout-visible-sidebar-span:var(--app-layout-sidebar-span);--app-layout-visible-auxiliary-span:var(--app-layout-auxiliary-span)}
+[data-window-columns]{height:100%;display:grid;position:relative;grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}
+[data-window-column-body]{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:auto;flex:1}
+[data-window-column-body]>:only-child{flex:1;min-height:0}
+[data-window-column]{display:grid;grid-row:1/-1;grid-template-rows:subgrid;min-width:0;min-height:0;overflow:hidden}
 .app-area-workspace{grid-column:2}
 .app-area-sidebar{grid-column:1}
 .app-area-auxiliary{grid-column:3}
-.app-area-header{app-region:no-drag;-webkit-app-region:no-drag;flex-shrink:0;min-height:var(--app-layout-header-height);display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;padding:.375rem 1rem;position:relative}
-.shell-body>.app-area-layout:nth-child(1 of .app-area-layout)>.app-area-columns>.app-area-workspace>.app-area-header{anchor-name:--app-layout-workspace-header}
-.app-area-header-title{flex:1 1 4rem;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+[data-window-header]{app-region:no-drag;-webkit-app-region:no-drag;flex-shrink:0;min-height:var(--app-layout-header-height);display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;padding:.375rem 1rem;position:relative}
+.shell-body>${activeLayout}${primaryPath}{anchor-name:--app-layout-workspace-header}
+[data-window-header]>strong{flex:1 1 4rem;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .app-area-header button{flex-shrink:0}
 .app-area-scroll{flex:1;min-width:0;min-height:0;overflow:auto;padding:1rem}
 .root-frame:has(>.root-content>.app-shell[data-chrome-ready][data-header-mode="standalone"]:not([hidden])>.shell-titlebar:not([hidden])>.shell-titlebar-content:not([hidden]))>.root-chrome-fallback{display:none}
-.root-frame:has(>.root-content>.app-shell[data-chrome-ready][data-header-mode="fused"]:not([hidden])>.shell-body:not([hidden])>.app-area-layout[data-chrome-complete]:not([hidden])>.app-area-columns:not([hidden])>.app-area-workspace:not([hidden])>.app-area-header:not([hidden]))>.root-chrome-fallback{display:none}
-.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.app-area-layout[data-chrome-complete]>.app-area-columns>.app-area-panel>.app-area-header{app-region:drag;-webkit-app-region:drag;min-height:max(var(--app-window-header-height),var(--app-window-safe-top));padding-top:max(.375rem,env(titlebar-area-y,0px));padding-left:max(1rem,var(--app-window-header-left,0px));padding-right:max(1rem,var(--app-window-header-right,0px))}
-.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.app-area-layout[data-chrome-complete]>.app-area-columns>.app-area-panel>.app-area-header>.app-area-header-title{flex-basis:0}
-.app-area-layout:dir(ltr) .app-area-workspace>.app-area-header{--app-window-header-left:max(0px,calc(var(--app-window-outer-left) - var(--app-layout-visible-sidebar-span)));--app-window-header-right:max(0px,calc(var(--app-window-outer-right) - var(--app-layout-visible-auxiliary-span)))}
-.app-area-layout:dir(rtl) .app-area-workspace>.app-area-header{--app-window-header-left:max(0px,calc(var(--app-window-outer-left) - var(--app-layout-visible-auxiliary-span)));--app-window-header-right:max(0px,calc(var(--app-window-outer-right) - var(--app-layout-visible-sidebar-span)))}
-.app-area-layout:dir(ltr) .app-area-sidebar>.app-area-header,.app-area-layout:dir(rtl) .app-area-auxiliary>.app-area-header{--app-window-header-left:var(--app-window-outer-left)}
-.app-area-layout:dir(rtl) .app-area-sidebar>.app-area-header,.app-area-layout:dir(ltr) .app-area-auxiliary>.app-area-header{--app-window-header-right:var(--app-window-outer-right)}
-.app-shell[data-navigation-shell]:dir(ltr)>.shell-body>.app-area-layout{--app-window-outer-left:max(0px,calc(env(titlebar-area-x,0px) - 4.5rem))}
-.app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.app-area-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) - 4.5rem))}
-
+.root-frame:has(>.root-content>.app-shell[data-chrome-ready][data-header-mode="fused"]:not([hidden])>.shell-body:not([hidden])>${activeLayout}${primaryPath}[data-window-drag])>.root-chrome-fallback{display:none}
+${fusedHeader}{app-region:drag;-webkit-app-region:drag;min-height:max(var(--app-window-header-height),var(--app-window-safe-top));padding-top:max(.375rem,env(titlebar-area-y,0px));padding-left:max(1rem,calc(env(titlebar-area-x,0px) - var(--app-window-column-left,0px)));padding-right:max(1rem,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) - var(--app-window-column-right,0px)))}
+${fusedHeader}>strong{flex-basis:0}
 
 /* Windows paints its separator below the native caption buttons. */
 html[data-platform="win32"][data-chrome-mode="native-overlay"]{--app-window-separator:1px;--app-window-band-height:calc(max(var(--app-window-header-height),var(--app-window-safe-top)) + var(--app-window-separator))}
-html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.app-area-layout[data-chrome-complete]>.app-area-columns>.app-area-panel>.app-area-header,
-html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="standalone"]>.shell-titlebar>.shell-titlebar-content{min-height:var(--app-window-band-height);border-block-end-width:var(--app-window-separator)}
+html[data-platform="win32"][data-chrome-mode="native-overlay"] ${fusedHeader},
+html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="standalone"]>.shell-titlebar>.shell-titlebar-content{min-height:var(--app-window-band-height);border-block-end:var(--app-window-separator) solid var(--app-color-border,currentColor)}
 html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{height:var(--app-window-band-height);border-block-end:var(--app-window-separator) solid color-mix(in srgb,currentColor 15%,transparent)}
 
 @container (max-width:60rem){
@@ -72,12 +81,10 @@ html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-c
  .app-area-sidebar>.app-area-header{app-region:no-drag!important;-webkit-app-region:no-drag!important;padding:.5rem 1rem!important;min-height:var(--app-layout-header-height)!important}
 }
 @media(max-width:48em){
- .app-shell[data-navigation-shell]:dir(ltr)>.shell-body>.app-area-layout{--app-window-outer-left:env(titlebar-area-x,0px)}
- .app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.app-area-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
  .shell-navigation-toggle{display:inline-flex}
- .shell-nav{display:none;position:absolute;inset-block:var(--app-layout-navigation-top,var(--app-layout-header-height)) 0;inset-inline-start:0;width:min(15rem,100%);z-index:6;background:Canvas}
- @supports (anchor-scope:--app-layout-workspace-header){
-  .shell-nav{top:anchor(--app-layout-workspace-header bottom,var(--app-layout-navigation-top,var(--app-layout-header-height)))}
+ .shell-nav{display:none;position:absolute;inset-block:var(--app-layout-navigation-top,0px) 0;inset-inline-start:0;width:min(15rem,100%);z-index:6;background:Canvas}
+ @supports (anchor-scope:--app-layout-workspace-header) and (top:anchor(--app-layout-workspace-header bottom)){
+  .shell-nav{top:anchor(--app-layout-workspace-header bottom,var(--app-layout-navigation-top,0px))}
  }
  .app-shell[data-navigation-open="true"]>.shell-body>.shell-nav{display:flex}
  .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{display:none}

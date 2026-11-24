@@ -38,6 +38,28 @@ function signalStorage(eventKey: string | null = key) {
 }
 
 describe("visual state ownership", () => {
+  it("keeps a fixed editor appearance when another tab changes the shared preference", () => {
+    const previousUrl = location.href;
+    history.replaceState(null, "", "/?layout=editor&windowAppearance=dark");
+    try {
+      stored("light");
+      // oxlint-disable-next-line typescript/no-implied-eval -- Exercise the serialized prepaint script.
+      new Function("window", "document", visualScript())(window, document);
+      expect(document.documentElement.dataset.colorScheme).toBe("dark");
+      const manager = create();
+      const release = manager.connect();
+      try {
+        stored("auto");
+        signalStorage();
+        expect(manager.getSnapshot().preferences.colorScheme).toBe("auto");
+        expect(manager.getSnapshot().resolved.colorScheme).toBe("dark");
+      } finally {
+        release();
+      }
+    } finally {
+      history.replaceState(null, "", previousUrl);
+    }
+  });
   it("separates hydration from the real client snapshot before connecting", () => {
     stored();
     const manager = create();

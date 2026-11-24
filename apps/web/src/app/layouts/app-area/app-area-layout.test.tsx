@@ -148,7 +148,7 @@ describe("layout composition", () => {
     expect(onSidebarOpenChange).toHaveBeenCalledOnce();
   });
 
-  it("only marks a directly composed area header as complete and excludes portalled controls from drag", () => {
+  it("renders the fused header handoff path and excludes portalled controls from drag", () => {
     const { container } = render(
       <AppRoot>
         <BasicShell>
@@ -161,7 +161,7 @@ describe("layout composition", () => {
     );
     expect(
       container.querySelector(
-        ".app-shell > .shell-body > .app-area-layout[data-chrome-complete] > .app-area-columns > .app-area-workspace > .app-area-header[data-window-drag]",
+        ".app-shell > .shell-body > [data-window-layout] > [data-window-columns] > [data-window-column] > [data-window-header=primary][data-window-drag]",
       ),
     ).not.toBeNull();
     expect(screen.getByRole("button", { name: "Portal action" })).toHaveAttribute("data-window-interactive");
@@ -185,7 +185,7 @@ describe("layout composition", () => {
         </BasicShell>
       </AppRoot>,
     );
-    expect(container.querySelector("[data-chrome-complete]")).toBeNull();
+    expect(container.querySelector("[data-window-header][data-window-drag]")).toBeNull();
     rerender(
       <AppRoot>
         <BasicShell headerMode="standalone" title="App">
@@ -196,6 +196,6 @@ describe("layout composition", () => {
       </AppRoot>,
     );
     expect(container.querySelector(".shell-titlebar")).not.toBeNull();
-    expect(container.querySelector("[data-chrome-complete]")).toBeNull();
+    expect(container.querySelector("[data-window-header][data-window-drag]")).toBeNull();
   });
 });

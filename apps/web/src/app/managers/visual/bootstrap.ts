@@ -33,7 +33,7 @@ export function visualKernel() {
       return { kind: "invalid" as const };
     }
   }
-  function resolve(preferences: VisualPreferences, host?: Window): VisualState {
+  function resolve(preferences: VisualPreferences, host?: Window, fixedAppearance?: "light" | "dark"): VisualState {
     const matches = (query: string) => {
       try {
         return !!host?.matchMedia?.(query).matches;
@@ -45,11 +45,12 @@ export function visualKernel() {
       preferences,
       resolved: {
         colorScheme:
-          preferences.colorScheme === "auto"
+          fixedAppearance ??
+          (preferences.colorScheme === "auto"
             ? matches("(prefers-color-scheme: dark)")
               ? "dark"
               : "light"
-            : preferences.colorScheme,
+            : preferences.colorScheme),
         direction: preferences.direction,
         reducedMotion:
           preferences.reducedMotion === "auto"
@@ -58,7 +59,12 @@ export function visualKernel() {
       },
     };
   }
-  function read(config: VisualBootstrapConfig, seed?: VisualPreferences, host?: Window) {
+  function read(
+    config: VisualBootstrapConfig,
+    seed?: VisualPreferences,
+    host?: Window,
+    fixedAppearance?: "light" | "dark",
+  ) {
     let storagePresent: boolean | undefined;
     let preferences = parse(seed);
     let persistence: VisualBootstrapRecord["persistence"] = host ? "ready" : "unavailable";
@@ -76,7 +82,8 @@ export function visualKernel() {
     return {
       version: 1 as const,
       storageKey: config.storageKey,
-      state: resolve(preferences, host),
+      fixedAppearance,
+      state: resolve(preferences, host, fixedAppearance),
       persistence,
       storagePresent,
     };
@@ -93,13 +100,19 @@ export function visualKernel() {
 }
 
 export const visualCodec = visualKernel();
+/** Serialized alongside the kernel to resolve the document appearance before paint. */
+export function webWindowAppearance(host: Window) {
+  const fixed = new URLSearchParams(host.location?.search).get("windowAppearance");
+  return fixed === "light" || fixed === "dark" ? fixed : undefined;
+}
+
 export function visualScript(seed?: VisualPreferences) {
   const json = (value: unknown) =>
     JSON.stringify(value)
       .replace(/</g, "\\u003c")
       .replace(/\u2028/g, "\\u2028")
       .replace(/\u2029/g, "\\u2029");
-  return `(()=>{const k=(${visualKernel.toString()})();const c=${json(visualBootstrapConfig)};const r=k.read(c,${json(seed ?? null)},window);window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
+  return `(()=>{const k=(${visualKernel.toString()})();const c=${json(visualBootstrapConfig)};const r=k.read(c,${json(seed ?? null)},window,(${webWindowAppearance.toString()})(window));window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
 }
 
 /** Explicit request seeds must also select integration variables when scripts cannot run. */
