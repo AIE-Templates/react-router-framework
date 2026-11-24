@@ -205,7 +205,7 @@ export default function Home() {
             <div>
               <TextInput
                 id="scratchpad"
-                label="Module draft"
+                label="Area draft"
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 placeholder="What would you like to build?"
