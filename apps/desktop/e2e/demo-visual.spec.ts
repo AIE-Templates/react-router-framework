@@ -31,7 +31,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       expect(await page.evaluate(() => window.opener === null)).toBe(true);
       return page;
     };
-    const note = home.getByRole("textbox", { name: "Module draft" });
+    const note = home.getByRole("textbox", { name: "Area draft" });
     await note.fill("Home draft");
     const chat = await openFromHome("Chat demo");
     await expect(chat).toHaveURL("app://app/chat");
@@ -172,7 +172,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
         await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
         await expect(notice).toBeVisible();
         expect(await page.evaluate((key) => localStorage.getItem(key), preferenceKey)).toBe(saved);
-        const draft = page.getByRole("textbox", { name: "Module draft" });
+        const draft = page.getByRole("textbox", { name: "Area draft" });
         await draft.fill("Still usable after a failed save");
         await expect(draft).toHaveValue("Still usable after a failed save");
       } finally {
@@ -212,10 +212,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
         await expect(page.locator("html")).toHaveAttribute("data-color-scheme", scenario.preference);
         await expect(page.locator("body")).toHaveCSS("background-color", scenario.background);
         await expect(page.locator("body")).toHaveCSS("color-scheme", scenario.preference);
-        await expect(page.getByRole("textbox", { name: "Module draft" })).toHaveCSS(
-          "color-scheme",
-          scenario.preference,
-        );
+        await expect(page.getByRole("textbox", { name: "Area draft" })).toHaveCSS("color-scheme", scenario.preference);
         await page.reload();
         await waitForApp(page);
         await expect(page.locator("body")).toHaveCSS("background-color", scenario.background);
