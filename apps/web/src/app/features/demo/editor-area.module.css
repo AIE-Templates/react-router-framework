@@ -1,0 +1,37 @@
+@layer components {
+  .files {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    padding: 1rem;
+    overflow: auto;
+    border-inline-end: 1px solid var(--app-color-border);
+  }
+  .files > label {
+    display: grid;
+    gap: 0.5rem;
+  }
+  .files > label > select {
+    font: inherit;
+    color: inherit;
+    background-color: var(--app-color-card);
+    border: 1px solid var(--app-color-input);
+    border-radius: 0.25rem;
+    padding: 0.25rem 0.5rem;
+  }
+  .files input {
+    inline-size: 100%;
+  }
+  .document {
+    display: grid;
+    padding: 1rem;
+    min-inline-size: 0;
+  }
+  .document textarea {
+    width: 100%;
+    resize: none;
+    padding: 1rem;
+    font-family: monospace;
+  }
+}

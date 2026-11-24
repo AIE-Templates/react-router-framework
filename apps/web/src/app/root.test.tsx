@@ -22,7 +22,7 @@ describe("Layout", () => {
         mode: "system-decorated",
       },
       subscribeWindowState: () => release,
-      updateOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
+      declareOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
     };
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(window, "scrollTo").mockImplementation(() => {});
