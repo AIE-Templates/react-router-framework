@@ -1,7 +1,11 @@
-import { type RouteConfig, index, route } from "@react-router/dev/routes";
+import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
 
 export default [
-  index("features/demo/home.route.tsx"),
+  layout("features/demo/demo.layout.tsx", [
+    index("features/demo/home.route.tsx"),
+    route("deals", "features/demo/deals.route.tsx"),
+    route("reports/sales", "features/demo/sales-report.route.tsx"),
+  ]),
   route("settings", "features/demo/settings.route.tsx"),
   route("chat", "features/demo/chat.route.tsx"),
   // A static SPA shell contains root HydrateFallback markup. Match unknown URLs first so the

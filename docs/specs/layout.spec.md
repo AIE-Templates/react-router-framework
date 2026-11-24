@@ -2,15 +2,17 @@
 
 ## Scope and ownership (LAY-01)
 
-An **app area** is a top-level part of the product. The route selects the current area. Switching from Chat to Code changes areas. Opening another conversation stays within Chat.
+This specification describes how application pages are laid out. An **app area** is a top-level division of the UI within the app shell. One area can contain every page in the application. When the design calls for multiple areas, the shell hosts the area switcher.
 
-| Layer           | React component                   | Responsibility                                                                                                                                                          |
-| --------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| App Root        | `AppRoot`                         | Provides the host environment, manages the runtime connection and composes global providers inside the root `Layout`.                                                   |
-| App Shell       | `BasicShell` or `NavigationShell` | Frames the current area and composes the window chrome. `NavigationShell` adds application navigation. A single-area app can use `BasicShell` without an area switcher. |
-| App Area Layout | `AppAreaLayout`                   | Arranges one area's main content, optional sidebar and optional auxiliary panel. The sidebar can host navigation within the area.                                       |
+In the CRM demo, the single-area layout groups Leads, Deals and Sales report in one sidebar. The multi-area layout groups Leads and Deals under Sales and places the sales report under Reports. Switching layouts keeps the same pages and route paths.
 
-`areaId` identifies an area definition and must be unique among layouts rendered on the same page. The caller stores any layout preferences that must survive unmounting. Application providers manage themes, sessions and organization state. If the URL identifies the current organization, use it as the source of truth.
+| Layer           | React component                   | Responsibility                                                                                                                                |
+| --------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| App Root        | `AppRoot`                         | Provides the host environment, manages the runtime connection and composes global providers inside the root `Layout`.                         |
+| App Shell       | `BasicShell` or `NavigationShell` | Frames the current area and composes the window chrome. `NavigationShell` hosts the area switcher. Use `BasicShell` for a single-area layout. |
+| App Area Layout | `AppAreaLayout`                   | Arranges one area's main content, optional sidebar and optional auxiliary panel. The sidebar can host navigation within the area.             |
+
+`areaId` is shared by routes in the same area and must be unique among layouts rendered on the same page. The caller stores any layout preferences that must survive unmounting. Application providers manage themes, sessions and organization state. If the URL identifies the current organization, use it as the source of truth.
 
 The shared application layer defines the shell and window-chrome interfaces. Each host supplies initial environment values and implements native window operations. The shell and host handle native button geometry, platform differences and window IPC for all areas.
 
@@ -33,18 +35,18 @@ Unknown routes return HTTP 404 under SSR. A static SPA hydrates the root route's
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AppRoot`         | Requires `children`. Accepts initial `shell`, `mode`, `fullscreen` and `managersInitialState`. Components access the environment and window operations through `useAppEnvironment()` and `useWindowChrome()`. |
 | `BasicShell`      | Requires `children`. Accepts `headerMode`, `overlayAppearance`, and standalone title-bar `title` and `actions`.                                                                                               |
-| `NavigationShell` | Adds required `navigation` and optional `navigationLabel` (landmark name, default `Primary`). The narrow-screen trigger reads `App navigation`.                                                               |
+| `NavigationShell` | Adds required `navigation` and optional `navigationLabel` (landmark name, default `App areas`). The narrow-screen trigger reads `Switch area`.                                                                |
 | `AppAreaLayout`   | Requires `areaId`, `title` and `children`. Accepts header `actions`, `sidebar` / `sidebarTitle`, `auxiliary` / `auxiliaryTitle`, and `contentAs`. Omitted panels occupy no column.                            |
 
 Navigation, sidebar and auxiliary panel states are independent. In controlled mode the callback requests a change and the caller supplies the new value. Uncontrolled state defaults to closed.
 
-| Region                        | Controlled value | Initial value           | Change callback          |
-| ----------------------------- | ---------------- | ----------------------- | ------------------------ |
-| Application navigation drawer | `navigationOpen` | `defaultNavigationOpen` | `onNavigationOpenChange` |
-| Area sidebar                  | `sidebarOpen`    | `defaultSidebarOpen`    | `onSidebarOpenChange`    |
-| Area auxiliary panel          | `auxiliaryOpen`  | `defaultAuxiliaryOpen`  | `onAuxiliaryOpenChange`  |
+| Region               | Controlled value | Initial value           | Change callback          |
+| -------------------- | ---------------- | ----------------------- | ------------------------ |
+| Area switcher drawer | `navigationOpen` | `defaultNavigationOpen` | `onNavigationOpenChange` |
+| Area sidebar         | `sidebarOpen`    | `defaultSidebarOpen`    | `onSidebarOpenChange`    |
+| Area auxiliary panel | `auxiliaryOpen`  | `defaultAuxiliaryOpen`  | `onAuxiliaryOpenChange`  |
 
-Area panels (inline or drawer) and the application navigation drawer are non-modal. They allow focus to leave.
+Area panels (inline or drawer) and the area switcher drawer are non-modal. They allow focus to leave.
 
 - Opening a closed panel moves focus to its first focusable control, if possible. A panel that starts open leaves focus in place.
 - The close button or an unhandled `Escape` inside the panel requests closure and focuses the trigger if it can receive focus. If a descendant calls `preventDefault()` on `Escape`, the panel stays open.
@@ -79,7 +81,7 @@ The top band stays in the viewport while content scrolls. Refresh and renderer r
 
 ## Sizing, scrolling and responsiveness (LAY-06)
 
-**Panel placement.** Open area panels respond to the area's container width. Above a viewport width of `48em`, application navigation is a persistent rail regardless of `navigationOpen`. At or below `48em`, that state controls drawer visibility. Changing width preserves the open states.
+**Panel placement.** Open area panels respond to the area's container width. Above a viewport width of `48em`, the area switcher is a persistent rail regardless of `navigationOpen`. At or below `48em`, that state controls drawer visibility. Changing width preserves the open states.
 
 | Area width                | Sidebar | Auxiliary panel |
 | ------------------------- | ------- | --------------- |
@@ -87,7 +89,9 @@ The top band stays in the viewport while content scrolls. Refresh and renderer r
 | Above 40rem through 60rem | Inline  | Drawer          |
 | Above 60rem               | Inline  | Inline          |
 
-Area drawers open below the main content header. In both header modes, the navigation drawer aligns with the bottom of the first directly composed area's main header when one is present. Both follow the rendered header height when actions wrap. Crossing a breakpoint must preserve application state, including an unsaved draft in the current area. Layouts that use device safe-area insets as well as WCO must account for both.
+Area drawers open below the main content header. In both header modes, the area switcher drawer aligns with the bottom of the first directly composed area's main header when one is present. Both follow the rendered header height when actions wrap. Crossing a breakpoint must preserve application state, including an unsaved draft in the current area. Layouts that use device safe-area insets as well as WCO must account for both.
+
+In fused mode, the persistent rail reserves the window header band for native-overlay windows. Other hosts reserve only the inset reported by WCO (zero in a regular browser tab). The navigation drawer and the rail below a standalone title bar need no additional band.
 
 **Header sizing.** Area headers have a minimum height of `--app-layout-header-height` (default `3rem`). Window headers use `--app-window-header-height`, which defaults to the layout header height. A participating window band accommodates the larger of that minimum and the WCO safe height. On Windows in `native-overlay` mode, the band adds a 1 CSS px bottom separator. A 48px minimum with a safe height of 48px or less gives a 49px minimum band. This applies to fused inline headers, the navigation drag band and standalone title bars. The separator is outside the native overlay height. Wrapping can increase the rendered header height without requesting a taller native overlay. macOS uses the host's own height policy.
 
