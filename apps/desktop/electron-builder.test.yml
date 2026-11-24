@@ -15,3 +15,7 @@ files:
 directories:
   output: out/test
 afterPack: ./scripts/fuses.ts
+mac:
+  extraResources:
+    - from: .vite/test/window-appearance.node
+      to: window-appearance.node

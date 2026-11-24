@@ -1,3 +1,5 @@
+import { storageKey } from "@repo/shared";
+
 import { expect, quit, test, waitForApp } from "./desktop.ts";
 
 interface NavigationProbe {
@@ -128,16 +130,26 @@ test("an ordinary target=_blank link opens its route in a separate window", asyn
   expect(await page.evaluate(() => window.desktop!.setPref("afterClose", "ok"))).toEqual({ status: "applied" });
 });
 
-test("the child uses the current native theme at creation and honors explicit geometry", async ({
+test("a child starts with the committed theme despite stale storage and honors explicit geometry", async ({
   desktop: { app, page },
 }) => {
   const initial = await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase(),
   );
-  const dark = initial !== "#17191d";
-  expect(
-    await page.evaluate(async (useDark) => window.desktop!.syncVisualTheme!(useDark ? "dark" : "light"), dark),
-  ).toMatchObject({ persistence: "saved" });
+  const preference = initial === "#17191d" ? "light" : "dark";
+  const stale = preference === "dark" ? "light" : "dark";
+  const commit = await page.evaluate(
+    (useDark) => window.desktop!.syncVisualTheme!(useDark ? "dark" : "light"),
+    preference === "dark",
+  );
+  expect(commit.status).toBe("processed");
+  if (commit.status !== "processed") throw new Error(commit.reason);
+  await page.evaluate(
+    ([key, colorScheme]) => {
+      localStorage.setItem(key, JSON.stringify({ version: 1, preferences: { colorScheme, direction: "rtl" } }));
+    },
+    [storageKey("visual-preferences"), stale],
+  );
   const created = app.evaluate(
     ({ BrowserWindow }) =>
       new Promise<{ color: string; x?: number; width?: number }>((resolve) => {
@@ -146,10 +158,109 @@ test("the child uses the current native theme at creation and honors explicit ge
         });
       }),
   );
+  const opened = app.waitForEvent("window");
   await page.evaluate(() => {
     window.open("/?sized", "_blank", "left=80,width=650");
   });
-  expect(await created).toEqual({ color: dark ? "#17191d" : "#ffffff", x: 80, width: 650 });
+  const child = await opened;
+  expect(await created).toEqual({ color: preference === "dark" ? "#17191d" : "#ffffff", x: 80, width: 650 });
+  await waitForApp(child);
+  expect(await child.evaluate(() => window.desktop!.visualTheme)).toEqual(commit.snapshot);
+  expect(await child.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.preferences)).toMatchObject({
+    colorScheme: preference,
+    direction: "rtl",
+  });
+  await expect(child.locator("html")).toHaveAttribute("data-color-scheme", preference);
+  await expect(page.locator("html")).toHaveAttribute("data-color-scheme", preference);
+});
+
+test("a full relaunch restores the committed desktop theme before hydration", async ({ launchApp }) => {
+  const first = await launchApp();
+  expect(await first.page.evaluate(() => window.desktop!.syncVisualTheme!("dark"))).toMatchObject({
+    status: "processed",
+    persistence: "saved",
+  });
+  await first.page.evaluate((key) => {
+    localStorage.setItem(key, JSON.stringify({ version: 1, preferences: { colorScheme: "light", direction: "rtl" } }));
+  }, storageKey("visual-preferences"));
+  await quit(first);
+
+  const second = await launchApp();
+  expect(await second.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
+  expect(await second.page.evaluate(() => window.desktop!.visualTheme?.preference)).toBe("dark");
+  expect(
+    await second.page.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.preferences),
+  ).toMatchObject({
+    colorScheme: "dark",
+    direction: "rtl",
+  });
+  await expect(second.page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+  await expect(second.page.locator("html")).toHaveAttribute("dir", "rtl");
+});
+
+test("a window overlay inherits app theme changes and releases to the latest defaults", async ({
+  desktop: { app, page },
+}) => {
+  await page.evaluate(() => window.desktop!.syncVisualTheme!("light"));
+  const opened = app.waitForEvent("window");
+  await page.evaluate(() => {
+    window.open("/__e2e/navigation/frame", "_blank", "noopener");
+  });
+  const peer = await opened;
+  await peer.waitForURL("app://app/__e2e/navigation/frame");
+  const native = await app.browserWindow(peer);
+  const overridesSupported =
+    process.platform !== "darwin" && (await peer.evaluate(() => window.desktop!.bootstrap?.mode === "native-overlay"));
+  const overlayProbe = overridesSupported
+    ? await native.evaluateHandle((win) => {
+        const writes: Electron.TitleBarOverlayOptions[] = [];
+        const original = win.setTitleBarOverlay.bind(win);
+        win.setTitleBarOverlay = (value: Electron.TitleBarOverlayOptions) => {
+          writes.push({ ...value });
+          return original(value);
+        };
+        return {
+          writes,
+          restore: () => {
+            win.setTitleBarOverlay = original;
+          },
+        };
+      })
+    : undefined;
+  try {
+    const declaration = await peer.evaluate(() =>
+      window.desktop!.declareOverlayAppearance({
+        owner: "layout-probe",
+        revision: 1,
+        appearance: { color: "#224466" },
+      }),
+    );
+    if (overridesSupported)
+      expect(declaration).toMatchObject({
+        status: "applied",
+        appearance: { color: "#224466", symbolColor: "#202124" },
+      });
+    else expect(declaration.status).toBe("unsupported");
+
+    const theme = await page.evaluate(() => window.desktop!.syncVisualTheme!("dark"));
+    expect(theme).toMatchObject({ status: "processed", persistence: "saved" });
+    await expect.poll(() => native.evaluate((win) => win.getBackgroundColor().toLowerCase())).toBe("#17191d");
+    if (overlayProbe) {
+      expect(await overlayProbe.evaluate((probe) => probe.writes.at(-1))).toMatchObject({
+        color: "#224466",
+        symbolColor: "#f3f4f6",
+      });
+    }
+    const release = await peer.evaluate(() =>
+      window.desktop!.declareOverlayAppearance({ owner: "layout-probe", revision: 2, appearance: null }),
+    );
+    if (overridesSupported)
+      expect(release).toMatchObject({ status: "applied", appearance: { color: "#17191d", symbolColor: "#f3f4f6" } });
+    else expect(release.status).toBe("unsupported");
+  } finally {
+    await overlayProbe?.evaluate((probe) => probe.restore());
+    await overlayProbe?.dispose();
+  }
 });
 
 test("ten sibling popups stagger on the display and share one system theme listener", async ({

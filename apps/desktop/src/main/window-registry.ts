@@ -85,7 +85,7 @@ export function createWindowRegistry(options: RegistryOptions) {
     return options.askRecovery(win, kind, false, signal);
   }
 
-  function adopt(win: BrowserWindow, url: string, fixedKey?: string) {
+  function adopt(win: BrowserWindow, url: string, fixedKey?: string, fixedAppearance?: "light" | "dark") {
     const contents = win.webContents;
     const id = contents.id;
     const recovery = createWindowRecovery(url, {
@@ -98,7 +98,7 @@ export function createWindowRegistry(options: RegistryOptions) {
     });
     // Set below, once readiness is tracked: the window was just shown by configureWindow.
     let afterShown: (() => void) | undefined;
-    const present = configureWindow(win, options, children, () => afterShown?.());
+    const present = configureWindow(win, { ...options, fixedAppearance }, children, () => afterShown?.());
     const entry: Entry = { window: win, recovery, present, key: fixedKey ?? options.keyForUrl(new URL(url)) };
     entries.set(id, entry);
     if (lifecycle) deliver(recovery, lifecycle);
@@ -197,7 +197,7 @@ export function createWindowRegistry(options: RegistryOptions) {
       // Two openers can request the same key before either native child is delivered.
       // Discard the still-hidden duplicate before configuring its preload IPC or showing it.
       if (children.reuse(url)) win.destroy();
-      else adopt(win, url);
+      else adopt(win, url, undefined, options.childAppearance?.(new URL(url)));
     },
   };
 

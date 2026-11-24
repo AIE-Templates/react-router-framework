@@ -4,9 +4,7 @@ Core provides `ManagersRegistry` → `VisualManagerRegistry` → `VisualManagerP
 Registries are stateless composition boundaries. The provider creates one stable, document-scoped
 VisualManager and owns connection cleanup. Context carries the instance; hooks subscribe to immutable
 state/status snapshots and expose stable actions. Server requests never share a mutable instance.
-UI-library persistence and application state must not become competing writers; UI and host
-integrations consume the manager and report their own synchronization outcomes without changing
-preference authority.
+UI-library adapters consume the manager. On Web, renderer storage owns persisted preferences. On Electron, main owns the application color scheme and the manager exposes its committed value to renderer UI. See [desktop visual synchronization](desktop-visual.spec.md).
 
 ## Preferences and persistence
 
@@ -19,7 +17,7 @@ light/dark, ltr/rtl and a motion boolean; it is never persisted. Explicit modes 
 unknown versions are preserved until an explicit whole reset. Single-field resets preserve other
 preferences. Never clear unrelated storage. Storage failures retain the current session state and
 are reported separately; repeated commands retry persistence. External storage changes reconcile
-without write echoes. Concurrent documents use last successful whole-record write semantics.
+without write echoes. On Web, concurrent documents use last successful whole-record write semantics. Desktop storage events reconcile direction and motion while preserving the host color scheme.
 Reconnects reread storage without writing. Once a stored record has been observed, its removal
 restores defaults instead of replaying a request seed. A never-persisted seed and unsaved session
 commands survive effect replay; unavailable storage does not erase the current session. Every
@@ -30,7 +28,7 @@ without retrying an unsaved write.
 
 A single `VisualInitScript` in head uses the same self-contained parser as the runtime. It reads local
 storage, resolves system preferences, applies attributes and hands off a document-local bootstrap
-record. Fresh accessible storage takes precedence when a manager is recreated; the bootstrap is only a fallback if storage access fails. It accepts a CSP nonce; its bytes are deterministic for static rendering. UI integrations can
+record. On Web, fresh accessible storage takes precedence when a manager is recreated; the bootstrap is only a fallback if storage access fails. It accepts a CSP nonce; its bytes are deterministic for static rendering. On desktop, the synchronous preload seed supplies the committed color scheme before the first paint, including during SPA hydration. UI integrations can
 supply extra color attributes through data-only `config/visual-integration.ts`.
 
 Core uses `data-color-scheme`, standard `dir`, and `data-reduced-motion`. Server-unknown auto attributes

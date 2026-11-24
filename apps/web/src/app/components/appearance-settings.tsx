@@ -5,12 +5,12 @@ import { useRef, useState } from "react";
 
 import { getInteractiveProps } from "~/managers/environment/dom-props";
 import { visualCodec } from "~/managers/visual/bootstrap";
-import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
+import { useVisualManager, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
 
 import classes from "./appearance-settings.module.css";
 
 /** Imperative modal and notification APIs are served by AppUiProvider. */
-function confirmReset(reset: () => void, trigger: HTMLElement | null) {
+function confirmReset(reset: () => void, trigger: HTMLElement | null, externalColorScheme: boolean) {
   modals.openConfirmModal({
     // The menu item that opened the dialog unmounts, so return focus to the persistent trigger.
     returnFocus: false,
@@ -20,14 +20,19 @@ function confirmReset(reset: () => void, trigger: HTMLElement | null) {
     labels: { confirm: "Reset", cancel: "Cancel" },
     onConfirm: () => {
       reset();
-      notifications.show({ title: "Appearance reset", message: "System defaults restored." });
+      notifications.show(
+        externalColorScheme
+          ? { title: "Appearance", message: "Reset requested." }
+          : { title: "Appearance reset", message: "System defaults restored." },
+      );
     },
   });
 }
 
 export function VisualSettings() {
   const { preferences } = useVisualState();
-  const actions = useVisualActions();
+  const manager = useVisualManager();
+  const { actions } = manager;
   const status = useVisualStatus();
   const [opened, setOpened] = useState(false);
   const previewButton = useRef<HTMLButtonElement>(null);
@@ -80,7 +85,7 @@ export function VisualSettings() {
             <Button variant="light">About appearance</Button>
           </Popover.Target>
           <Popover.Dropdown {...popup}>
-            <Text size="sm">One preference source across the entire application.</Text>
+            <Text size="sm">Choose System to follow your device’s light or dark appearance.</Text>
           </Popover.Dropdown>
         </Popover>
         <Menu>
@@ -91,7 +96,11 @@ export function VisualSettings() {
           </Menu.Target>
           <Menu.Dropdown {...popup}>
             <Menu.Item onClick={() => setOpened(true)}>Open dialog</Menu.Item>
-            <Menu.Item onClick={() => confirmReset(actions.resetVisualPreferences, previewButton.current)}>
+            <Menu.Item
+              onClick={() =>
+                confirmReset(actions.resetVisualPreferences, previewButton.current, manager.hasExternalColorScheme())
+              }
+            >
               Reset with confirmation
             </Menu.Item>
           </Menu.Dropdown>
@@ -110,6 +119,14 @@ export function VisualSettings() {
           Close preview
         </Button>
       </Modal>
+      {status.colorSchemeSaveFailed && (
+        <Group gap="xs">
+          <output>Color scheme could not be saved.</output>
+          <Button variant="default" onClick={actions.retryColorScheme}>
+            Retry color scheme
+          </Button>
+        </Group>
+      )}
       {(status.persistence === "failed" ||
         status.persistence === "unavailable" ||
         status.persistence === "unsupported-version") &&

@@ -1,6 +1,5 @@
 import { writeFile } from "node:fs/promises";
 
-import { storageKey } from "@repo/shared";
 import type { BrowserWindow } from "electron";
 
 import { APP_ORIGIN, isAppUrl } from "~/main/app-url.ts";
@@ -157,28 +156,33 @@ export async function runSmoke(
   await checkChrome();
   await check(
     "chromeAppearanceInvalid",
-    `return await window.desktop.updateOverlayAppearance({ color: "url(bad)", height: -1, extra: true })`,
+    `return await window.desktop.declareOverlayAppearance({owner:"smoke", revision:1, appearance:{ color:"url(bad)", height:-1, extra:true }})`,
     (v) => isRecord(v) && v.status === "rejected" && v.reason === "invalid-appearance",
   );
-  if (process.platform === "darwin") {
-    await check(
-      "chromeAppearanceUnsupported",
-      `return await window.desktop.updateOverlayAppearance({ color: "#ffffff" })`,
-      (v) => isRecord(v) && v.status === "unsupported",
-    );
-  } else {
-    skip(
-      "chromeAppearanceUnsupported",
-      "macOS-only no-op appearance contract; other platforms checked without changing the theme",
-    );
-  }
   await check(
     "chromeSafety",
-    `const root = document.querySelector(".root-frame"); const fallback = root?.querySelector(":scope > .root-chrome-fallback"); const content = root?.querySelector(":scope > .root-content"); if (!fallback || !content) return { missing: true }; const overlay = navigator.windowControlsOverlay; const rect = overlay?.getTitlebarAreaRect(); const safeTop = overlay?.visible ? rect.y + rect.height : 0; const drag = root.querySelector("[data-window-drag]"); const shell = content.querySelector(":scope > .app-shell"); const ready = shell?.hasAttribute("data-chrome-ready"); let fallbackHeight, fallbackContentTop; try { shell?.removeAttribute("data-chrome-ready"); fallbackHeight = fallback.getBoundingClientRect().height; fallbackContentTop = content.getBoundingClientRect().top; } finally { if (ready) shell.setAttribute("data-chrome-ready", ""); } const controls = [...root.querySelectorAll("button, input, select, a[href]")].map((element) => element.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0); return { mode: document.documentElement.dataset.chromeMode, fullscreen: document.documentElement.dataset.fullscreen === "true", overlayVisible: overlay?.visible ?? false, safeTop, fallbackHeight, fallbackContentTop, drag: !!drag, dragStyle: drag ? getComputedStyle(drag).getPropertyValue("app-region") : "", overlap: controls.some((r) => r.top < safeTop - 1 && !(rect && r.left >= rect.x - 1 && r.right <= rect.x + rect.width + 1 && r.top >= rect.y - 1)), controls: controls.length };`,
+    `const root = document.querySelector(".root-frame"); const fallback = root?.querySelector(":scope > .root-chrome-fallback"); const content = root?.querySelector(":scope > .root-content"); if (!fallback || !content) return { missing: true }; const overlay = navigator.windowControlsOverlay; const rect = overlay?.getTitlebarAreaRect(); const safeTop = overlay?.visible ? rect.y + rect.height : 0;
+      const fallbackActive = getComputedStyle(fallback).display !== "none";
+      const dragSurfaces = root.querySelectorAll(".window-safe-drag, .shell-titlebar-content[data-window-drag], [data-window-header=primary][data-window-drag]");
+      const drag = [...dragSurfaces].find(element => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.top < innerHeight &&
+          style.visibility === "visible" && style.getPropertyValue("app-region") === "drag" &&
+          [0.05, 0.25, 0.5, 0.75, 0.95].some(fraction => {
+            const hit = document.elementFromPoint(rect.left + fraction * rect.width, rect.top + rect.height / 2);
+            if (!hit || !element.contains(hit)) return false;
+            for (let node = hit; node !== element; node = node.parentElement) {
+              if (getComputedStyle(node).getPropertyValue("app-region") === "no-drag") return false;
+            }
+            return true;
+          });
+      });
+      const shell = content.querySelector(":scope > .app-shell"); const ready = shell?.hasAttribute("data-chrome-ready"); let fallbackHeight, fallbackContentTop; try { shell?.removeAttribute("data-chrome-ready"); fallbackHeight = fallback.getBoundingClientRect().height; fallbackContentTop = content.getBoundingClientRect().top; } finally { if (ready) shell.setAttribute("data-chrome-ready", ""); } const controls = [...root.querySelectorAll("button, input, select, a[href]")].map((element) => element.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0); return { mode: document.documentElement.dataset.chromeMode, fullscreen: document.documentElement.dataset.fullscreen === "true", overlayVisible: overlay?.visible ?? false, safeTop, fallbackHeight, fallbackContentTop, fallbackActive, drag: !!drag, dragStyle: drag ? getComputedStyle(drag).getPropertyValue("app-region") : "", overlap: controls.some((r) => r.top < safeTop - 1 && !(rect && r.left >= rect.x - 1 && r.right <= rect.x + rect.width + 1 && r.top >= rect.y - 1)), controls: controls.length };`,
     (v) =>
       isRecord(v) &&
-      v.drag === true &&
-      v.dragStyle === "drag" &&
+      ((v.drag === true && v.dragStyle === "drag") ||
+        (v.fallbackActive === true && v.safeTop === 0 && (v.mode === "system-decorated" || v.fullscreen === true))) &&
       v.overlap === false &&
       typeof v.safeTop === "number" &&
       typeof v.fallbackHeight === "number" &&
@@ -251,30 +255,6 @@ export async function runSmoke(
     }
   }
 
-  await check(
-    "visualThemeDark",
-    `return await window.desktop.syncVisualTheme("dark");`,
-    (v) =>
-      isRecord(v) &&
-      v.status === "processed" &&
-      v.background === "applied" &&
-      v.persistence === "saved" &&
-      win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
-  );
-  await check(
-    "appearanceDoesNotChangeBackground",
-    `return await window.desktop.updateOverlayAppearance({ color: "#224466" });`,
-    (v) =>
-      isRecord(v) &&
-      (v.status === "applied" || v.status === "unsupported") &&
-      win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
-  );
-  await check(
-    "visualThemeRestore",
-    `const saved = JSON.parse(localStorage.getItem(${JSON.stringify(storageKey("visual-preferences"))}) || "null"); return await window.desktop.syncVisualTheme(saved?.preferences?.colorScheme || "auto");`,
-    (v) => isRecord(v) && v.status === "processed" && v.background === "applied" && v.persistence === "saved",
-  );
-
   // A real document reload must recreate the preload and document-scoped IPC subscription.
   try {
     await new Promise<void>((resolve, reject) => {
@@ -323,6 +303,42 @@ export async function runSmoke(
         v.height >= v.safeTop - 1 &&
         v.contentTop >= v.safeTop - 1,
     );
+    // The error document has no shell appearance owner. Its preload seed records the preference to restore.
+    await check(
+      "visualThemeDark",
+      `return await window.desktop.syncVisualTheme("dark");`,
+      (v) =>
+        isRecord(v) &&
+        v.status === "processed" &&
+        v.background === "applied" &&
+        v.persistence === "saved" &&
+        win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
+    );
+    await check(
+      "appearanceDoesNotChangeBackground",
+      `const result = await window.desktop.declareOverlayAppearance({ owner: "smoke", revision: 1, appearance: {color: "#224466"} }); return { ...result, mode:window.desktop.bootstrap.mode };`,
+      (v) =>
+        isRecord(v) &&
+        (process.platform === "darwin" || v.mode === "system-decorated"
+          ? v.status === "unsupported"
+          : v.status === "applied" && isRecord(v.appearance) && v.appearance.color === "#224466") &&
+        win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
+    );
+    await check(
+      "appearanceRelease",
+      `const result = await window.desktop.declareOverlayAppearance({owner: "smoke", revision: 2, appearance:null}); return { ...result, mode:window.desktop.bootstrap.mode };`,
+      (v) =>
+        isRecord(v) &&
+        (process.platform === "darwin" || v.mode === "system-decorated"
+          ? v.status === "unsupported"
+          : v.status === "applied" && isRecord(v.appearance) && v.appearance.color === "#17191d"),
+    );
+    await check(
+      "visualThemeRestore",
+      `return await window.desktop.syncVisualTheme(window.desktop.visualTheme.preference);`,
+      (v) => isRecord(v) && v.status === "processed" && v.background === "applied" && v.persistence === "saved",
+    );
+
     await win.loadURL(returnUrl);
     await check("returnFromError", documentHydrationScript, (v) => v === true);
   } catch (error) {

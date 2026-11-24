@@ -20,7 +20,11 @@ export function VisualCookieProvider({
   const mirrored = useRef<Readonly<VisualPreferences> | undefined>(undefined);
   const seedAttempted = useRef(false);
   const environment = useAppEnvironment();
-  const enabled = visualCookie.enabled && environment.shell.kind === "web" && environment.enhancement === "unavailable";
+  const enabled =
+    visualCookie.enabled &&
+    !manager.hasExternalColorScheme() &&
+    environment.shell.kind === "web" &&
+    environment.enhancement === "unavailable";
   const [status, setStatus] = useState<VisualCookieStatus>("pending");
   const sync = useCallback(
     (reset = false) => {

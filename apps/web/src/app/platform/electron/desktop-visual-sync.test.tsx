@@ -1,4 +1,4 @@
-import type { VisualThemeResult, WindowChromeBridge } from "@repo/shared";
+import type { VisualThemeResult, VisualThemeSnapshot, WindowChromeBridge } from "@repo/shared";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -20,6 +20,7 @@ const processed: VisualThemeResult = {
   background: "applied",
   overlay: "unsupported",
   persistence: "saved",
+  snapshot: { revision: 1, preference: "dark" },
 };
 function Status() {
   return <output>{JSON.stringify(useDesktopVisualStatus())}</output>;
@@ -30,9 +31,20 @@ function mount(syncVisualTheme: (preference: string) => Promise<VisualThemeResul
     version: "1",
     bootstrap: null,
     subscribeWindowState: () => () => {},
-    updateOverlayAppearance: async () => ({ status: "unsupported", reason: "test" }),
+    declareOverlayAppearance: async () => ({ status: "unsupported", reason: "test" }),
   };
-  window.desktop = Object.assign(bridge, { syncVisualTheme });
+  const seed = { revision: 0, preference: "light" } as const;
+  let listener: ((snapshot: VisualThemeSnapshot) => void) | undefined;
+  window.desktop = Object.assign(bridge, {
+    syncVisualTheme,
+    visualTheme: seed,
+    subscribeVisualTheme: (cb: (snapshot: VisualThemeSnapshot) => void) => {
+      listener = cb;
+      return () => {
+        listener = undefined;
+      };
+    },
+  });
   const manager = createVisualManager({ host: window });
   const disconnect = manager.connect();
   const view = render(
@@ -44,6 +56,7 @@ function mount(syncVisualTheme: (preference: string) => Promise<VisualThemeResul
   );
   return {
     manager,
+    push: (snapshot: VisualThemeSnapshot) => listener?.(snapshot),
     refresh: () =>
       view.rerender(
         <VisualManagerContext.Provider value={manager}>
@@ -72,8 +85,12 @@ it("contains synchronous bridge failures and retries a repeated command", async 
     })
     .mockResolvedValue(processed);
   const view = mount(sync);
+  expect(sync).not.toHaveBeenCalled();
+  act(() => view.manager.actions.setColorSchemePreference("dark"));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("bridge-unavailable"));
-  act(() => view.manager.actions.setColorSchemePreference("auto"));
+  expect(view.manager.getSnapshot().preferences.colorScheme).toBe("light");
+  expect(view.manager.getStatus().colorSchemeSaveFailed).toBe(true);
+  act(() => view.manager.actions.retryColorScheme());
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent('"persistence":"saved"'));
   expect(sync).toHaveBeenCalledTimes(2);
   view.close();
@@ -90,6 +107,7 @@ it("does not publish a stale response after a newer preference has completed", a
     )
     .mockResolvedValue(processed);
   const view = mount(sync);
+  act(() => view.manager.actions.setColorSchemePreference("auto"));
   await waitFor(() => expect(sync).toHaveBeenCalledOnce());
   act(() => view.manager.actions.setColorSchemePreference("dark"));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent('"persistence":"saved"'));
@@ -103,9 +121,58 @@ it("does not publish a stale response after a newer preference has completed", a
 
 it("stops reporting an applied result when the host enhancement becomes unavailable", async () => {
   const view = mount(async () => processed);
+  act(() => view.manager.actions.setColorSchemePreference("dark"));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent('"persistence":"saved"'));
   environment.available = false;
   view.refresh();
   expect(screen.getByRole("status")).toHaveTextContent('"status":"idle"');
+  view.close();
+});
+
+it("adopts fresh pushes without writing back and ignores stale snapshots", () => {
+  const sync = vi.fn<() => Promise<VisualThemeResult>>(async () => processed);
+  const view = mount(sync);
+  act(() => {
+    view.push({ revision: 3, preference: "dark" });
+    view.push({ revision: 2, preference: "light" });
+    view.manager.actions.setDirection("rtl");
+    window.dispatchEvent(new StorageEvent("storage", { key: null }));
+  });
+  expect(view.manager.getSnapshot().preferences).toMatchObject({ colorScheme: "dark", direction: "rtl" });
+  expect(document.documentElement.dataset.colorScheme).toBe("dark");
+  expect(sync).not.toHaveBeenCalled();
+  view.close();
+});
+
+it("sends one explicit reset, keeps the committed theme on failure and retries only the theme", async () => {
+  const snapshot = { revision: 2, preference: "auto" } as const;
+  const sync = vi
+    .fn<(preference: string) => Promise<VisualThemeResult>>()
+    .mockResolvedValueOnce({ status: "rejected", reason: "persistence-failed" })
+    .mockResolvedValue({ ...processed, snapshot });
+  const view = mount(sync);
+  act(() => {
+    view.manager.actions.setDirection("rtl");
+    view.manager.actions.setReducedMotionPreference("reduce");
+    view.manager.actions.resetVisualPreferences();
+  });
+  await waitFor(() => expect(view.manager.getStatus().colorSchemeSaveFailed).toBe(true));
+  expect(view.manager.getSnapshot().preferences).toEqual({
+    colorScheme: "light",
+    direction: "ltr",
+    reducedMotion: "auto",
+  });
+  act(() => {
+    view.manager.actions.setDirection("rtl");
+    view.manager.actions.retryColorScheme();
+  });
+  await waitFor(() =>
+    expect(view.manager.getSnapshot().preferences).toEqual({
+      colorScheme: "auto",
+      direction: "rtl",
+      reducedMotion: "auto",
+    }),
+  );
+  expect(sync.mock.calls).toEqual([["auto"], ["auto"]]);
   view.close();
 });

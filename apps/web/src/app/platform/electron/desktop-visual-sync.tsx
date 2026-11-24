@@ -1,4 +1,9 @@
-import { isVisualThemeResult } from "@repo/shared";
+import {
+  isVisualThemeResult,
+  isVisualThemeSnapshot,
+  type DesktopBridge,
+  type VisualThemePreference,
+} from "@repo/shared";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useAppEnvironment } from "~/managers/environment/hooks";
@@ -8,66 +13,54 @@ import { DesktopVisualContext, type DesktopVisualStatus } from "./desktop-visual
 
 const idle: DesktopVisualStatus = { status: "idle" };
 
-/** Electron owns this adapter; Core registries do not know about platform dependencies. */
 export function DesktopVisualSync({ children }: { children: ReactNode }) {
   const manager = useVisualManager();
   const environment = useAppEnvironment();
+  const available = environment.enhancement === "available" && environment.shell.kind === "desktop";
   const [status, setStatus] = useState<DesktopVisualStatus>(idle);
   useEffect(() => {
-    if (environment.enhancement !== "available" || environment.shell.kind !== "desktop") return undefined;
-    const bridge = window.desktop;
-    const sync = bridge && "syncVisualTheme" in bridge ? bridge.syncVisualTheme : undefined;
-    if (typeof sync !== "function") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Capability feedback belongs to the adapter lifecycle.
+    if (!available) return undefined;
+    const bridge = window.desktop as Partial<DesktopBridge> | undefined;
+    manager.applyExternalColorScheme({ revision: -1, preference: "auto" });
+    if (!bridge || typeof bridge.subscribeVisualTheme !== "function" || typeof bridge.syncVisualTheme !== "function") {
+      // oxlint-disable-next-line react-hooks/set-state-in-effect -- Capability status follows the host lifecycle.
       setStatus({ status: "unsupported" });
       return undefined;
     }
     let active = true;
     let sequence = 0;
-    let last: string | undefined;
-    let failed = false;
-    const publish = (retry = false) => {
-      if (!manager.getStatus().initialized) return;
-      const preference = manager.getSnapshot().preferences.colorScheme;
-      if (last === preference && !(retry && failed)) return;
-      last = preference;
-      failed = false;
-      const current = ++sequence;
-      setStatus({ status: "pending" });
-      void Promise.resolve()
-        .then(() => (active && sequence === current ? sync(preference) : undefined))
-        .then((input: unknown) => {
-          const result = isVisualThemeResult(input)
-            ? input
-            : { status: "rejected" as const, reason: "invalid-response" };
-          if (!active || sequence !== current) return undefined;
-          failed =
-            result.status === "rejected" ||
-            result.persistence === "failed" ||
-            result.background === "failed" ||
-            result.overlay === "failed";
-          setStatus(result);
-          return undefined;
-        })
-        .catch(() => {
-          if (!active || sequence !== current) return undefined;
-          failed = true;
-          setStatus({ status: "rejected", reason: "bridge-unavailable" });
-          return undefined;
-        });
+    const receive = (snapshot: unknown) => {
+      if (active && isVisualThemeSnapshot(snapshot)) manager.applyExternalColorScheme(snapshot);
     };
-    publish();
-    const releaseState = manager.subscribe(publish);
-    const releaseStatus = manager.subscribeStatus(publish);
-    const releaseCommands = manager.subscribeCommands(() => publish(true));
+    // Subscribe before sampling; the main process reconciles changes since the preload seed.
+    const unsubscribe = bridge.subscribeVisualTheme(receive);
+    receive(bridge.visualTheme);
+    const sync = bridge.syncVisualTheme;
+    const request = async (preference: VisualThemePreference) => {
+      const current = ++sequence;
+      manager.reportColorSchemeFailure();
+      setStatus({ status: "pending" });
+      try {
+        const input = await sync(preference);
+        if (!active || current !== sequence) return;
+        const result = isVisualThemeResult(input) ? input : { status: "rejected" as const, reason: "invalid-response" };
+        if (result.status === "processed") receive(result.snapshot);
+        else manager.reportColorSchemeFailure(preference);
+        setStatus(result);
+      } catch {
+        if (!active || current !== sequence) return;
+        manager.reportColorSchemeFailure(preference);
+        setStatus({ status: "rejected", reason: "bridge-unavailable" });
+      }
+    };
+    const unbind = manager.bindColorSchemeWriter((preference) => {
+      void request(preference);
+    });
     return () => {
       active = false;
-      ++sequence;
-      releaseState();
-      releaseStatus();
-      releaseCommands();
+      unbind();
+      unsubscribe();
     };
-  }, [environment.enhancement, environment.shell.kind, manager]);
-  const available = environment.enhancement === "available" && environment.shell.kind === "desktop";
+  }, [available, manager]);
   return <DesktopVisualContext.Provider value={available ? status : idle}>{children}</DesktopVisualContext.Provider>;
 }

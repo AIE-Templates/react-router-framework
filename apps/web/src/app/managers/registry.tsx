@@ -6,5 +6,9 @@ export function ManagersRegistry({
   initialState,
   children,
 }: PropsWithChildren<{ initialState?: ManagersInitialState }>) {
-  return <VisualManagerRegistry initialState={initialState?.visual}>{children}</VisualManagerRegistry>;
+  return (
+    <VisualManagerRegistry initialState={initialState?.visual} externalColorScheme={initialState?.externalColorScheme}>
+      {children}
+    </VisualManagerRegistry>
+  );
 }

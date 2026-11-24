@@ -69,8 +69,8 @@ See [apps/desktop/README.md](apps/desktop/README.md) for manual release launch i
 
 [Design specs](docs/specs/README.md) describe settled contracts and rationale:
 
-- **Layout and environment** ([layout.spec.md](docs/specs/layout.spec.md)): `AppRoot` provides the host environment. `BasicShell` and `NavigationShell` frame the current app area. `AppAreaLayout` organizes its main content and optional panels. Components read `useAppEnvironment()`; `ContentScrollRestoration` manages container scroll per history key.
-- **Visual preferences** ([visual.spec.md](docs/specs/visual.spec.md)): `VisualManager` owns color scheme, text direction and reduced motion, with a prepaint head initializer and a body-only `AppUiProvider` slot for UI integrations.
+- **Layout and environment** ([layout.spec.md](docs/specs/layout.spec.md)): `AppRoot` provides the host environment. `BasicShell` and `NavigationShell` frame the current app area. `WindowLayout` and `WindowColumn` share header and body tracks for custom fused layouts. `AppAreaLayout` uses them for its main content and optional panels. Components read `useAppEnvironment()`; `ContentScrollRestoration` manages container scroll per history key.
+- **Visual preferences** ([visual.spec.md](docs/specs/visual.spec.md)): `VisualManager` exposes color scheme, direction and motion to UI integrations. The prepaint initializer and body-only `AppUiProvider` slot consume the same preferences. Electron main commits the desktop color scheme and distributes it to all windows.
 - **Source structure** ([structure.spec.md](docs/specs/structure.spec.md)): Feature routes and disposable demo code live under `apps/web/src/app/features`; global CSS enters through `styles/index.css` while component CSS Modules remain colocated.
 - **Desktop host and chrome** ([electron-shell.spec.md](docs/specs/electron-shell.spec.md), [window-chrome.spec.md](docs/specs/window-chrome.spec.md)): `app://app` maps to an in-process Hono utility host over `port-fetch`, with compiled build profiles (`dev`, `test`, `release`) and native overlay window chrome.
 

@@ -46,6 +46,8 @@ export {
   type DesktopBridge,
   type VisualThemePreference,
   type VisualThemeResult,
+  type VisualThemeSnapshot,
+  isVisualThemeSnapshot,
   isVisualThemePreference,
   isVisualThemeResult,
   DESKTOP_BOOTSTRAP_ARGUMENT,

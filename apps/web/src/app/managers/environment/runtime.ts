@@ -31,7 +31,7 @@ async function sendDeclaration(
   try {
     const revision = (appearanceRevisions.get(target) ?? 0) + 1;
     appearanceRevisions.set(target, revision);
-    return await target.declareOverlayAppearance!({ owner, revision, appearance });
+    return await target.declareOverlayAppearance({ owner, revision, appearance });
   } catch {
     return { status: "rejected", reason: "desktop-bridge-failed" };
   }
@@ -100,7 +100,7 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
         if (
           !bootstrap ||
           typeof candidate.subscribeWindowState !== "function" ||
-          typeof candidate.updateOverlayAppearance !== "function"
+          typeof candidate.declareOverlayAppearance !== "function"
         ) {
           publish({ ...snapshot, windowState: undefined, enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
           return stop;
@@ -146,17 +146,6 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
       else appearanceOwners.add(owner);
       const result = await sendDeclaration(bridge, owner, appearance);
       return current === generation ? result : { status: "rejected", reason: "desktop-document-changed" };
-    },
-    async updateOverlayAppearance(this: void, appearance: OverlayAppearance): Promise<OverlayAppearanceResult> {
-      if (!bridge || snapshot.enhancement !== "available")
-        return { status: "unsupported", reason: "desktop-bridge-unavailable" };
-      const current = generation;
-      try {
-        const result = await bridge.updateOverlayAppearance(appearance);
-        return current === generation ? result : { status: "rejected", reason: "desktop-document-changed" };
-      } catch {
-        return { status: "rejected", reason: "desktop-bridge-failed" };
-      }
     },
   };
 }
