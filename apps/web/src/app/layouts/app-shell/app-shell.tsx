@@ -121,11 +121,7 @@ function Shell({
         )}
         <div className="shell-body" ref={body}>
           {navigationProps.navigation && (
-            <nav
-              id={navigationId}
-              className="shell-nav"
-              aria-label={navigationProps.navigationLabel ?? "App navigation"}
-            >
+            <nav id={navigationId} className="shell-nav" aria-label={navigationProps.navigationLabel ?? "Primary"}>
               <div className="shell-nav-chrome" data-window-drag="" aria-hidden="true" />
               <div className="shell-nav-content" {...getInteractiveProps()}>
                 <button
