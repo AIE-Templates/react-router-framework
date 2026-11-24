@@ -59,7 +59,7 @@ The entry supplies createWebApp({ shell }); requests cannot select identity. Tru
 
 ## Layout
 
-AppRoot owns environment/providers; BasicShell or NavigationShell owns application framing; ModuleLayout owns its workspace/panels. The home route demonstrates ?shell=basic and ?header=standalone. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.
+`AppRoot` provides the host environment and global providers. `BasicShell` and `NavigationShell` implement the App Shell, which frames the current app area and owns navigation between areas. `AppAreaLayout` organizes navigation, main content and optional panels within one area. The home route demonstrates ?shell=basic and ?header=standalone. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.
 
 ## Source organization
 
