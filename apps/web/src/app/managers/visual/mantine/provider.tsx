@@ -52,6 +52,7 @@ export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ n
         theme={theme}
         cssVariablesResolver={visualVariables}
         colorSchemeManager={colorSchemeManager}
+        forceColorScheme={manager.fixedAppearance}
         defaultColorScheme="auto"
         getStyleNonce={nonce ? () => nonce : undefined}
       >

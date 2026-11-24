@@ -24,6 +24,7 @@ export interface VisualBootstrapConfig {
 export interface VisualBootstrapRecord {
   version: 1;
   storageKey: string;
+  fixedAppearance?: "light" | "dark";
   state: VisualState;
   persistence: VisualStatus["persistence"];
 }
