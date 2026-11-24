@@ -86,9 +86,9 @@ export async function runLayoutSmoke(win: BrowserWindow): Promise<LayoutSmokeRes
               const band = document.querySelector('.shell-nav-chrome');
               const bandRect = band?.getBoundingClientRect();
               const areaHeader = document.querySelector('.app-area-workspace > .app-area-header').getBoundingClientRect();
-              const needsBand = !!nav && innerWidth > 768 && shell.dataset.headerMode === 'fused';
+              const needsBand = !!nav && innerWidth > 768 && shell.dataset.headerMode === 'fused' && document.documentElement.dataset.chromeMode === 'native-overlay';
               const hit = needsBand && document.elementFromPoint(bandRect.left + bandRect.width / 2, bandRect.bottom - 2);
-              const nativeDrag = !needsBand || (Math.abs(bandRect.height - expectedWindowHeight) <= 1 && Math.abs(bandRect.bottom - areaHeader.bottom) <= 1 && getComputedStyle(hit).getPropertyValue('app-region') === 'drag' && !band.closest('[data-window-interactive]'));
+              const nativeDrag = !needsBand ? !bandRect?.height : (Math.abs(bandRect.height - expectedWindowHeight) <= 1 && Math.abs(bandRect.bottom - areaHeader.bottom) <= 1 && getComputedStyle(hit).getPropertyValue('app-region') === 'drag' && !band.closest('[data-window-interactive]'));
               const navigationInteractive = !nav || getComputedStyle(nav.querySelector('.shell-nav-content')).getPropertyValue('app-region') === 'no-drag';
               const standaloneHeight = shell.dataset.headerMode !== 'standalone' || Math.abs(document.querySelector('.shell-titlebar').getBoundingClientRect().height - expectedWindowHeight) <= 1;
 
