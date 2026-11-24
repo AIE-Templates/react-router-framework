@@ -42,7 +42,7 @@ Navigation, sidebar and auxiliary panel states are independent. In controlled mo
 | Area sidebar                  | `sidebarOpen`    | `defaultSidebarOpen`    | `onSidebarOpenChange`    |
 | Area auxiliary panel          | `auxiliaryOpen`  | `defaultAuxiliaryOpen`  | `onAuxiliaryOpenChange`  |
 
-On a closed-to-open transition, the panel attempts to focus its first focusable control. Initially open panels leave focus in place. The close button and an unhandled Escape originating inside the panel request closure and return focus to its trigger when focusable. An Escape handled by a descendant with `preventDefault()` leaves the panel open. Panels are non-modal and allow focus to leave.
+These focus rules apply to area panels in both inline and drawer layouts, and to the application drawer. On a closed-to-open transition, the panel attempts to focus its first focusable control. Initially open panels leave focus in place. The close button and an unhandled Escape originating inside the panel request closure and return focus to its trigger when focusable. An Escape handled by a descendant with `preventDefault()` leaves the panel open. Panels are non-modal and allow focus to leave.
 
 Each page supplies one `main` landmark. Set `contentAs="main"` on one area layout or supply the landmark in the page. Other layout content containers use the default `div`.
 
@@ -63,13 +63,13 @@ The root `Layout` renders `.root-chrome-fallback` outside the route content, on 
 
 The fallback reserves `--app-window-safe-top` in normal flow. This equals the top offset of the WCO rectangle plus its height, with zero defaults when the environment variables are absent. The fallback drag surface must use the reported width and height and the physical left offset in both LTR and RTL. Fallback geometry depends only on WCO environment variables, which can also be present in a web app.
 
-A shell is eligible for handoff when its diagnostic is absent or `host-mismatch`. The fallback yields only when an eligible shell directly inside `.root-content` supplies a complete top band. Standalone mode uses the title-bar content. Fused mode uses the main column header of an area marked `data-chrome-complete`. A wrapper that breaks the direct-child path, or a portal outside that path, cannot trigger handoff. Removing a participating element or setting its `hidden` attribute restores the fallback in the same style calculation when no other qualifying band remains. A shell hidden by custom CSS must also use `hidden` or withdraw its participation marker.
+A shell is eligible for handoff when its diagnostic is absent or `host-mismatch`. The fallback yields only when an eligible shell directly inside `.root-content` supplies a complete top band. Standalone mode uses the title-bar content. In fused mode, `AppAreaLayout` sets `data-chrome-complete` from the shell context. Inline CSS checks for the main column header on that direct path. Without it, the fallback stays in flow. A wrapper that breaks the direct-child path, or a portal outside that path, cannot trigger handoff. Removing a participating element or setting its `hidden` attribute restores the fallback in the same style calculation when no other qualifying band remains. A shell hidden by custom CSS must also use `hidden` or withdraw its participation marker.
 
 The top band stays in the viewport while content scrolls. Refresh and renderer reload use the same safety boundary. A desktop SPA may shift once from the fallback to its fused frame after hydration. Renderer process failure is handled by the host.
 
 ## Sizing, scrolling and responsiveness (LAY-06)
 
-**Panel placement.** Open area panels respond to the area's container width. Application navigation uses a persistent rail at viewport widths above `48em` and a toggleable drawer at or below `48em`.
+**Panel placement.** Open area panels respond to the area's container width. Above a viewport width of `48em`, application navigation is a persistent rail regardless of `navigationOpen`. At or below `48em`, that state controls drawer visibility. Changing width preserves the open states.
 
 | Area width                | Sidebar | Auxiliary panel |
 | ------------------------- | ------- | --------------- |
@@ -77,9 +77,9 @@ The top band stays in the viewport while content scrolls. Refresh and renderer r
 | Above 40rem through 60rem | Inline  | Drawer          |
 | Above 60rem               | Inline  | Inline          |
 
-Area drawers begin below the main content header, including when actions wrap. The navigation drawer aligns to the bottom of the first directly composed area's main header when present. Resizing must preserve business state. Layouts with both device safe-area insets and window controls must account for each independently.
+Area drawers begin below the main content header, including when actions wrap. In either header mode, the navigation drawer aligns below the first directly composed area's main header, even when its actions wrap. This alignment requires an area header. Resizing must preserve business state. Layouts with both device safe-area insets and window controls must account for each independently.
 
-**Header sizing.** Area headers have a minimum height of `--app-layout-header-height` (default `3rem`). Window headers use `--app-window-header-height`, which defaults to the layout header height. A participating window band accommodates the larger of that minimum and the WCO safe height. On Windows in `native-overlay` mode, the band adds a 1 CSS px bottom separator. A 48px minimum with a safe height of 48px or less gives a 49px minimum band. This applies to fused inline headers, the navigation drag band and standalone title bars. The separator is outside the native overlay height. macOS uses the host's own height policy.
+**Header sizing.** Area headers have a minimum height of `--app-layout-header-height` (default `3rem`). Window headers use `--app-window-header-height`, which defaults to the layout header height. A participating window band accommodates the larger of that minimum and the WCO safe height. On Windows in `native-overlay` mode, the band adds a 1 CSS px bottom separator. A 48px minimum with a safe height of 48px or less gives a 49px minimum band. This applies to fused inline headers, the navigation drag band and standalone title bars. The separator is outside the native overlay height. Wrapping can increase the rendered header height without requesting a taller native overlay. macOS uses the host's own height policy.
 
 In a title row shared with native controls, long titles must truncate visually while retaining their full DOM text. Actions must remain reachable when they wrap. Content must remain reachable at larger text sizes, with an explicit scroll container for each pane and no unintended horizontal or document overflow.
 
