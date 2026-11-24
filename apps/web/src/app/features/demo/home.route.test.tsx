@@ -20,7 +20,7 @@ it("uses client navigation while preserving the basename, query settings and dra
     },
   );
   renderWithProviders(<RouterProvider router={router} />);
-  const draft = screen.getByRole("textbox", { name: "Module draft" });
+  const draft = screen.getByRole("textbox", { name: "Area draft" });
   fireEvent.change(draft, { target: { value: "Unsaved draft" } });
   const home = screen.getByRole("link", { name: "Home" });
   expect(home).toHaveAttribute("href", "/workspace?header=standalone&keep=1&shell=navigation");

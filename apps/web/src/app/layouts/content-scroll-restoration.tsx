@@ -79,7 +79,7 @@ export function ContentScrollRestoration({ children }: { children: ReactNode }) 
         current.set(element.dataset.scrollRestorationId!, [element.scrollLeft, element.scrollTop]);
       }
     };
-    // Scroll does not bubble; capture records nested module panes as well as the root.
+    // Scroll does not bubble; capture records nested scroll containers as well as the root.
     root.addEventListener("scroll", record, true);
     return () => {
       observer?.disconnect();

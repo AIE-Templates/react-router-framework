@@ -12,7 +12,7 @@ export interface BasicShellProps {
   title?: ReactNode;
   actions?: ReactNode;
   headerMode?: "standalone" | "fused";
-  /** One AppShell owns appearance requests; modules never measure DOM and write overlay height. */
+  /** The app shell owns native overlay appearance requests for every app area. */
   overlayAppearance?: OverlayAppearance;
 }
 
@@ -63,7 +63,7 @@ function Shell({
       (CSS.supports("anchor-scope: --header") && CSS.supports("top: anchor(--header bottom)"))
     )
       return undefined;
-    // Older engines cannot anchor the navigation drawer to its sibling module's header.
+    // Older engines cannot anchor the navigation drawer to its adjacent area header.
     let header: HTMLElement | null;
     const measure = () => {
       const top = header ? header.getBoundingClientRect().bottom - element.getBoundingClientRect().top : 0;
@@ -72,15 +72,17 @@ function Shell({
     const resize = new ResizeObserver(measure);
     const bind = () => {
       resize.disconnect();
-      header = element.querySelector(":scope > .module-layout > .module-columns > .module-workspace > .module-header");
+      header = element.querySelector(
+        ":scope > .app-area-layout > .app-area-columns > .app-area-workspace > .app-area-header",
+      );
       if (header) resize.observe(header);
       measure();
     };
     bind();
-    const modules = new MutationObserver(bind);
-    modules.observe(element, { childList: true });
+    const areaObserver = new MutationObserver(bind);
+    areaObserver.observe(element, { childList: true });
     return () => {
-      modules.disconnect();
+      areaObserver.disconnect();
       resize.disconnect();
       element.style.removeProperty("--app-layout-navigation-top");
     };
@@ -119,7 +121,11 @@ function Shell({
         )}
         <div className="shell-body" ref={body}>
           {navigationProps.navigation && (
-            <nav id={navigationId} className="shell-nav" aria-label={navigationProps.navigationLabel ?? "Modules"}>
+            <nav
+              id={navigationId}
+              className="shell-nav"
+              aria-label={navigationProps.navigationLabel ?? "App navigation"}
+            >
               <div className="shell-nav-chrome" data-window-drag="" aria-hidden="true" />
               <div className="shell-nav-content" {...getInteractiveProps()}>
                 <button
@@ -147,7 +153,7 @@ function Shell({
             aria-controls={navigationId}
             onClick={() => navigation.setOpen(!navigation.open)}
           >
-            Modules
+            App navigation
           </button>
         )}
       </div>

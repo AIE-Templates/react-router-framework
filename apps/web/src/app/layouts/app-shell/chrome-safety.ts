@@ -27,50 +27,50 @@ html,body{margin:0;height:100%;min-width:0}
 .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{display:block;height:max(var(--app-window-header-height),var(--app-window-safe-top))}
 .shell-nav-content{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:1rem;padding:1rem .5rem}
 .shell-navigation-toggle{display:none}
-.module-layout{--app-window-outer-left:env(titlebar-area-x,0px);--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)));--app-layout-sidebar-span:0px;--app-layout-auxiliary-span:0px;container-type:inline-size;flex:1;min-width:0;min-height:0;height:100%;position:relative}
-.module-layout[data-sidebar-open="true"]{--app-layout-sidebar-span:15rem}
-.module-layout[data-auxiliary-open="true"]{--app-layout-auxiliary-span:20rem}
-.module-columns{--app-layout-visible-sidebar-span:var(--app-layout-sidebar-span);--app-layout-visible-auxiliary-span:var(--app-layout-auxiliary-span);height:100%;display:grid;position:relative;grid-template-columns:var(--app-layout-visible-sidebar-span) minmax(0,1fr) var(--app-layout-visible-auxiliary-span);grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}
-.module-panel{display:grid;grid-row:1/-1;grid-template-rows:subgrid;min-width:0;min-height:0;overflow:hidden}
-.module-workspace{grid-column:2}
-.module-sidebar{grid-column:1}
-.module-auxiliary{grid-column:3}
-.module-header{app-region:no-drag;-webkit-app-region:no-drag;flex-shrink:0;min-height:var(--app-layout-header-height);display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;padding:.375rem 1rem;position:relative}
-.shell-body>.module-layout:nth-child(1 of .module-layout)>.module-columns>.module-workspace>.module-header{anchor-name:--app-layout-workspace-header}
-.module-header-title{flex:1 1 4rem;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.module-header button{flex-shrink:0}
-.module-scroll{flex:1;min-width:0;min-height:0;overflow:auto;padding:1rem}
+.app-area-layout{--app-window-outer-left:env(titlebar-area-x,0px);--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)));--app-layout-sidebar-span:0px;--app-layout-auxiliary-span:0px;container-type:inline-size;flex:1;min-width:0;min-height:0;height:100%;position:relative}
+.app-area-layout[data-sidebar-open="true"]{--app-layout-sidebar-span:15rem}
+.app-area-layout[data-auxiliary-open="true"]{--app-layout-auxiliary-span:20rem}
+.app-area-columns{--app-layout-visible-sidebar-span:var(--app-layout-sidebar-span);--app-layout-visible-auxiliary-span:var(--app-layout-auxiliary-span);height:100%;display:grid;position:relative;grid-template-columns:var(--app-layout-visible-sidebar-span) minmax(0,1fr) var(--app-layout-visible-auxiliary-span);grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}
+.app-area-panel{display:grid;grid-row:1/-1;grid-template-rows:subgrid;min-width:0;min-height:0;overflow:hidden}
+.app-area-workspace{grid-column:2}
+.app-area-sidebar{grid-column:1}
+.app-area-auxiliary{grid-column:3}
+.app-area-header{app-region:no-drag;-webkit-app-region:no-drag;flex-shrink:0;min-height:var(--app-layout-header-height);display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;padding:.375rem 1rem;position:relative}
+.shell-body>.app-area-layout:nth-child(1 of .app-area-layout)>.app-area-columns>.app-area-workspace>.app-area-header{anchor-name:--app-layout-workspace-header}
+.app-area-header-title{flex:1 1 4rem;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.app-area-header button{flex-shrink:0}
+.app-area-scroll{flex:1;min-width:0;min-height:0;overflow:auto;padding:1rem}
 .root-frame:has(>.root-content>.app-shell[data-chrome-ready][data-header-mode="standalone"]:not([hidden])>.shell-titlebar:not([hidden])>.shell-titlebar-content:not([hidden]))>.root-chrome-fallback{display:none}
-.root-frame:has(>.root-content>.app-shell[data-chrome-ready][data-header-mode="fused"]:not([hidden])>.shell-body:not([hidden])>.module-layout[data-chrome-complete]:not([hidden])>.module-columns:not([hidden])>.module-workspace:not([hidden])>.module-header:not([hidden]))>.root-chrome-fallback{display:none}
-.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.module-layout[data-chrome-complete]>.module-columns>.module-panel>.module-header{app-region:drag;-webkit-app-region:drag;min-height:max(var(--app-window-header-height),var(--app-window-safe-top));padding-top:max(.375rem,env(titlebar-area-y,0px));padding-left:max(1rem,var(--app-window-header-left,0px));padding-right:max(1rem,var(--app-window-header-right,0px))}
-.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.module-layout[data-chrome-complete]>.module-columns>.module-panel>.module-header>.module-header-title{flex-basis:0}
-.module-layout:dir(ltr) .module-workspace>.module-header{--app-window-header-left:max(0px,calc(var(--app-window-outer-left) - var(--app-layout-visible-sidebar-span)));--app-window-header-right:max(0px,calc(var(--app-window-outer-right) - var(--app-layout-visible-auxiliary-span)))}
-.module-layout:dir(rtl) .module-workspace>.module-header{--app-window-header-left:max(0px,calc(var(--app-window-outer-left) - var(--app-layout-visible-auxiliary-span)));--app-window-header-right:max(0px,calc(var(--app-window-outer-right) - var(--app-layout-visible-sidebar-span)))}
-.module-layout:dir(ltr) .module-sidebar>.module-header,.module-layout:dir(rtl) .module-auxiliary>.module-header{--app-window-header-left:var(--app-window-outer-left)}
-.module-layout:dir(rtl) .module-sidebar>.module-header,.module-layout:dir(ltr) .module-auxiliary>.module-header{--app-window-header-right:var(--app-window-outer-right)}
-.app-shell[data-navigation-shell]:dir(ltr)>.shell-body>.module-layout{--app-window-outer-left:max(0px,calc(env(titlebar-area-x,0px) - 4.5rem))}
-.app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.module-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) - 4.5rem))}
+.root-frame:has(>.root-content>.app-shell[data-chrome-ready][data-header-mode="fused"]:not([hidden])>.shell-body:not([hidden])>.app-area-layout[data-chrome-complete]:not([hidden])>.app-area-columns:not([hidden])>.app-area-workspace:not([hidden])>.app-area-header:not([hidden]))>.root-chrome-fallback{display:none}
+.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.app-area-layout[data-chrome-complete]>.app-area-columns>.app-area-panel>.app-area-header{app-region:drag;-webkit-app-region:drag;min-height:max(var(--app-window-header-height),var(--app-window-safe-top));padding-top:max(.375rem,env(titlebar-area-y,0px));padding-left:max(1rem,var(--app-window-header-left,0px));padding-right:max(1rem,var(--app-window-header-right,0px))}
+.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.app-area-layout[data-chrome-complete]>.app-area-columns>.app-area-panel>.app-area-header>.app-area-header-title{flex-basis:0}
+.app-area-layout:dir(ltr) .app-area-workspace>.app-area-header{--app-window-header-left:max(0px,calc(var(--app-window-outer-left) - var(--app-layout-visible-sidebar-span)));--app-window-header-right:max(0px,calc(var(--app-window-outer-right) - var(--app-layout-visible-auxiliary-span)))}
+.app-area-layout:dir(rtl) .app-area-workspace>.app-area-header{--app-window-header-left:max(0px,calc(var(--app-window-outer-left) - var(--app-layout-visible-auxiliary-span)));--app-window-header-right:max(0px,calc(var(--app-window-outer-right) - var(--app-layout-visible-sidebar-span)))}
+.app-area-layout:dir(ltr) .app-area-sidebar>.app-area-header,.app-area-layout:dir(rtl) .app-area-auxiliary>.app-area-header{--app-window-header-left:var(--app-window-outer-left)}
+.app-area-layout:dir(rtl) .app-area-sidebar>.app-area-header,.app-area-layout:dir(ltr) .app-area-auxiliary>.app-area-header{--app-window-header-right:var(--app-window-outer-right)}
+.app-shell[data-navigation-shell]:dir(ltr)>.shell-body>.app-area-layout{--app-window-outer-left:max(0px,calc(env(titlebar-area-x,0px) - 4.5rem))}
+.app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.app-area-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw) - 4.5rem))}
 
 
 /* Windows paints its separator below the native caption buttons. */
 html[data-platform="win32"][data-chrome-mode="native-overlay"]{--app-window-separator:1px;--app-window-band-height:calc(max(var(--app-window-header-height),var(--app-window-safe-top)) + var(--app-window-separator))}
-html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.module-layout[data-chrome-complete]>.module-columns>.module-panel>.module-header,
+html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.app-area-layout[data-chrome-complete]>.app-area-columns>.app-area-panel>.app-area-header,
 html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="standalone"]>.shell-titlebar>.shell-titlebar-content{min-height:var(--app-window-band-height);border-block-end-width:var(--app-window-separator)}
 html[data-platform="win32"][data-chrome-mode="native-overlay"] .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{height:var(--app-window-band-height);border-block-end:var(--app-window-separator) solid color-mix(in srgb,currentColor 15%,transparent)}
 
 @container (max-width:60rem){
- .module-columns{--app-layout-visible-auxiliary-span:0px}
- .module-auxiliary{display:flex;flex-direction:column;position:absolute;grid-area:2/1/3/-1;inset-block:0;inset-inline-end:0;width:min(20rem,100%);z-index:4;background:Canvas}
- .module-auxiliary>.module-header{app-region:no-drag!important;-webkit-app-region:no-drag!important;padding:.5rem 1rem!important;min-height:var(--app-layout-header-height)!important}
+ .app-area-columns{--app-layout-visible-auxiliary-span:0px}
+ .app-area-auxiliary{display:flex;flex-direction:column;position:absolute;grid-area:2/1/3/-1;inset-block:0;inset-inline-end:0;width:min(20rem,100%);z-index:4;background:Canvas}
+ .app-area-auxiliary>.app-area-header{app-region:no-drag!important;-webkit-app-region:no-drag!important;padding:.5rem 1rem!important;min-height:var(--app-layout-header-height)!important}
 }
 @container (max-width:40rem){
- .module-columns{--app-layout-visible-sidebar-span:0px}
- .module-sidebar{display:flex;flex-direction:column;position:absolute;grid-area:2/1/3/-1;inset-block:0;inset-inline-start:0;width:min(18rem,100%);z-index:4;background:Canvas}
- .module-sidebar>.module-header{app-region:no-drag!important;-webkit-app-region:no-drag!important;padding:.5rem 1rem!important;min-height:var(--app-layout-header-height)!important}
+ .app-area-columns{--app-layout-visible-sidebar-span:0px}
+ .app-area-sidebar{display:flex;flex-direction:column;position:absolute;grid-area:2/1/3/-1;inset-block:0;inset-inline-start:0;width:min(18rem,100%);z-index:4;background:Canvas}
+ .app-area-sidebar>.app-area-header{app-region:no-drag!important;-webkit-app-region:no-drag!important;padding:.5rem 1rem!important;min-height:var(--app-layout-header-height)!important}
 }
 @media(max-width:48em){
- .app-shell[data-navigation-shell]:dir(ltr)>.shell-body>.module-layout{--app-window-outer-left:env(titlebar-area-x,0px)}
- .app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.module-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
+ .app-shell[data-navigation-shell]:dir(ltr)>.shell-body>.app-area-layout{--app-window-outer-left:env(titlebar-area-x,0px)}
+ .app-shell[data-navigation-shell]:dir(rtl)>.shell-body>.app-area-layout{--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
  .shell-navigation-toggle{display:inline-flex}
  .shell-nav{display:none;position:absolute;inset-block:var(--app-layout-navigation-top,var(--app-layout-header-height)) 0;inset-inline-start:0;width:min(15rem,100%);z-index:6;background:Canvas}
  @supports (anchor-scope:--app-layout-workspace-header){
