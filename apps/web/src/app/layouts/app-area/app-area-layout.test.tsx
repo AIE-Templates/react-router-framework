@@ -115,7 +115,7 @@ describe("layout composition", () => {
     );
     expect(screen.getByRole("navigation", { name: "Library" })).toHaveAttribute(
       "id",
-      screen.getByRole("button", { name: "App navigation" }).getAttribute("aria-controls"),
+      screen.getByRole("button", { name: "Switch area" }).getAttribute("aria-controls"),
     );
   });
 
@@ -139,12 +139,12 @@ describe("layout composition", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sidebar" }));
     expect(onSidebarOpenChange).toHaveBeenCalledWith(true);
     expect(screen.getByRole("button", { name: "Sidebar" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("navigation", { name: "Primary" })).toHaveAttribute(
+    expect(screen.getByRole("navigation", { name: "App areas" })).toHaveAttribute(
       "id",
-      screen.getByRole("button", { name: "App navigation" }).getAttribute("aria-controls"),
+      screen.getByRole("button", { name: "Switch area" }).getAttribute("aria-controls"),
     );
-    fireEvent.click(screen.getByRole("button", { name: "App navigation" }));
-    expect(screen.getByRole("button", { name: "App navigation" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Switch area" }));
+    expect(screen.getByRole("button", { name: "Switch area" })).toHaveAttribute("aria-expanded", "true");
     expect(onSidebarOpenChange).toHaveBeenCalledOnce();
   });
 
