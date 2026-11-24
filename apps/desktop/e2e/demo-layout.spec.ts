@@ -11,6 +11,7 @@ test.describe("demo layout", { tag: "@demo" }, () => {
     const shell = page.getByRole("combobox", { name: "App shell" });
     await page.getByRole("textbox", { name: "Follow-up note" }).fill("Schedule a walkthrough");
     await page.getByRole("link", { name: "Reports", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Sales report", exact: true })).toBeVisible();
     const total = page.getByText("$30,000", { exact: true });
     await expect(total).toBeVisible();
     await shell.selectOption("basic");
