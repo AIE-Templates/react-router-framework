@@ -11,7 +11,8 @@ export default defineConfig({
   server: process.env.DESKTOP_DEV
     ? {
         hmr: {
-          host: "localhost",
+          // Match the IPv4 listener in dev.ts. localhost can select a different server on ::1.
+          host: "127.0.0.1",
           protocol: "ws",
           // The page's location has no port under app://, so the client must be told the server's.
           clientPort: Number(process.env.DESKTOP_DEV_PORT) || undefined,

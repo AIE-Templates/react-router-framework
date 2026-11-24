@@ -3,8 +3,26 @@ import { expect, test, waitForApp } from "./desktop.ts";
 // Explicit template coverage: derived apps may remove this suite with features/demo.
 test.describe("demo layout", { tag: "@demo" }, () => {
   test("the demo home renders its content inside the real application root", async ({ desktop: { page } }) => {
-    await expect(page.getByRole("heading", { name: "One application, three layout layers" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Leads", level: 1, exact: true })).toBeVisible();
     await expect(page.getByText("Host: desktop.")).toBeVisible();
+  });
+
+  test("the same CRM report is reachable in both layouts and the lead note survives", async ({ desktop: { page } }) => {
+    const shell = page.getByRole("combobox", { name: "App shell" });
+    await page.getByRole("textbox", { name: "Follow-up note" }).fill("Schedule a walkthrough");
+    await page.getByRole("link", { name: "Reports", exact: true }).click();
+    const total = page.getByText("$30,000", { exact: true });
+    await expect(total).toBeVisible();
+    await shell.selectOption("basic");
+    await expect(page).toHaveURL(/\/reports\/sales\?shell=basic$/);
+    await expect(total).toBeVisible();
+    const sidebar = page.getByRole("navigation", { name: "CRM pages" });
+    await sidebar.getByRole("link", { name: "Deals" }).click();
+    await expect(page.getByRole("cell", { name: "$18,000" })).toBeVisible();
+    await sidebar.getByRole("link", { name: "Sales report" }).click();
+    await expect(total).toBeVisible();
+    await sidebar.getByRole("link", { name: "Leads" }).click();
+    await expect(page.getByRole("textbox", { name: "Follow-up note" })).toHaveValue("Schedule a walkthrough");
   });
 
   test("fallback drag geometry uses physical WCO coordinates in LTR and RTL", async ({ desktop: { page } }) => {
@@ -73,9 +91,10 @@ test.describe("demo layout", { tag: "@demo" }, () => {
 
   test("all three drawers start below a wrapping workspace header", async ({ desktop: { page } }) => {
     await page.setViewportSize({ width: 600, height: 720 });
-    await page.getByRole("button", { name: "Sidebar", exact: true }).click();
+    const sidebar = page.getByRole("button", { name: "Sidebar", exact: true });
+    if ((await sidebar.getAttribute("aria-expanded")) === "false") await sidebar.click();
     await page.getByRole("button", { name: "Auxiliary", exact: true }).click();
-    await page.getByRole("button", { name: "App navigation", exact: true }).click();
+    await page.getByRole("button", { name: "Switch area", exact: true }).click();
     const positions = await page.evaluate(() => {
       const header = document.querySelector<HTMLElement>(".app-area-workspace > .app-area-header")!;
       const action = document.createElement("button");
@@ -98,7 +117,7 @@ test.describe("demo layout", { tag: "@demo" }, () => {
   test("real input drives client-side navigation and React state", async ({ desktop: { page } }) => {
     await page.getByRole("combobox", { name: "App shell" }).selectOption("basic");
     await expect(page).toHaveURL("app://app/?shell=basic");
-    const draft = page.getByRole("textbox", { name: "Area draft" });
+    const draft = page.getByRole("textbox", { name: "Follow-up note" });
     await draft.fill("typed by Playwright");
     await expect(draft).toHaveValue("typed by Playwright");
     // The select is controlled by the URL: going back restores it without a document load.
@@ -121,22 +140,22 @@ test.describe("demo layout", { tag: "@demo" }, () => {
 
   test("Home preserves the document, draft and existing query settings", async ({ desktop: { page } }) => {
     await page.getByRole("combobox", { name: "Title bar" }).selectOption("standalone");
-    await page.getByRole("textbox", { name: "Area draft" }).fill("keep this draft");
+    await page.getByRole("textbox", { name: "Follow-up note" }).fill("keep this draft");
     await page.evaluate(() => Reflect.set(window, "layoutDocument", true));
-    await page.getByRole("link", { name: "Home", exact: true }).click();
+    await page.getByRole("link", { name: "Sales", exact: true }).click();
     await expect(page).toHaveURL("app://app/?header=standalone&shell=navigation");
-    await expect(page.getByRole("textbox", { name: "Area draft" })).toHaveValue("keep this draft");
+    await expect(page.getByRole("textbox", { name: "Follow-up note" })).toHaveValue("keep this draft");
     expect(await page.evaluate(() => Reflect.get(window, "layoutDocument"))).toBe(true);
     await expect(page.getByRole("main")).toHaveCount(1);
   });
 
   test("container scrolling resets on navigation and restores on back and forward", async ({ desktop: { page } }) => {
     // SPA document hydration can finish before the initial route module resolves.
-    await expect(page.locator('[data-scroll-restoration-id="welcome:workspace"]')).toBeVisible();
+    await expect(page.locator('[data-scroll-restoration-id="sales:workspace"]')).toBeVisible();
     // Make both actual CSS scroll containers overflow without adding test-only application routes.
     await page.evaluate(async () => {
       const root = document.querySelector<HTMLElement>(".root-content")!;
-      const workspace = document.querySelector<HTMLElement>('[data-scroll-restoration-id="welcome:workspace"]')!;
+      const workspace = document.querySelector<HTMLElement>('[data-scroll-restoration-id="sales:workspace"]')!;
       for (const element of [root, workspace]) {
         const spacer = document.createElement("div");
         spacer.style.height = "2000px";
@@ -147,11 +166,11 @@ test.describe("demo layout", { tag: "@demo" }, () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     });
     const root = page.locator(".root-content");
-    const workspace = page.locator('[data-scroll-restoration-id="welcome:workspace"]');
+    const workspace = page.locator('[data-scroll-restoration-id="sales:workspace"]');
     await expect(root).toHaveJSProperty("scrollTop", 120);
     await expect(workspace).toHaveJSProperty("scrollTop", 240);
     // Avoid Playwright scrolling Home into view before the click and changing the position under test.
-    await page.getByRole("link", { name: "Home", exact: true }).evaluate((element) => {
+    await page.getByRole("link", { name: "Sales", exact: true }).evaluate((element) => {
       if (element instanceof HTMLElement) element.click();
     });
     await expect(page).toHaveURL("app://app/?shell=navigation");
@@ -159,7 +178,7 @@ test.describe("demo layout", { tag: "@demo" }, () => {
     await expect(workspace).toHaveJSProperty("scrollTop", 0);
     await page.evaluate(async () => {
       document.querySelector<HTMLElement>(".root-content")!.scrollTop = 80;
-      document.querySelector<HTMLElement>('[data-scroll-restoration-id="welcome:workspace"]')!.scrollTop = 60;
+      document.querySelector<HTMLElement>('[data-scroll-restoration-id="sales:workspace"]')!.scrollTop = 60;
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     });
     await page.goBack();
