@@ -23,11 +23,12 @@ export function createVisualManager({
   const bootstrap = host?.frameworkVisualBootstrap;
   const validBootstrap =
     bootstrap?.version === 1 && bootstrap.storageKey === config.storageKey && bootstrap.state?.preferences;
-  const stored = visualCodec.read(config, initialPreferences, host);
+  const fixedAppearance = validBootstrap ? bootstrap.fixedAppearance : undefined;
+  const stored = visualCodec.read(config, initialPreferences, host, fixedAppearance);
   // The bootstrap is a fallback for inaccessible storage, not a replayable preference authority.
   const initial =
     validBootstrap && stored.persistence === "unavailable"
-      ? { ...stored, state: visualCodec.resolve(visualCodec.parse(bootstrap.state.preferences), host) }
+      ? { ...stored, state: visualCodec.resolve(visualCodec.parse(bootstrap.state.preferences), host, fixedAppearance) }
       : stored;
   let state = freeze(initial.state);
   let storagePresent = initial.storagePresent;
@@ -45,7 +46,7 @@ export function createVisualManager({
     for (const notify of statusListeners) notify();
   }
   function publish(preferences: VisualPreferences) {
-    const next = freeze(visualCodec.resolve(preferences, host));
+    const next = freeze(visualCodec.resolve(preferences, host, fixedAppearance));
     if (JSON.stringify(state) !== JSON.stringify(next)) {
       state = next;
       if (connections && host && applyToDocument) visualCodec.apply(config, state, host.document.documentElement);
@@ -107,6 +108,7 @@ export function createVisualManager({
     resetVisualPreferences: () => update({}, true),
   });
   return {
+    fixedAppearance,
     actions,
     subscribeCommands(this: void, listener: (command: "update" | "reset") => void) {
       commandListeners.add(listener);

@@ -214,6 +214,7 @@
 
 @layer components {
   .layoutSelector {
+    gap: 1rem;
     align-items: center;
     border-block-end: 1px solid var(--app-color-border);
     padding: 0.5rem clamp(1rem, 3vw, 3rem);

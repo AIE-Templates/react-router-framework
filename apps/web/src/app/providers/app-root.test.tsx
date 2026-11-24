@@ -5,7 +5,7 @@ import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BasicShell } from "~/layouts/app-shell/app-shell";
+import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
 import { useAppEnvironment } from "~/managers/environment/hooks";
 
 import { AppRoot } from "./app-root";
@@ -28,7 +28,7 @@ function desktopBridge(): WindowChromeBridge {
       mode: "system-decorated",
     },
     subscribeWindowState: vi.fn<WindowChromeBridge["subscribeWindowState"]>(() => vi.fn<() => void>()),
-    updateOverlayAppearance: vi.fn<WindowChromeBridge["updateOverlayAppearance"]>(async () => ({
+    declareOverlayAppearance: vi.fn<WindowChromeBridge["declareOverlayAppearance"]>(async () => ({
       status: "unsupported",
       reason: "system-decorated",
     })),
@@ -128,6 +128,52 @@ function AppearanceTree() {
     </AppRoot>
   );
 }
+function editorWithAppearance(color?: string) {
+  return (
+    <AppRoot>
+      <BasicShell overlayAppearance={color ? { color } : undefined}>Editor</BasicShell>
+    </AppRoot>
+  );
+}
+it("replaces the current shell declaration without releasing between prop changes", () => {
+  const host = desktopBridge();
+  window.desktop = host;
+  const view = render(editorWithAppearance("#123456"));
+  const declaration = vi.mocked(host.declareOverlayAppearance);
+  const owner = declaration.mock.calls[0]?.[0].owner;
+  declaration.mockClear();
+  view.rerender(editorWithAppearance("#654321"));
+  expect(declaration.mock.calls.map(([value]) => value)).toEqual([
+    { owner, revision: 2, appearance: { color: "#654321" } },
+  ]);
+  view.rerender(editorWithAppearance());
+  expect(declaration).toHaveBeenLastCalledWith({ owner, revision: 3, appearance: null });
+  view.unmount();
+  expect(declaration).toHaveBeenCalledTimes(2);
+});
+
+it("hands ownership from the navigation shell to an editor shell in the same window", () => {
+  const host = appearanceHost();
+  const view = render(
+    <AppRoot>
+      <NavigationShell navigation="Areas" overlayAppearance={{ color: "#123456" }}>
+        Home
+      </NavigationShell>
+    </AppRoot>,
+  );
+  const original = host.owner();
+  view.rerender(
+    <AppRoot>
+      <BasicShell overlayAppearance={{ color: "#abcdef" }}>Editor</BasicShell>
+    </AppRoot>,
+  );
+  expect(host.owner()).toBeDefined();
+  expect(host.owner()).not.toBe(original);
+  expect(host.color()).toBe("#abcdef");
+  view.unmount();
+  expect(host.owner()).toBeUndefined();
+});
+
 it("releases owned native appearance when the entire AppRoot is replaced", () => {
   const host = appearanceHost();
   const first = render(

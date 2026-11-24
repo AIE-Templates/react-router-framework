@@ -111,7 +111,7 @@
     box-shadow: 0 2px 8px rgb(0 0 0 / 0.08);
   }
 
-  .app-area-workspace > .app-area-scroll {
+  .app-area-workspace > [data-window-column-body] > .app-area-scroll {
     padding: 0;
   }
 
