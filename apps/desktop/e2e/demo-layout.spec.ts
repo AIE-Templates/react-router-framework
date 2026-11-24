@@ -7,6 +7,70 @@ test.describe("demo layout", { tag: "@demo" }, () => {
     await expect(page.getByText("Host: desktop.")).toBeVisible();
   });
 
+  test("fallback drag geometry uses physical WCO coordinates in LTR and RTL", async ({ desktop: { page } }) => {
+    const rectangles = await page.evaluate(() => {
+      // Supply asymmetric WCO geometry even on hosts with no native overlay.
+      const css = document.querySelector<HTMLStyleElement>("#window-chrome-safety")!;
+      const values = { x: 36, y: 5, width: 260, height: 40 };
+      for (const [field, value] of Object.entries(values)) {
+        css.textContent = css.textContent.replaceAll(
+          new RegExp(`env\\(titlebar-area-${field},[^)]+\\)`, "g"),
+          `${value}px`,
+        );
+      }
+      document.querySelector<HTMLElement>(".app-shell")!.hidden = true;
+      const drag = document.querySelector<HTMLElement>(".window-safe-drag")!;
+      return ["ltr", "rtl"].map((dir) => {
+        document.documentElement.dir = dir;
+        const { left, top, width, height } = drag.getBoundingClientRect();
+        return { left, top, width, height };
+      });
+    });
+    for (const rect of rectangles) expect(rect).toEqual({ left: 36, top: 5, width: 260, height: 40 });
+  });
+
+  test("standalone chrome preserves a long title and keeps wrapped actions in bounds", async ({
+    desktop: { page },
+  }) => {
+    await page.setViewportSize({ width: 480, height: 720 });
+    await page.getByRole("combobox", { name: "Title bar" }).selectOption("standalone");
+    const header = page.locator(".shell-titlebar-content");
+    await expect(header).toBeVisible();
+    const measurement = await header.evaluate((bar) => {
+      const title = bar.querySelector("strong")!;
+      const actions = bar.querySelector<HTMLElement>("[data-window-interactive]")!;
+      const fullTitle = "Standalone title ".repeat(30);
+      title.textContent = fullTitle;
+      const buttons = Array.from({ length: 3 }, () => {
+        const button = document.createElement("button");
+        button.textContent = "Title bar action";
+        button.style.width = "13rem";
+        return button;
+      });
+      actions.replaceChildren(buttons[0]);
+      const truncated =
+        title.clientWidth > 0 &&
+        title.scrollWidth > title.clientWidth &&
+        getComputedStyle(title).textOverflow === "ellipsis" &&
+        title.textContent === fullTitle;
+      actions.append(...buttons.slice(1));
+      const bounds = bar.getBoundingClientRect();
+      const controls = buttons.map((button) => button.getBoundingClientRect());
+      return {
+        truncated,
+        wrapped: controls[2].top >= controls[0].bottom,
+        fit: controls.every(
+          (rect) =>
+            rect.left >= bounds.left &&
+            rect.right <= bounds.right &&
+            rect.top >= bounds.top &&
+            rect.bottom <= bounds.bottom,
+        ),
+      };
+    });
+    expect(measurement).toEqual({ truncated: true, wrapped: true, fit: true });
+  });
+
   test("all three drawers start below a wrapping workspace header", async ({ desktop: { page } }) => {
     await page.setViewportSize({ width: 600, height: 720 });
     await page.getByRole("button", { name: "Sidebar", exact: true }).click();
