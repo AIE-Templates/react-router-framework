@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type KeyboardEvent } from "react";
 import { Link } from "react-router";
 
 import { DemoIcon } from "./demo-icon";
@@ -19,11 +19,19 @@ function Identity() {
 
 export function AccountMenu({ compact = false }: { compact?: boolean }) {
   const menuId = useId();
+  function handleEscape(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Escape") return;
+    const popover = document.getElementById(menuId);
+    if (!popover?.matches(":popover-open")) return;
+    event.preventDefault();
+    popover.hidePopover();
+  }
   return (
     <div className={compact ? classes.railFooter : classes.sidebarFooter}>
       <button
         type="button"
         popoverTarget={menuId}
+        onKeyDown={handleEscape}
         data-native-control=""
         className={classes.trigger}
         aria-label={`Account menu for ${name}`}
@@ -43,6 +51,7 @@ export function AccountMenu({ compact = false }: { compact?: boolean }) {
         <Identity />
         <Link
           className={classes.settingsLink}
+          onKeyDown={handleEscape}
           to="/settings"
           target="_blank"
           rel="noopener"
