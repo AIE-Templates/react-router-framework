@@ -105,6 +105,20 @@ describe("layout composition", () => {
     expect(field).toHaveFocus();
   });
 
+  it("uses navigationLabel for the landmark and keeps the drawer trigger name", () => {
+    render(
+      <AppRoot>
+        <NavigationShell navigation={<a href="/">Home</a>} navigationLabel="Library">
+          Content
+        </NavigationShell>
+      </AppRoot>,
+    );
+    expect(screen.getByRole("navigation", { name: "Library" })).toHaveAttribute(
+      "id",
+      screen.getByRole("button", { name: "App navigation" }).getAttribute("aria-controls"),
+    );
+  });
+
   it("keeps controlled panels authoritative and application navigation independent", () => {
     const onSidebarOpenChange = vi.fn<(open: boolean) => void>();
     render(
@@ -125,6 +139,10 @@ describe("layout composition", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sidebar" }));
     expect(onSidebarOpenChange).toHaveBeenCalledWith(true);
     expect(screen.getByRole("button", { name: "Sidebar" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("navigation", { name: "Primary" })).toHaveAttribute(
+      "id",
+      screen.getByRole("button", { name: "App navigation" }).getAttribute("aria-controls"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "App navigation" }));
     expect(screen.getByRole("button", { name: "App navigation" })).toHaveAttribute("aria-expanded", "true");
     expect(onSidebarOpenChange).toHaveBeenCalledOnce();
