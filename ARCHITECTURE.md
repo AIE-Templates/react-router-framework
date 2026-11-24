@@ -53,6 +53,7 @@ graph TD
 - **`@repo/shared`**: Core owns `Shell`, `WindowChromeBridge`, and window bootstrap/appearance contracts. Electron extends the same package with `desktop-headers.ts`, `preferences.ts`, `desktop-protocol.ts`, IPC channels, and `shellFromEnv()`. Pure web branches must never contain Electron host protocol files or symbols.
 - **`app/base/mantine`**: Integrates Mantine as a derived consumer of Core's visual state via a custom `colorSchemeManager` and CSS layer ordering; never duplicates Core's localStorage authority or prepaint script.
 - **`platform/electron/core`**: Embeds the Hono host in the Electron utility process (`app://` via `@repo/port-fetch`). Owns `apps/desktop`, `packages/channel`, `packages/port-fetch`, `bench/transport`, and `apps/web/src/app/platform/electron`.
+- **Editor demo and window appearance**: Core owns the CRM and editor layouts, fused header columns, and per-document color scheme. Mantine owns its editor control and provider integration. Electron applies the appearance to the native window and synchronizes the application preference across desktop windows.
 - **Integration branches**: Do not develop shared features directly. Fix bugs on the owning source branch and merge downstream. Keep integration-specific glue minimal and isolated in dedicated commits.
 
 ## Shared File Conventions

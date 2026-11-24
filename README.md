@@ -9,7 +9,7 @@ Multi-branch starter repository for React Router Framework applications. Each te
 | `starter/base` | SSR (default) / SPA (`SSR=false`) | Minimal | Web | Workspace toolchain (Oxlint, Oxfmt, Vitest, TypeScript, Lefthook, commitlint), `react-router-serve` |
 | `starter/static` | Static SPA (`ssr: false`) | Minimal | Web | Static SPA shell, optional prerender, Node static server, nginx container |
 | `starter/fullstack` | SSR / SPA | Minimal | Web | Hono API & BFF (`@repo/server`), CSP nonces/hashes, structured logging, CSRF, graceful shutdown, Docker |
-| `app/base/core` | SSR / SPA | Core CSS | Web | `@repo/shared`, `AppRoot`, environment runtime, `BasicShell` / `NavigationShell` / `AppAreaLayout`, visual preferences & prepaint script |
+| `app/base/core` | SSR / SPA | Core CSS | Web | `@repo/shared`, `AppRoot`, environment runtime, application shells, fused header layouts, CRM and editor demos, visual preferences & prepaint script |
 | `app/static/core` | Static SPA | Core CSS | Web | `starter/static` + `app/base/core` |
 | `app/fullstack/core` | SSR / SPA | Core CSS | Web | `starter/fullstack` + `app/base/core` + optional visual cookie mirror |
 | `app/base/mantine` | SSR / SPA | Mantine | Web | `app/base/core` + Mantine provider, CSS layers, Core visual theme adapter |
