@@ -112,6 +112,12 @@ export function visualKernel() {
 }
 
 export const visualCodec = visualKernel();
+/** Serialized alongside the kernel to resolve the document appearance before paint. */
+export function webWindowAppearance(host: Window) {
+  const fixed = new URLSearchParams(host.location?.search).get("windowAppearance");
+  return fixed === "light" || fixed === "dark" ? fixed : undefined;
+}
+
 export interface VisualPrepaintSource {
   readFixedAppearance?: (host: Window) => "light" | "dark" | undefined;
   seed?: ColorSchemeSnapshot;
@@ -125,7 +131,7 @@ export function visualScript(seed?: VisualPreferences, source?: VisualPrepaintSo
       .replace(/\u2028/g, "\\u2028")
       .replace(/\u2029/g, "\\u2029");
   const external = source ? `(${source.read.toString()})(window,${json(source.seed ?? null)})` : "undefined";
-  const fixed = source?.readFixedAppearance ? `(${source.readFixedAppearance.toString()})(window)` : "undefined";
+  const fixed = `(${(source?.readFixedAppearance ?? webWindowAppearance).toString()})(window)`;
   return `(()=>{const k=(${visualKernel.toString()})();const c=${json(visualBootstrapConfig)};const r=k.read(c,${json(seed ?? null)},window,${external},${fixed});window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
 }
 
