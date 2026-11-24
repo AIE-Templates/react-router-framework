@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { Menu } from "@mantine/core";
 import { Link } from "react-router";
 
 import { DemoIcon } from "./demo-icon";
@@ -18,39 +18,44 @@ function Identity() {
 }
 
 export function AccountMenu({ compact = false }: { compact?: boolean }) {
-  const menuId = useId();
   return (
     <div className={compact ? classes.railFooter : classes.sidebarFooter}>
-      <button
-        type="button"
-        popoverTarget={menuId}
-        data-native-control=""
-        className={classes.trigger}
-        aria-label={`Account menu for ${name}`}
-        title={compact ? name : undefined}
-      >
-        <span className={classes.avatar} aria-hidden="true">
-          AM
-        </span>
-        {!compact && (
-          <>
+      <Menu position={compact ? "right-end" : "top-start"} width={216} offset={8} shadow="md" returnFocus>
+        <Menu.Target>
+          <button
+            type="button"
+            data-native-control=""
+            className={classes.trigger}
+            aria-label={`Account menu for ${name}`}
+            title={compact ? name : undefined}
+          >
+            <span className={classes.avatar} aria-hidden="true">
+              AM
+            </span>
+            {!compact && (
+              <>
+                <Identity />
+                <DemoIcon name="chevrons" />
+              </>
+            )}
+          </button>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Label>
             <Identity />
-            <DemoIcon name="chevrons" />
-          </>
-        )}
-      </button>
-      <div popover="auto" id={menuId} className={classes.popover}>
-        <Identity />
-        <Link
-          className={classes.settingsLink}
-          to="/settings"
-          target="_blank"
-          rel="noopener"
-          onClick={(event) => event.currentTarget.parentElement?.hidePopover()}
-        >
-          <DemoIcon name="settings" /> Appearance settings
-        </Link>
-      </div>
+          </Menu.Label>
+          <Menu.Divider />
+          <Menu.Item
+            component={Link}
+            to="/settings"
+            target="_blank"
+            rel="noopener"
+            leftSection={<DemoIcon name="settings" />}
+          >
+            Appearance settings
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
     </div>
   );
 }

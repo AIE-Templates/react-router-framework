@@ -67,49 +67,4 @@
     width: 0.875rem;
     flex: none;
   }
-
-  .popover {
-    position: fixed;
-    inset: auto;
-    inset-inline-start: 1rem;
-    inset-block-end: 4.5rem;
-    margin: 0;
-    width: min(13.5rem, calc(100vw - 2rem));
-    padding: 0.75rem;
-    background: var(--app-color-card);
-    color: var(--app-color-foreground);
-    border: 1px solid var(--app-color-border);
-    border-radius: 0.6rem;
-    box-shadow: var(--app-shadow-surface);
-  }
-  @supports (position-area: block-start) {
-    .popover {
-      inset: auto;
-      position-area: block-start span-inline-end;
-      margin-block-end: 0.5rem;
-      position-try-fallbacks: flip-inline, flip-block;
-    }
-    .railFooter .popover {
-      position-area: inline-end span-block-start;
-      margin: 0;
-      margin-inline-start: 0.5rem;
-    }
-  }
-  .popover .settingsLink {
-    display: flex;
-    flex-direction: row;
-    justify-content: flex-start;
-    align-items: center;
-    gap: 0.5rem;
-    margin-block-start: 0.5rem;
-    padding: 0.5rem;
-    min-height: 2rem;
-    font-size: 0.8125rem;
-    color: inherit;
-    text-decoration: none;
-    border-radius: 0.4rem;
-  }
-  .settingsLink:hover {
-    background: var(--app-color-muted);
-  }
 }
