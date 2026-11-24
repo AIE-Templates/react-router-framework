@@ -33,11 +33,11 @@ The root keeps default revalidation. A custom `shouldRevalidate` defines the fre
 
 ## Layout
 
-`AppRoot` provides the host environment and global providers. `BasicShell` and `NavigationShell` implement the App Shell, which frames the current app area and owns navigation between areas. `AppAreaLayout` organizes navigation, main content and optional panels within one area. The home route demonstrates ?shell=basic and ?header=standalone. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.
+`AppRoot` provides the host environment and global providers. `BasicShell` and `NavigationShell` implement the App Shell, which frames the current app area and owns navigation between areas. `AppAreaLayout` organizes navigation, main content and optional panels within one area. The CRM demo has three pages: Leads (`/`), Deals (`/deals`) and Sales report (`/reports/sales`). With `?shell=basic`, all three share one area. In the default layout the shell switches between Sales (Leads and Deals) and Reports (Sales report). The App shell selector compares both layouts on the current page. Use `?header=standalone` to try a separate title bar. Safety CSS stays inline in root Layout, outside route success/failure. It requires the default style-src unsafe-inline allowance; a stricter policy needs a hash. See docs/specs/layout.spec.md for contracts.
 
 ## Source organization
 
-`src/app/routes.ts` maps URLs to feature route modules (`features/<name>/<page>.route.tsx`). The disposable Home, Settings and Chat examples live in `features/demo`. To remove them, delete that directory and its three route registrations (`/`, `/settings` and `/chat`). `features/main` holds the SPA 404. The root document remains in `root.tsx`.
+`src/app/routes.ts` maps URLs to feature route modules (`features/<name>/<page>.route.tsx`). The disposable CRM, Settings and Chat examples live in `features/demo`. To remove them, delete that directory and its registrations in `routes.ts`. `features/main` holds the SPA 404. The root document remains in `root.tsx`.
 
 Global CSS enters through `styles/index.css`. Prefer colocated CSS Modules in the `components` cascade layer; Tailwind utilities remain available. Use `~/` for app-root imports and `./` within a directory or its children. See the root and directory-level AGENTS.md files for conventions.
 

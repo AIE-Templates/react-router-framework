@@ -26,7 +26,8 @@ html,body{margin:0;height:100%;min-width:0}
 .shell-titlebar-content>[data-window-interactive]{display:flex;flex-wrap:wrap;align-items:center;min-width:0;max-width:100%}
 .shell-nav{flex:0 0 4.5rem;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .shell-nav-chrome{display:none;flex-shrink:0}
-.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{display:block;height:max(var(--app-window-header-height),var(--app-window-safe-top))}
+html[data-chrome-mode="native-overlay"]{--app-window-rail-band:max(var(--app-window-header-height),var(--app-window-safe-top))}
+.app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{display:block;height:var(--app-window-rail-band,var(--app-window-safe-top))}
 .shell-nav-content{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:1rem;padding:1rem .5rem}
 .shell-navigation-toggle{display:none}
 .app-area-layout{--app-window-outer-left:env(titlebar-area-x,0px);--app-window-outer-right:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)));--app-layout-sidebar-span:0px;--app-layout-auxiliary-span:0px;container-type:inline-size;flex:1;min-width:0;min-height:0;height:100%;position:relative}
