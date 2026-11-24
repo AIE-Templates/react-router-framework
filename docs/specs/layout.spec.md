@@ -2,85 +2,89 @@
 
 ## Scope and ownership (LAY-01)
 
-An **app area** is a top-level part of the product where users perform related tasks. Switching from Chat to Code changes the app area. Opening a conversation in Chat or switching from Pages to Slides in a Library area navigates within the same area. Several routes can belong to one area. Route state determines the current area.
+An **app area** is a top-level part of the product selected by the route. For example, Chat and Code are separate areas. Opening another conversation changes the view within Chat.
 
 | Layer           | React component                   | Responsibility                                                                                                                                  |
 | --------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| App Root        | `AppRoot`                         | Provides the effective host environment, manages the runtime lifecycle and composes global providers inside the root `Layout`.                  |
-| App Shell       | `BasicShell` or `NavigationShell` | Frames the current area, owns application-wide navigation and composes the window chrome. A single-area application can omit the area switcher. |
-| App Area Layout | `AppAreaLayout`                   | Arranges the area's main content, optional sidebar and auxiliary panel. It owns local panel state and accommodates navigation within the area.  |
+| App Root        | `AppRoot`                         | Provides the host environment, manages the runtime connection and composes global providers inside the root `Layout`.                           |
+| App Shell       | `BasicShell` or `NavigationShell` | Frames the current area and composes the window chrome. `NavigationShell` adds application navigation. A single-area app can omit the switcher. |
+| App Area Layout | `AppAreaLayout`                   | Arranges one area's main content, optional sidebar and optional auxiliary panel. The sidebar can host navigation within the area.               |
 
-Business providers own themes, sessions and organizations. If the URL determines the current organization, it remains the source of truth. Each area keeps layout state separate from business state. `areaId` identifies the area definition. On unmount, the layout releases subscriptions and temporary resources. The caller owns persistence across mounts.
+`areaId` identifies an area definition and must be unique among layouts rendered on the same page. The caller owns preferences that persist across mounts. Business providers own themes, sessions and organization state. When the URL identifies the current organization, it is authoritative.
 
-Core provides generic shell and window-chrome bridge contracts so web, static and fullstack applications share the layout. Concrete hosts adapt their request context to the shell, mode and fullscreen seeds. Area components delegate platform differences, native control geometry and window IPC to the shell and host integration.
+Core defines host-neutral shell and window-chrome contracts. Hosts supply environment seeds and implement native window operations. Area components delegate native geometry, platform policy and window IPC to the shell and host.
 
 ## Environment and rendering (LAY-02)
 
-Host identity, input/display characteristics and layout size are independent. A narrow Electron window remains a desktop host. User agents and request parameters cannot grant desktop capabilities.
+The same lifecycle applies to web and desktop in both rendering modes.
 
-SSR seeds the environment from trusted host context. SPA root loaders run at build time, so their web identity is not the final runtime identity. Initial hydration must match the server or static HTML; rendering must not call the bridge. After mounting, `AppRoot` attempts preload bootstrap even when the initial identity is web. A valid bootstrap takes precedence; later root revalidation cannot overwrite it with an older seed. Desktop SSR mismatches expose field names only. A build-time web to runtime desktop transition in SPA is expected.
+- **First render.** SSR uses trusted host context. A static SPA starts with the build-time web seed. Hydration must match the initial HTML. Rendering does not access the bridge or wait for desktop enhancement.
+- **After mount.** `AppRoot` connects to the optional preload bridge. A validated bootstrap supplies the effective desktop identity and chrome mode. Root revalidation cannot overwrite them. A desktop seed mismatch reports the differing field names only. A web seed can resolve to a desktop host.
+- **Unavailable enhancement.** A missing bridge, invalid bootstrap or failed connection leaves the safety layout available. Document attributes mirror the runtime state. Host identity is independent of viewport size and input characteristics. Only the host can grant desktop capabilities.
+- **Disconnect.** Cleanup applies only to its own connection and is idempotent. Disconnect releases subscriptions and appearance ownership, clears dynamic window state and marks the connection unavailable. A reconnected shell can declare its appearance again.
 
-Components read `useAppEnvironment()`. Document attributes mirror that state and are not another authority. A normal browser without a bridge remains web. Invalid bootstrap or bridge failure reports unavailable enhancement while retaining safe layout. Authorization remains in the host.
-
-Runtime cleanup is idempotent and scoped to its connection generation. An old cleanup cannot tear
-down a newer connection. Disconnect marks enhancement unavailable, clears dynamic window state,
-and releases submitted appearance ownership before detaching the bridge. The App Shell can then reclaim
-appearance after effect reconnection, independently of React parent/child cleanup order.
-
-Web SSR, web SPA, desktop SSR and desktop SPA share this lifecycle. SPA unknown paths report 404 through a wildcard/client loader after root fallback hydration; SSR retains HTTP 404. Enhancement readiness must not delay showing the first document.
+Unknown routes return HTTP 404 under SSR. A static SPA hydrates the root fallback before its wildcard client loader raises a 404 for the route error boundary.
 
 ## Component contracts (LAY-03)
 
-- `AppRoot` remains mounted in the root Layout and manages the runtime. Inputs are optional shell, mode and fullscreen seeds plus children.
-- `useAppEnvironment()`, `useWindowChrome()`, `getDragRegionProps()` and `getInteractiveProps()` are the React environment bindings.
-- `BasicShell` accepts children and optional `title`, `actions`, `headerMode` and `overlayAppearance`.
-- `NavigationShell` adds `navigation`, `navigationLabel`, controlled `navigationOpen`, `defaultNavigationOpen` and `onNavigationOpenChange`.
-- `AppAreaLayout` accepts `areaId`, `title`, `children`, `actions`, `sidebar`/`sidebarTitle` and `auxiliary`/`auxiliaryTitle`.
+| Component         | Contract                                                                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AppRoot`         | Requires `children`. Accepts initial `shell`, `mode`, `fullscreen` and `managersInitialState`. Components access the environment and window operations through `useAppEnvironment()` and `useWindowChrome()`. |
+| `BasicShell`      | Requires `children`. Accepts `headerMode`, `overlayAppearance`, and standalone title-bar `title` and `actions`.                                                                                               |
+| `NavigationShell` | Adds required `navigation` and optional `navigationLabel` (landmark name, default `Primary`). The narrow-screen trigger reads `App navigation`.                                                               |
+| `AppAreaLayout`   | Requires `areaId`, `title` and `children`. Accepts header `actions`, `sidebar` / `sidebarTitle`, `auxiliary` / `auxiliaryTitle`, and `contentAs`. Omitted panels occupy no column.                            |
 
-Each area panel supports controlled open state, an uncontrolled default and a change callback. Uncontrolled panels default to closed. Callbacks do not implicitly persist preferences. Application navigation and area sidebar state are independent. Opening a panel attempts to focus an interactive descendant; closing restores the trigger. Escape closes only the panel containing the event target. These panels are not modal dialogs with complete focus traps.
+Navigation, sidebar and auxiliary panel states are independent. In controlled mode the callback requests a change and the caller supplies the new value. Uncontrolled state defaults to closed.
 
-Each page provides one `main` landmark, either by setting `contentAs="main"` on its top-level `AppAreaLayout` or by supplying the landmark itself. Other nested or sibling layout containers keep the default `div` for their content. Each `areaId` must be unique within the page.
+| Region                        | Controlled value | Initial value           | Change callback          |
+| ----------------------------- | ---------------- | ----------------------- | ------------------------ |
+| Application navigation drawer | `navigationOpen` | `defaultNavigationOpen` | `onNavigationOpenChange` |
+| Area sidebar                  | `sidebarOpen`    | `defaultSidebarOpen`    | `onSidebarOpenChange`    |
+| Area auxiliary panel          | `auxiliaryOpen`  | `defaultAuxiliaryOpen`  | `onAuxiliaryOpenChange`  |
+
+On a closed-to-open transition, the panel attempts to focus its first focusable control. Initially open panels leave focus in place. The close button and an unhandled Escape originating inside the panel request closure and return focus to its trigger when focusable. An Escape handled by a descendant with `preventDefault()` leaves the panel open. Panels are non-modal and allow focus to leave.
+
+Each page supplies one `main` landmark. Set `contentAs="main"` on one area layout or supply the landmark in the page. Other layout content containers use the default `div`.
 
 ## Shell and title bar composition (LAY-04)
 
-Both shells support `headerMode: "fused" | "standalone"`, defaulting to fused. Shell choice, area count, header composition and responsive size are independent.
+Both shells support `headerMode="fused"` (default) and `"standalone"`, independently of area count and viewport width.
 
-Standalone mode supplies a separate top row; lower area headers do not drag the window. In fused mode, area headers participate in the top window frame in place, preserving each column's content and background. The shell assigns constraints and participation; it does not collect business UI in a global store. A fused `AppAreaLayout` must be a direct layout child of `.shell-body`. Unknown wrappers retain the root safety fallback.
+- **Standalone.** The shell renders a separate title bar above the area. Area headers below it do not drag the window.
+- **Fused.** An `AppAreaLayout` directly inside `.shell-body` can contribute its column headers to the window's top band. Each inline header retains its own content and background. Floating panel headers do not drag.
 
-Visible columns distribute WCO physical coordinates rather than applying full-window insets to every column. Translate RTL logical edges into physical left/right edges. Panel closure, drawer presentation and navigation collapse must still cover every native control safety area. On macOS, navigation too narrow for the traffic lights begins below the safe band and adjacent headers cover the remaining inset.
+Use `getDragRegionProps()` for draggable surfaces and `getInteractiveProps()` for interactive content in a drag region. Apply the interactive marker to the actual surface of a portal.
 
-The application shell is the sole overlay appearance writer. The host determines native height independently of area DOM measurements. Window modes and platform heights follow the window chrome specification where a desktop host is present.
+Window Controls Overlay (WCO) reports physical coordinates. Each visible top column reserves the portion of the native controls' inset that overlaps it, accounting for LTR/RTL, open panels and navigation width. On macOS, when the navigation rail is narrower than the native button group, its links start below the safe band and the adjacent header reserves the remaining inset. Only the shell declares native overlay appearance for the layout. The host validates requests and applies supported values without measuring area DOM elements.
 
 ## Persistent safety boundary (LAY-05)
 
-The root Layout keeps `.root-chrome-fallback` outside route children, including normal pages, hydration fallback, root errors and 404. Critical safety CSS is inline: margin reset, nonshrinking flex geometry, scrolling boundaries and fused handoff rules must survive missing external styles.
+The root `Layout` renders `.root-chrome-fallback` outside the route content, on normal pages, during hydration, and on error pages including 404s. Inline CSS resets document margins and preserves the fallback height, scroll boundaries and title-bar handoff when external styles or business JavaScript are unavailable.
 
-`--app-window-safe-top` is `titlebar-area-y + titlebar-area-height`, defaulting to zero. The fallback occupies this height in normal flow; its drag rectangle uses WCO x, width and height without covering native controls. Geometry does not depend on `data-shell`, providers or bootstrap. WCO variables can also exist in a web application; zero fallback values are not evidence that native controls are absent.
+The fallback reserves `--app-window-safe-top` in normal flow. This equals the top offset of the WCO rectangle plus its height, with zero defaults when the environment variables are absent. The fallback drag surface must use the reported width and height and the physical left offset in both LTR and RTL. Fallback geometry depends only on WCO environment variables, which can also be present in a web app.
 
-Only directly composed, visible top regions that cover the complete constraints may hide the fallback through structural markers and `:has()`. Arbitrary descendants, portals, hidden headers or partial regions cannot trigger handoff. Unmounting or hiding participating content/ancestors with `hidden` restores the fallback in the same style calculation. Custom hiding mechanisms must update composition markers explicitly.
+A shell is eligible for handoff when its diagnostic is absent or `host-mismatch`. The fallback yields only when an eligible shell directly inside `.root-content` supplies a complete top band. Standalone mode uses the title-bar content. Fused mode uses the main column header of an area marked `data-chrome-complete`. A wrapper that breaks the direct-child path, or a portal outside that path, cannot trigger handoff. Removing a participating element or setting its `hidden` attribute restores the fallback in the same style calculation when no other qualifying band remains. A shell hidden by custom CSS must also use `hidden` or withdraw its participation marker.
 
-The top interaction band stays in the viewport while body content scrolls. Safety must hold before hydration, without business JavaScript, on refresh and renderer reload. Renderer process failure belongs to host recovery. Desktop SPA may make one controlled layout shift from fallback to fused chrome without a new display gate.
+The top band stays in the viewport while content scrolls. Refresh and renderer reload use the same safety boundary. A desktop SPA may shift once from the fallback to its fused frame after hydration. Renderer process failure is handled by the host.
 
 ## Sizing, scrolling and responsiveness (LAY-06)
 
-`ContentScrollRestoration` tracks `.root-content` and area panels by history entry key. New navigation resets positions, POP restores them and fragment navigation locates its target. The current document retains at most 100 entries; positions do not survive reload/restart. Router ScrollRestoration still owns the window.
+**Panel placement.** Open area panels respond to the area's container width. Application navigation uses a persistent rail at viewport widths above `48em` and a toggleable drawer at or below `48em`.
 
-Ordinary headers use `--app-layout-header-height: 3rem` (48 CSS px at the default font size). Window headers use `--app-window-header-height`, inheriting that value. A larger WCO safe area increases layout height; Windows headers are not shrunk to the reported WCO height.
+| Area width                | Sidebar | Auxiliary panel |
+| ------------------------- | ------- | --------------- |
+| Up to and including 40rem | Drawer  | Drawer          |
+| Above 40rem through 60rem | Inline  | Drawer          |
+| Above 60rem               | Inline  | Inline          |
 
-Windows native-overlay uses a 48px body plus a separate 1px bottom separator, totaling 49px by default. Fused column headers, navigation drag bands and standalone title bars share this rule; lower business headers and floating headers do not add this separator. Borders do not contribute to native overlay height. macOS keeps its own height policy.
+Area drawers begin below the main content header, including when actions wrap. The navigation drawer aligns to the bottom of the first directly composed area's main header when present. Resizing must preserve business state. Layouts with both device safe-area insets and window controls must account for each independently.
 
-Larger text and wrapping content must remain accessible. A title sharing the native-control row truncates visually with an ellipsis while preserving its full DOM text; actionable controls wrap instead of being clipped. Grid/flex children must shrink, have explicit scroll ownership and avoid accidental horizontal overflow or nested body scrolling.
+**Header sizing.** Area headers have a minimum height of `--app-layout-header-height` (default `3rem`). Window headers use `--app-window-header-height`, which defaults to the layout header height. A participating window band accommodates the larger of that minimum and the WCO safe height. On Windows in `native-overlay` mode, the band adds a 1 CSS px bottom separator. A 48px minimum with a safe height of 48px or less gives a 49px minimum band. This applies to fused inline headers, the navigation drag band and standalone title bars. The separator is outside the native overlay height. macOS uses the host's own height policy.
 
-| Area container width       | Panel presentation                                |
-| -------------------------- | ------------------------------------------------- |
-| At most 40rem              | Sidebar and auxiliary panel are drawers           |
-| Above 40rem, at most 60rem | Sidebar can be inline; auxiliary remains a drawer |
-| Above 60rem                | Sidebar, workspace and auxiliary can be inline    |
+In a title row shared with native controls, long titles must truncate visually while retaining their full DOM text. Actions must remain reachable when they wrap. Content must remain reachable at larger text sizes, with an explicit scroll container for each pane and no unintended horizontal or document overflow.
 
-Floating area panels occupy the second grid row below the actual workspace header, including when its actions wrap. The navigation drawer aligns to the same header in the adjacent area.
+**Scroll restoration.** React Router handles window scroll. `ContentScrollRestoration` tracks `.root-content` and marked panes by history key, falling back to the URL path, query and fragment for the default key. The current document keeps up to 100 entries. A history traversal restores saved positions. Other navigations reset panes to the origin, except that a fragment-only change preserves existing pane offsets before bringing its target into view. Saved positions take precedence over the fragment on traversal. The initial fragment may resolve when the hydration fallback is replaced. Reloading clears the saved positions.
 
-Application navigation becomes a drawer at a viewport width of at most 48em. These are configurable layout defaults, not device identities. Responsive changes must not recreate business state. Device safe areas and WCO constraints are distinct inputs and must be combined deliberately.
+## Acceptance checks
 
-## Required behavior
-
-Verify both shells and header modes, all host/render combinations, LTR/RTL, wide and narrow containers, independent panel state, keyboard focus, errors and 404 recovery. Missing business JavaScript or external styles must leave minimum safe geometry intact. Portal surfaces remain interactive and restore underlying drag behavior when closed.
+Exercise both shell variants and both header modes across web/desktop and SSR/SPA. Check LTR and RTL at each panel breakpoint, drawer focus and dismissal, and scroll restoration through back/forward navigation. Verify that native controls remain accessible on first paint, on reload, without external styles or business JavaScript, and while transitioning into and out of error pages. Opening and closing a portal must preserve control interaction and restore dragging underneath it.
