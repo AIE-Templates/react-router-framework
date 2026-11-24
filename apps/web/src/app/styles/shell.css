@@ -32,7 +32,7 @@
     background: var(--app-color-accent);
   }
 
-  .shell-nav-content a[aria-current="page"] {
+  .shell-nav-content a[aria-current]:not([aria-current="false"]) {
     background: var(--app-color-card);
     color: var(--app-color-foreground);
     border-color: var(--app-color-border);
