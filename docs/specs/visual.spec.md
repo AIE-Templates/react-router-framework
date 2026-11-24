@@ -57,3 +57,7 @@ without reversing the native window's physical reserved geometry.
 ## Semantic styles
 
 Core `styles/tokens.css` owns `--app-color-*`, `--app-font-sans`, `--app-radius` and `--app-shadow-surface`. Tailwind theme aliases refer to these values. Explicit appearance follows `data-color-scheme`; only missing attributes use system media-query fallback. `styles/base.css` must not reintroduce starter OS-driven color rules that override explicit preferences. Appearance controls are reusable UI in `components/appearance-settings.tsx`, outside the manager implementation.
+
+## Document appearance
+
+A web document opened with `windowAppearance=light` or `windowAppearance=dark` uses that color scheme from prepaint onward. The override applies only to that document. Other tabs continue to use the shared preference, and preference changes still reach the fixed document.

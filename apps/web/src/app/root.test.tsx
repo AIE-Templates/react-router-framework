@@ -32,7 +32,7 @@ describe("Layout", () => {
         mode: "system-decorated",
       },
       subscribeWindowState: () => release,
-      updateOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
+      declareOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
     };
     const { unmount } = renderLayout(<main>Root error fallback</main>);
     await waitFor(() => expect(document.documentElement.dataset.shell).toBe("desktop"));
