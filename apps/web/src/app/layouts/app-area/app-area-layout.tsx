@@ -4,9 +4,9 @@ import { ShellChromeContext } from "~/layouts/app-shell/chrome-context";
 import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
 import { getInteractiveProps } from "~/managers/environment/dom-props";
 
-export interface ModuleLayoutProps {
-  moduleId: string;
-  /** Opt in once per page; nested or sibling modules keep the default div. */
+export interface AppAreaLayoutProps {
+  areaId: string;
+  /** Set main once per page. Other layout containers use div. */
   contentAs?: "div" | "main";
   title: ReactNode;
   actions?: ReactNode;
@@ -23,9 +23,9 @@ export interface ModuleLayoutProps {
   onAuxiliaryOpenChange?: (open: boolean) => void;
 }
 
-/** A module-scoped sidebar, workspace and optional auxiliary workspace. CSS owns width adaptation. */
-export function ModuleLayout({
-  moduleId,
+/** Lays out the sidebar, main content and auxiliary panel within one app area. CSS adapts to its width. */
+export function AppAreaLayout({
+  areaId,
   contentAs: Content = "div",
   title,
   actions,
@@ -40,7 +40,7 @@ export function ModuleLayout({
   auxiliaryOpen,
   defaultAuxiliaryOpen = false,
   onAuxiliaryOpenChange,
-}: ModuleLayoutProps) {
+}: AppAreaLayoutProps) {
   const fused = useContext(ShellChromeContext);
   const sidebarId = useId();
   const auxiliaryId = useId();
@@ -50,17 +50,22 @@ export function ModuleLayout({
   usePanelEscape(aux.open, aux.setOpen, auxiliaryId);
   return (
     <section
-      className="module-layout"
-      data-module-id={moduleId}
+      className="app-area-layout"
+      data-area-id={areaId}
       data-chrome-complete={fused ? "" : undefined}
       data-sidebar-open={Boolean(sidebar) && side.open}
       data-auxiliary-open={Boolean(auxiliary) && aux.open}
     >
-      <div className="module-columns">
+      <div className="app-area-columns">
         {sidebar && (
-          <aside id={sidebarId} className="module-panel module-sidebar" hidden={!side.open} aria-label="Module sidebar">
-            <header className="module-header" data-chrome-edge="start" data-window-drag={fused ? "" : undefined}>
-              <strong className="module-header-title">{sidebarTitle}</strong>
+          <aside
+            id={sidebarId}
+            className="app-area-panel app-area-sidebar"
+            hidden={!side.open}
+            aria-label="Area sidebar"
+          >
+            <header className="app-area-header" data-chrome-edge="start" data-window-drag={fused ? "" : undefined}>
+              <strong className="app-area-header-title">{sidebarTitle}</strong>
               <button
                 data-native-control=""
                 {...getInteractiveProps()}
@@ -71,18 +76,21 @@ export function ModuleLayout({
                 ×
               </button>
             </header>
-            <div className="module-scroll" data-scroll-restoration-id={`${moduleId}:sidebar`}>
+            <div className="app-area-scroll" data-scroll-restoration-id={`${areaId}:sidebar`}>
               {sidebar}
             </div>
           </aside>
         )}
-        <section className="module-panel module-workspace" aria-label={Content === "main" ? undefined : "Workspace"}>
-          <header className="module-header" data-chrome-edge="workspace" data-window-drag={fused ? "" : undefined}>
+        <section
+          className="app-area-panel app-area-workspace"
+          aria-label={Content === "main" ? undefined : "Workspace"}
+        >
+          <header className="app-area-header" data-chrome-edge="workspace" data-window-drag={fused ? "" : undefined}>
             {sidebar && (
               <button
                 data-native-control=""
                 id={`${sidebarId}-trigger`}
-                data-module-panel-toggle="sidebar"
+                data-area-panel-toggle="sidebar"
                 {...getInteractiveProps()}
                 type="button"
                 aria-expanded={side.open}
@@ -92,13 +100,13 @@ export function ModuleLayout({
                 Sidebar
               </button>
             )}
-            <strong className="module-header-title">{title}</strong>
+            <strong className="app-area-header-title">{title}</strong>
             <div {...getInteractiveProps()}>{actions}</div>
             {auxiliary && (
               <button
                 data-native-control=""
                 id={`${auxiliaryId}-trigger`}
-                data-module-panel-toggle="auxiliary"
+                data-area-panel-toggle="auxiliary"
                 {...getInteractiveProps()}
                 type="button"
                 aria-expanded={aux.open}
@@ -109,19 +117,19 @@ export function ModuleLayout({
               </button>
             )}
           </header>
-          <Content className="module-scroll" data-scroll-restoration-id={`${moduleId}:workspace`}>
+          <Content className="app-area-scroll" data-scroll-restoration-id={`${areaId}:workspace`}>
             {children}
           </Content>
         </section>
         {auxiliary && (
           <aside
             id={auxiliaryId}
-            className="module-panel module-auxiliary"
+            className="app-area-panel app-area-auxiliary"
             hidden={!aux.open}
             aria-label="Auxiliary workspace"
           >
-            <header className="module-header" data-chrome-edge="end" data-window-drag={fused ? "" : undefined}>
-              <strong className="module-header-title">{auxiliaryTitle}</strong>
+            <header className="app-area-header" data-chrome-edge="end" data-window-drag={fused ? "" : undefined}>
+              <strong className="app-area-header-title">{auxiliaryTitle}</strong>
               <button
                 data-native-control=""
                 {...getInteractiveProps()}
@@ -132,7 +140,7 @@ export function ModuleLayout({
                 ×
               </button>
             </header>
-            <div className="module-scroll" data-scroll-restoration-id={`${moduleId}:auxiliary`}>
+            <div className="app-area-scroll" data-scroll-restoration-id={`${areaId}:auxiliary`}>
               {auxiliary}
             </div>
           </aside>
