@@ -305,7 +305,7 @@ export async function runSmoke(
     checks.documentReload = { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
 
-  // A missing route replaces the module; the persistent root must reclaim window safety.
+  // A missing route replaces the area layout; the persistent root must reclaim window safety.
   const returnUrl = win.webContents.getURL();
   try {
     await win.loadURL(`${APP_ORIGIN}/__layout_smoke_missing__`);

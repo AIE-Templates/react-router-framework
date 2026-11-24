@@ -36,7 +36,7 @@ export interface HeaderRegionMeasurement {
 }
 
 /**
- * Whether a module header lines up with the window band (LAY-04, LAY-06): a fused (drag) header is
+ * Whether an app area header lines up with the window band (LAY-04, LAY-06): a fused (drag) header is
  * exactly the band's height, and on Windows its separator is the snapped 1px border lying entirely
  * below the native overlay. Headers outside the band only need the shell header height.
  */

@@ -11,9 +11,9 @@ test.describe("demo layout", { tag: "@demo" }, () => {
     await page.setViewportSize({ width: 600, height: 720 });
     await page.getByRole("button", { name: "Sidebar", exact: true }).click();
     await page.getByRole("button", { name: "Auxiliary", exact: true }).click();
-    await page.getByRole("button", { name: "Modules", exact: true }).click();
+    await page.getByRole("button", { name: "App navigation", exact: true }).click();
     const positions = await page.evaluate(() => {
-      const header = document.querySelector<HTMLElement>(".module-workspace > .module-header")!;
+      const header = document.querySelector<HTMLElement>(".app-area-workspace > .app-area-header")!;
       const action = document.createElement("button");
       action.textContent = "Additional workspace action";
       action.style.flexBasis = "100%";
@@ -22,7 +22,7 @@ test.describe("demo layout", { tag: "@demo" }, () => {
       return {
         height: rect.height,
         bottom: rect.bottom,
-        drawers: [".shell-nav", ".module-sidebar", ".module-auxiliary"].map(
+        drawers: [".shell-nav", ".app-area-sidebar", ".app-area-auxiliary"].map(
           (selector) => document.querySelector(selector)!.getBoundingClientRect().top,
         ),
       };
@@ -34,7 +34,7 @@ test.describe("demo layout", { tag: "@demo" }, () => {
   test("real input drives client-side navigation and React state", async ({ desktop: { page } }) => {
     await page.getByRole("combobox", { name: "App shell" }).selectOption("basic");
     await expect(page).toHaveURL("app://app/?shell=basic");
-    const draft = page.getByRole("textbox", { name: "Module draft" });
+    const draft = page.getByRole("textbox", { name: "Area draft" });
     await draft.fill("typed by Playwright");
     await expect(draft).toHaveValue("typed by Playwright");
     // The select is controlled by the URL: going back restores it without a document load.
@@ -57,11 +57,11 @@ test.describe("demo layout", { tag: "@demo" }, () => {
 
   test("Home preserves the document, draft and existing query settings", async ({ desktop: { page } }) => {
     await page.getByRole("combobox", { name: "Title bar" }).selectOption("standalone");
-    await page.getByRole("textbox", { name: "Module draft" }).fill("keep this draft");
+    await page.getByRole("textbox", { name: "Area draft" }).fill("keep this draft");
     await page.evaluate(() => Reflect.set(window, "layoutDocument", true));
     await page.getByRole("link", { name: "Home", exact: true }).click();
     await expect(page).toHaveURL("app://app/?header=standalone&shell=navigation");
-    await expect(page.getByRole("textbox", { name: "Module draft" })).toHaveValue("keep this draft");
+    await expect(page.getByRole("textbox", { name: "Area draft" })).toHaveValue("keep this draft");
     expect(await page.evaluate(() => Reflect.get(window, "layoutDocument"))).toBe(true);
     await expect(page.getByRole("main")).toHaveCount(1);
   });
