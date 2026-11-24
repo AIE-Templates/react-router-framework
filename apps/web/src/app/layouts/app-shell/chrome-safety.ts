@@ -13,15 +13,17 @@ html,body{margin:0;height:100%;min-width:0}
 [data-window-drag]{app-region:drag;-webkit-app-region:drag}
 [data-window-interactive]{app-region:no-drag;-webkit-app-region:no-drag}
 .root-frame{height:100dvh;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.root-chrome-fallback{flex-shrink:0;height:var(--app-window-safe-top);padding-top:env(titlebar-area-y,0px)}
-.window-safe-drag{margin-left:env(titlebar-area-x,0px);width:env(titlebar-area-width,100%);height:env(titlebar-area-height,0px)}
+.root-chrome-fallback{position:relative;flex-shrink:0;height:var(--app-window-safe-top)}
+.window-safe-drag{position:absolute;left:env(titlebar-area-x,0px);top:env(titlebar-area-y,0px);width:env(titlebar-area-width,100%);height:env(titlebar-area-height,0px)}
 .root-content{flex:1;min-height:0;min-width:0;overflow:auto}
 .app-shell{height:100%;min-height:0;min-width:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
 .shell-body{anchor-scope:--app-layout-workspace-header;flex:1;min-height:0;min-width:0;display:flex;position:relative;overflow:hidden}
 .shell-titlebar{flex-shrink:0;min-height:var(--app-window-header-height);position:relative}
 .app-shell[data-chrome-ready][data-header-mode="standalone"]>.shell-titlebar{min-height:max(var(--app-window-header-height),var(--app-window-safe-top))}
 .app-shell[data-chrome-ready][data-header-mode="standalone"]>.shell-titlebar>.shell-titlebar-content{min-height:max(var(--app-window-header-height),var(--app-window-safe-top));padding-top:env(titlebar-area-y,0px);padding-left:max(1rem,env(titlebar-area-x,0px));padding-right:max(1rem,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
-.shell-titlebar-content{min-height:var(--app-window-header-height);display:flex;align-items:center;gap:1rem;padding:0 1rem}
+.shell-titlebar-content{min-height:var(--app-window-header-height);display:flex;flex-wrap:wrap;align-items:center;gap:1rem;padding:0 1rem}
+.shell-titlebar-content>strong{flex:1 1 0;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.shell-titlebar-content>[data-window-interactive]{display:flex;flex-wrap:wrap;align-items:center;min-width:0;max-width:100%}
 .shell-nav{flex:0 0 4.5rem;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .shell-nav-chrome{display:none;flex-shrink:0}
 .app-shell[data-chrome-ready][data-header-mode="fused"]>.shell-body>.shell-nav>.shell-nav-chrome{display:block;height:max(var(--app-window-header-height),var(--app-window-safe-top))}
