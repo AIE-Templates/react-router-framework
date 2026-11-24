@@ -1,3 +1,4 @@
+import { NativeSelect } from "@mantine/core";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -22,16 +23,12 @@ export function EditorArea() {
               {name}
             </button>
           ))}
-          <label>
-            Font size
-            <select value={fontSize} onChange={(event) => setFontSize(event.currentTarget.value)}>
-              {["14", "16", "18", "20"].map((size) => (
-                <option key={size} value={size}>
-                  {size} px
-                </option>
-              ))}
-            </select>
-          </label>
+          <NativeSelect
+            label="Font size"
+            value={fontSize}
+            onChange={(event) => setFontSize(event.currentTarget.value)}
+            data={["14", "16", "18", "20"].map((value) => ({ value, label: value + " px" }))}
+          />
           <label>
             Line wrapping
             <select value={wrap} onChange={(event) => setWrap(event.currentTarget.value)}>
