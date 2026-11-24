@@ -18,7 +18,7 @@ function bridge() {
       listener = next;
       return release;
     }),
-    updateOverlayAppearance: vi.fn<WindowChromeBridge["updateOverlayAppearance"]>(async () => ({
+    declareOverlayAppearance: vi.fn<WindowChromeBridge["declareOverlayAppearance"]>(async () => ({
       status: "applied",
       appearance: { color: "#ffffff" },
     })),
@@ -74,9 +74,20 @@ describe("document window chrome runtime", () => {
     runtime.connect({ ...host.value, bootstrap: null });
     expect(host.value.subscribeWindowState).not.toHaveBeenCalled();
     expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
-    expect(await runtime.updateOverlayAppearance({ color: "#ffffff" })).toMatchObject({ status: "unsupported" });
+    expect(await runtime.declareOverlayAppearance("shell", { color: "#ffffff" })).toMatchObject({
+      status: "unsupported",
+    });
     runtime.connect(undefined);
     expect(runtime.getSnapshot().shell.kind).toBe("web");
+  });
+
+  it("rejects a bridge missing the window-scoped declaration method before subscribing", () => {
+    const runtime = createWindowChromeRuntime();
+    const host = bridge();
+    Reflect.deleteProperty(host.value, "declareOverlayAppearance");
+    runtime.connect(host.value);
+    expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
+    expect(host.value.subscribeWindowState).not.toHaveBeenCalled();
   });
 
   it("drops stale revisions and old document callbacks, resets revision on reconnect, and releases subscriptions", () => {
@@ -100,21 +111,6 @@ describe("document window chrome runtime", () => {
     notify.mockClear();
     current.emit(2);
     expect(notify).not.toHaveBeenCalled();
-  });
-
-  it("discards an appearance response from a previous connection", async () => {
-    const runtime = createWindowChromeRuntime();
-    const host = bridge();
-    let resolve!: (value: OverlayAppearanceResult) => void;
-    host.value.updateOverlayAppearance = () =>
-      new Promise((next) => {
-        resolve = next;
-      });
-    runtime.connect(host.value);
-    const result = runtime.updateOverlayAppearance({ color: "#ffffff" });
-    runtime.connect(bridge().value);
-    resolve({ status: "applied", appearance: { color: "#ffffff" } });
-    expect(await result).toEqual({ status: "rejected", reason: "desktop-document-changed" });
   });
 
   it("keeps a failed bridge unavailable without blocking the initial document", () => {

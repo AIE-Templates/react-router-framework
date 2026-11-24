@@ -2,8 +2,9 @@ import type { OverlayAppearance } from "@repo/shared";
 import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
+import { useEnvironmentRuntime } from "~/managers/environment/context";
 import { getInteractiveProps } from "~/managers/environment/dom-props";
-import { useWindowChrome } from "~/managers/environment/hooks";
+import { useAppEnvironment } from "~/managers/environment/hooks";
 
 import { ShellChromeContext } from "./chrome-context";
 
@@ -44,7 +45,8 @@ function Shell({
   overlayAppearance,
   ...navigationProps
 }: BasicShellProps & Partial<NavigationShellProps>) {
-  const chrome = useWindowChrome();
+  const chrome = useAppEnvironment();
+  const runtime = useEnvironmentRuntime();
   const body = useRef<HTMLDivElement>(null);
   const navigationId = useId();
   const navigation = usePanelState(
@@ -71,16 +73,24 @@ function Shell({
     };
     const resize = new ResizeObserver(measure);
     const bind = () => {
-      resize.disconnect();
-      header = element.querySelector(
-        ":scope > .app-area-layout > .app-area-columns > .app-area-workspace > .app-area-header",
+      const layout = element.querySelector(":scope > [data-window-layout]:not([hidden])");
+      const next = layout?.querySelector<HTMLElement>(
+        ":scope > [data-window-columns]:not([hidden]) > [data-window-column]:not([hidden]) > [data-window-header='primary']:not([hidden])",
       );
+      if (header === (next ?? null)) return;
+      resize.disconnect();
+      header = next ?? null;
       if (header) resize.observe(header);
       measure();
     };
     bind();
     const areaObserver = new MutationObserver(bind);
-    areaObserver.observe(element, { childList: true });
+    areaObserver.observe(element, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["hidden", "data-window-header"],
+    });
     return () => {
       areaObserver.disconnect();
       resize.disconnect();
@@ -89,19 +99,18 @@ function Shell({
   }, [navigation.open]);
   const ready = !chrome.diagnostic || chrome.diagnostic === "host-mismatch";
   const { color, symbolColor, height } = overlayAppearance ?? {};
-  const updateAppearance = chrome.declareOverlayAppearance;
+  const ownsAppearance =
+    chrome.enhancement === "available" && (color !== undefined || symbolColor !== undefined || height !== undefined);
   useEffect(() => {
-    if (
-      chrome.enhancement === "available" &&
-      (color !== undefined || symbolColor !== undefined || height !== undefined)
-    ) {
-      void updateAppearance(navigationId, { color, symbolColor, height });
+    if (ownsAppearance) void runtime.declareOverlayAppearance(navigationId, { color, symbolColor, height });
+  }, [runtime, navigationId, ownsAppearance, color, symbolColor, height]);
+  useEffect(() => {
+    if (ownsAppearance)
       return () => {
-        void updateAppearance(navigationId, null);
+        void runtime.declareOverlayAppearance(navigationId, null);
       };
-    }
     return undefined;
-  }, [chrome.enhancement, color, symbolColor, height, updateAppearance, navigationId]);
+  }, [runtime, navigationId, ownsAppearance]);
   return (
     <ShellChromeContext.Provider value={headerMode === "fused" && ready}>
       <div

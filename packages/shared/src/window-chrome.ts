@@ -4,6 +4,7 @@ import { type Shell } from "./shell.ts";
 export type ChromeMode = "native-overlay" | "custom-controls" | "system-decorated";
 export interface DesktopBootstrap {
   protocolVersion: 1;
+  fixedAppearance?: "light" | "dark";
   shell: Extract<Shell, { kind: "desktop" }>;
   mode: ChromeMode;
 }
@@ -32,8 +33,7 @@ export interface WindowChromeBridge {
   readonly version: string;
   readonly bootstrap: DesktopBootstrap | null;
   subscribeWindowState(this: void, listener: (state: DesktopWindowState) => void): () => void;
-  updateOverlayAppearance(this: void, appearance: OverlayAppearance): Promise<OverlayAppearanceResult>;
-  declareOverlayAppearance?(this: void, declaration: OverlayAppearanceDeclaration): Promise<OverlayAppearanceResult>;
+  declareOverlayAppearance(this: void, declaration: OverlayAppearanceDeclaration): Promise<OverlayAppearanceResult>;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -45,9 +45,15 @@ function keysWithin(value: Record<string, unknown>, keys: string[]): boolean {
 
 /** A bounded, versioned static payload. Never includes transient window state or credentials. */
 export function parseDesktopBootstrap(value: unknown): DesktopBootstrap | null {
-  if (!record(value) || !keysWithin(value, ["protocolVersion", "shell", "mode"]) || value.protocolVersion !== 1)
+  if (
+    !record(value) ||
+    !keysWithin(value, ["protocolVersion", "shell", "mode", "fixedAppearance"]) ||
+    value.protocolVersion !== 1
+  )
     return null;
   if (value.mode !== "native-overlay" && value.mode !== "system-decorated") return null;
+  const fixedAppearance = value.fixedAppearance;
+  if (fixedAppearance !== undefined && fixedAppearance !== "light" && fixedAppearance !== "dark") return null;
   const shell = value.shell;
   if (!record(shell) || !keysWithin(shell, ["kind", "platform", "osVersion", "desktopEnv", "sessionType"])) return null;
   if (
@@ -62,6 +68,7 @@ export function parseDesktopBootstrap(value: unknown): DesktopBootstrap | null {
   return Object.freeze({
     protocolVersion: 1,
     mode: value.mode,
+    ...(fixedAppearance ? { fixedAppearance } : {}),
     shell: Object.freeze({
       kind: "desktop",
       platform: shell.platform,

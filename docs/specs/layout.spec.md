@@ -2,19 +2,19 @@
 
 ## Scope and ownership (LAY-01)
 
-This specification describes how application pages are laid out. An **app area** is a top-level division of the UI within the app shell. One area can contain every page in the application. When the design calls for multiple areas, the shell hosts the area switcher.
+The three layers describe how application pages are laid out. An **app area** is the part of the UI that the shell presents as a unit. The product design determines which pages belong together. The same features and routes can share one area or be grouped into several. When the UI offers a choice of areas, the shell hosts the area switcher.
 
-In the CRM demo, the single-area layout groups Leads, Deals and Sales report in one sidebar. The multi-area layout groups Leads and Deals under Sales and places the sales report under Reports. Switching layouts keeps the same pages and route paths.
+In the CRM demo, Leads, Deals and Sales report share one area in the single-area layout. In the multi-area layout, opening Deals from Leads stays within Sales. Selecting Reports in the shell switches areas and opens the sales report. Both layouts use the same three pages and route paths.
 
-| Layer           | React component                   | Responsibility                                                                                                                                |
-| --------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| App Root        | `AppRoot`                         | Provides the host environment, manages the runtime connection and composes global providers inside the root `Layout`.                         |
-| App Shell       | `BasicShell` or `NavigationShell` | Frames the current area and composes the window chrome. `NavigationShell` hosts the area switcher. Use `BasicShell` for a single-area layout. |
-| App Area Layout | `AppAreaLayout`                   | Arranges one area's main content, optional sidebar and optional auxiliary panel. The sidebar can host navigation within the area.             |
+| Layer           | Template implementation           | Responsibility                                                                                                                                            |
+| --------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App Root        | Root route `Layout` and `AppRoot` | The root document provides the title-bar fallback. `AppRoot` supplies the host environment, manages the runtime connection and composes global providers. |
+| App Shell       | `BasicShell` or `NavigationShell` | Frames the current area and integrates the desktop title bar. `NavigationShell` also hosts the area switcher.                                             |
+| App Area Layout | `AppAreaLayout` in the demo       | Organizes the pages, navigation and controls within the current area. Each product can reuse the template component, adapt it or supply its own layout.   |
 
-`areaId` is shared by routes in the same area and must be unique among layouts rendered on the same page. The caller stores any layout preferences that must survive unmounting. Application providers manage themes, sessions and organization state. If the URL identifies the current organization, use it as the source of truth.
+Application providers manage themes, sessions and organization state. If the URL identifies the current organization, use it as the source of truth.
 
-The shared application layer defines the shell and window-chrome interfaces. Each host supplies initial environment values and implements native window operations. The shell and host handle native button geometry, platform differences and window IPC for all areas.
+The shell handles the title bar's layout, drag regions and clearance for native controls. The host supplies the initial environment and implements native window operations and IPC. Pages can supply header content and actions through the layout.
 
 ## Environment and rendering (LAY-02)
 
@@ -31,20 +31,26 @@ Unknown routes return HTTP 404 under SSR. A static SPA hydrates the root route's
 
 ## Component contracts (LAY-03)
 
-| Component         | Contract                                                                                                                                                                                                      |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AppRoot`         | Requires `children`. Accepts initial `shell`, `mode`, `fullscreen` and `managersInitialState`. Components access the environment and window operations through `useAppEnvironment()` and `useWindowChrome()`. |
-| `BasicShell`      | Requires `children`. Accepts `headerMode`, `overlayAppearance`, and standalone title-bar `title` and `actions`.                                                                                               |
-| `NavigationShell` | Adds required `navigation` and optional `navigationLabel` (landmark name, default `App areas`). The narrow-screen trigger reads `Switch area`.                                                                |
-| `AppAreaLayout`   | Requires `areaId`, `title` and `children`. Accepts header `actions`, `sidebar` / `sidebarTitle`, `auxiliary` / `auxiliaryTitle`, and `contentAs`. Omitted panels occupy no column.                            |
+| Component         | Contract                                                                                                                                                                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AppRoot`         | Requires `children`. Accepts initial `shell`, `mode`, `fullscreen` and `managersInitialState`. Components observe the environment and window state through `useAppEnvironment()`.                                                                                             |
+| `BasicShell`      | Requires `children`. Accepts `headerMode`, `overlayAppearance`, and standalone title-bar `title` and `actions`.                                                                                                                                                               |
+| `NavigationShell` | Adds required `navigation` and optional `navigationLabel` (landmark name, default `App areas`). The narrow-screen trigger reads `Switch area`.                                                                                                                                |
+| `AppAreaLayout`   | Requires `areaId`, `title` and `children`. Accepts header `actions`, `sidebar` / `sidebarTitle`, `auxiliary` / `auxiliaryTitle`, and `contentAs`. Omitted panels occupy no column.                                                                                            |
+| `WindowLayout`    | Shares grid tracks between column headers and bodies. Define tracks with `columns` or style the grid with `gridClassName`.                                                                                                                                                    |
+| `WindowColumn`    | Supplies a `header` and a body for its children. Set `primary` on the visible main column. Use `inWindowBand={false}` for a custom drawer header below the top row. Nested body layouts do not participate in window dragging. Direct `strong` titles truncate in the header. |
 
-Navigation, sidebar and auxiliary panel states are independent. In controlled mode the callback requests a change and the caller supplies the new value. Uncontrolled state defaults to closed.
+Routes that share an `AppAreaLayout` use the same `areaId`. Layouts rendered together must have distinct IDs. The caller stores any layout preferences that must survive unmounting.
+
+The following state props apply to the area switcher in `NavigationShell` and the optional panels in `AppAreaLayout`. The CRM demo calls its auxiliary panel “Inspector”. Navigation, sidebar and auxiliary panel states are independent. In controlled mode the callback requests a change and the caller supplies the new value. Uncontrolled state defaults to closed.
 
 | Region               | Controlled value | Initial value           | Change callback          |
 | -------------------- | ---------------- | ----------------------- | ------------------------ |
 | Area switcher drawer | `navigationOpen` | `defaultNavigationOpen` | `onNavigationOpenChange` |
 | Area sidebar         | `sidebarOpen`    | `defaultSidebarOpen`    | `onSidebarOpenChange`    |
 | Area auxiliary panel | `auxiliaryOpen`  | `defaultAuxiliaryOpen`  | `onAuxiliaryOpenChange`  |
+
+The CRM demo controls its sidebar in both layouts. On mount it opens the sidebar when it fits inline and leaves it closed when it would appear as a drawer.
 
 Area panels (inline or drawer) and the area switcher drawer are non-modal. They allow focus to leave.
 
@@ -57,12 +63,14 @@ Each page supplies one `main` landmark. Set `contentAs="main"` on one area layou
 
 Both shells support `headerMode="fused"` (default) and `"standalone"`, independently of area count and viewport width.
 
-- **Standalone.** The shell renders a separate title bar above the area. Area headers below it do not drag the window.
-- **Fused.** An `AppAreaLayout` directly inside `.shell-body` can contribute its column headers to the window's top band. Each inline header retains its own content and background. Drawer headers do not drag the window.
+- **Standalone.** The shell renders the complete title bar above its children. A product can supply a custom area layout and use the shell’s title bar directly. The custom layout handles its own sizing, scrolling and main landmark. Headers below the title bar do not drag the window.
+- **Fused.** Render a `WindowLayout` directly inside either shell. Its optional `columns` prop accepts CSS grid tracks. When omitted, the layout leaves track sizing to the grid stylesheet or CSS auto-placement. Put a `WindowColumn` in each track and pass its top-row content as `header`. Mark one visible column `primary`. Each column shares its track with the content below it. `AppAreaLayout` uses this contract for its workspace and optional panels. Drawer headers do not drag the window.
+
+Native form controls, links and focusable controls in window headers exclude dragging. Empty toolbar space remains draggable. Mark custom pointer targets and portalled surfaces with `getInteractiveProps()`. Before hydration each fused header reserves the full native insets. After mount the layout subtracts the physical space outside each column using its rendered bounds, including after a position-only change. When the primary header is hidden or removed, secondary headers relinquish the window band. CSS reads the current native insets from WCO throughout.
 
 Use `getDragRegionProps()` for draggable surfaces and `getInteractiveProps()` for interactive content in a drag region. For a portal, apply the interactive marker to the rendered popup surface.
 
-Window Controls Overlay (WCO) reports physical coordinates. Each visible top column reserves the portion of the native controls' inset that overlaps it, accounting for LTR/RTL, open panels and navigation width. On macOS, when the navigation rail is narrower than the native button group, its links start below the safe band and the adjacent header reserves the remaining inset. Only the shell declares native overlay appearance for the layout. The host validates requests and applies supported values without measuring area DOM elements.
+Window Controls Overlay (WCO) reports physical coordinates. Each visible top column reserves the portion of the native controls' inset that overlaps it, accounting for LTR/RTL, open panels and navigation width. On macOS, when the navigation rail is narrower than the native button group, its links start below the safe band and the adjacent header reserves the remaining inset. Each window owns its shell, active area, local panel state and native overlay declaration. Set `overlayAppearance` on that shell to override selected title-bar fields. Omitted fields inherit the current defaults. Removing the declaration restores the latest theme defaults. The host validates requests and applies supported values without measuring area DOM elements.
 
 ## Persistent safety boundary (LAY-05)
 
@@ -73,7 +81,7 @@ The fallback reserves `--app-window-safe-top` in normal flow. This equals the to
 Inline CSS hides the fallback when the shell is a direct child of `.root-content`, carries `data-chrome-ready`, and provides a visible title bar in one of these forms:
 
 - **Standalone.** The required path is `.app-shell > .shell-titlebar > .shell-titlebar-content`.
-- **Fused.** The main column header is present in the directly composed area layout. `AppAreaLayout` sets `data-chrome-complete` from the shell context.
+- **Fused.** The shell body directly contains a `WindowLayout` whose grid contains a visible primary `WindowColumn`. Its header participates when the shell context enables fusion. These components render the structural markers in the initial HTML. Root CSS checks the complete path, including each ancestor’s `hidden` state.
 
 The shell sets `data-chrome-ready` when its diagnostic is absent or equals `host-mismatch`. An intervening wrapper breaks the required path. A portal outside the path cannot supply the title bar. If the last qualifying title bar or a participating ancestor is removed or marked `hidden`, CSS restores the fallback in the same style calculation. Code that hides the shell through custom CSS must also set `hidden` or remove its readiness marker.
 
@@ -81,7 +89,7 @@ The top band stays in the viewport while content scrolls. Refresh and renderer r
 
 ## Sizing, scrolling and responsiveness (LAY-06)
 
-**Panel placement.** Open area panels respond to the area's container width. Above a viewport width of `48em`, the area switcher is a persistent rail regardless of `navigationOpen`. At or below `48em`, that state controls drawer visibility. Changing width preserves the open states.
+**Panel placement.** `AppAreaLayout` places its open panels according to its container width. `NavigationShell` places the area switcher according to the viewport. Above a viewport width of `48em`, the area switcher is a persistent rail regardless of `navigationOpen`. At or below `48em`, that state controls drawer visibility. Changing width preserves the open states.
 
 | Area width                | Sidebar | Auxiliary panel |
 | ------------------------- | ------- | --------------- |
@@ -89,7 +97,7 @@ The top band stays in the viewport while content scrolls. Refresh and renderer r
 | Above 40rem through 60rem | Inline  | Drawer          |
 | Above 60rem               | Inline  | Inline          |
 
-Area drawers open below the main content header. In both header modes, the area switcher drawer aligns with the bottom of the first directly composed area's main header when one is present. Both follow the rendered header height when actions wrap. Crossing a breakpoint must preserve application state, including an unsaved draft in the current area. Layouts that use device safe-area insets as well as WCO must account for both.
+Area drawers open below the main content header. In both header modes, the area switcher drawer aligns with the bottom of the primary header of the first visible directly composed window layout. Without this anchor the drawer starts at the shell body’s top edge. Both follow the rendered header height when actions wrap. Crossing a breakpoint must preserve application state, including an unsaved draft in the current area. Layouts that use device safe-area insets as well as WCO must account for both.
 
 In fused mode, the persistent rail reserves the window header band for native-overlay windows. Other hosts reserve only the inset reported by WCO (zero in a regular browser tab). The navigation drawer and the rail below a standalone title bar need no additional band.
 
