@@ -1,14 +1,13 @@
 import { TextInput } from "@mantine/core";
-import { useState, type MouseEvent } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useOutletContext, useSearchParams } from "react-router";
 
 import { VisualSettings } from "~/components/appearance-settings";
-import { AppAreaLayout } from "~/layouts/app-area/app-area-layout";
-import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
 import { useAppEnvironment } from "~/managers/environment/hooks";
 
 import type { Route } from "./+types/home.route";
 import { DemoIcon } from "./demo-icon";
+import type { DraftState } from "./demo.layout";
+import { PipelineOverview } from "./pipeline-overview";
 import { Welcome } from "./welcome";
 
 import classes from "./home.route.module.css";
@@ -20,15 +19,8 @@ export const meta: Route.MetaFunction = () => [
 
 export default function Home() {
   const [params, setParams] = useSearchParams();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  function followSection(event: MouseEvent<HTMLAnchorElement>) {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const panel = event.currentTarget.closest("aside");
-    if (panel && getComputedStyle(panel).position === "absolute") setSidebarOpen(false);
-  }
-  const [note, setNote] = useState("");
+  const [note, setNote] = useOutletContext<DraftState>();
   const environment = useAppEnvironment();
-  const basic = params.get("shell") === "basic";
   const headerMode = params.get("header") === "standalone" ? "standalone" : "fused";
   function choose(key: string, value: string) {
     setParams((previous) => {
@@ -37,246 +29,88 @@ export default function Home() {
       return next;
     });
   }
-  const homeParams = new URLSearchParams(params);
-  homeParams.set("shell", "navigation");
-  const areaLayout = (
-    <AppAreaLayout
-      areaId="welcome"
-      contentAs="main"
-      title="Layout foundation"
-      sidebarOpen={sidebarOpen}
-      onSidebarOpenChange={setSidebarOpen}
-      sidebarTitle="Area navigation"
-      sidebar={
-        <div className={classes.demoPanel}>
-          <p className={classes.demoEyebrow}>On this page</p>
-          <a data-native-control="" onClick={followSection} href="#layout-settings">
-            <DemoIcon name="settings" />
-            Layout settings
-          </a>
-          <a data-native-control="" onClick={followSection} href="#scratchpad">
-            <DemoIcon name="file" />
-            Scratchpad
-          </a>
-          <a data-native-control="" onClick={followSection} href="#resources">
-            <DemoIcon name="book" />
-            Resources
-          </a>
-          <p className={classes.demoPanelHint}>
-            A little space for this area&apos;s navigation. Independent of the application rail.
+  return (
+    <div className={classes.layoutDemo}>
+      <header className={classes.pageHeader}>
+        <div>
+          <h1>Leads</h1>
+          <p className={classes.caption}>Sales pipeline overview</p>
+        </div>
+        <div className={classes.demoLaunch}>
+          <Link data-native-control="" to="/chat" target="_blank" rel="noopener">
+            Chat demo <DemoIcon name="arrow" />
+          </Link>
+
+          <Link data-native-control="" to="/settings" target="_blank" rel="noopener">
+            Settings <DemoIcon name="arrow" />
+          </Link>
+        </div>
+      </header>
+
+      <PipelineOverview />
+      <div className={classes.demoGrid}>
+        <section data-demo-draft className={classes.demoCard} aria-labelledby="scratchpad-title">
+          <div className={classes.demoCardHeading}>
+            <div className={classes.demoIconBox}>
+              <DemoIcon name="file" />
+            </div>
+            <div>
+              <h2 id="scratchpad-title">Meridian Labs</h2>
+              <p>Inbound lead · Product walkthrough requested</p>
+            </div>
+          </div>
+          <div>
+            <TextInput
+              id="scratchpad"
+              label="Follow-up note"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Start writing…"
+              aria-describedby="draft-hint"
+            />
+          </div>
+          <p id="draft-hint" className={classes.demoCardFootnote}>
+            Kept while you resize or change the title bar. Cleared on reload.
           </p>
-        </div>
-      }
-      auxiliaryTitle="Inspector"
-      auxiliary={
-        <div className={classes.demoPanel}>
-          <p className={classes.demoEyebrow}>Current workspace</p>
-          <dl className={classes.demoProperties}>
-            <div>
-              <dt>App shell</dt>
-              <dd>{basic ? "Basic" : "Navigation"}</dd>
+        </section>
+        <section
+          tabIndex={-1}
+          id="layout-settings"
+          className={classes.demoCard}
+          aria-labelledby="layout-settings-title"
+        >
+          <div className={classes.demoCardHeading}>
+            <div className={classes.demoIconBox}>
+              <DemoIcon name="settings" />
             </div>
             <div>
-              <dt>Title bar</dt>
-              <dd>{headerMode === "fused" ? "Fused" : "Standalone"}</dd>
+              <h2 id="layout-settings-title">Layout settings</h2>
             </div>
-            <div>
-              <dt>Host</dt>
-              <dd>{environment.shell.kind}</dd>
-            </div>
-          </dl>
-          <p className={classes.demoPanelHint}>Keep supporting details here while the main workspace stays focused.</p>
-        </div>
-      }
-    >
-      <div className={classes.layoutDemo}>
-        <div className={classes.demoBreadcrumb}>
-          <span>Workspace</span>
-          <span aria-hidden="true">/</span>
-          <span>Overview</span>
-        </div>
-        <header className={classes.demoIntro}>
-          <div className={classes.demoEyebrow}>
-            <DemoIcon name="layers" />
-            Your starting point
           </div>
-          <h1>One application, three layout layers</h1>
-          <p>A quiet workspace, ready to make your own. Explore the layout, open a panel, and find the right fit.</p>
-          <span className={classes.demoBadge}>
-            <span className={classes.demoStatusDot} aria-hidden="true" />
-            Host: {environment.shell.kind}.
-          </span>
-          <div className={classes.demoLaunch}>
-            <Link data-native-control="" to="/chat" target="_blank" rel="noopener">
-              Chat demo <DemoIcon name="arrow" />
-            </Link>
-            {basic && (
-              <Link data-native-control="" to="/settings" target="_blank" rel="noopener">
-                Settings <DemoIcon name="arrow" />
-              </Link>
-            )}
+          <div className={classes.layoutDemoControls} data-demo-controls>
+            <label className={classes.nativeField}>
+              Title bar
+              <select
+                data-native-control=""
+                data-demo-header
+                value={headerMode}
+                onChange={(event) => choose("header", event.target.value)}
+              >
+                <option value="fused">Fused</option>
+                <option value="standalone">Standalone</option>
+              </select>
+            </label>
           </div>
-        </header>
-
-        <VisualSettings />
-        <div className={classes.demoGrid}>
-          <section
-            tabIndex={-1}
-            id="layout-settings"
-            className={classes.demoCard}
-            aria-labelledby="layout-settings-title"
-          >
-            <div className={classes.demoCardHeading}>
-              <div className={classes.demoIconBox}>
-                <DemoIcon name="settings" />
-              </div>
-              <div>
-                <h2 id="layout-settings-title">Make room for your work</h2>
-                <p>Two small choices. A different workspace.</p>
-              </div>
-            </div>
-            <div className={classes.layoutDemoControls} data-demo-controls>
-              <label className={classes.nativeField}>
-                App shell
-                <select
-                  data-native-control=""
-                  data-demo-shell
-                  value={basic ? "basic" : "navigation"}
-                  onChange={(event) => choose("shell", event.target.value)}
-                >
-                  <option value="navigation">Navigation</option>
-                  <option value="basic">Basic</option>
-                </select>
-              </label>
-              <label className={classes.nativeField}>
-                Title bar
-                <select
-                  data-native-control=""
-                  data-demo-header
-                  value={headerMode}
-                  onChange={(event) => choose("header", event.target.value)}
-                >
-                  <option value="fused">Fused</option>
-                  <option value="standalone">Standalone</option>
-                </select>
-              </label>
-            </div>
-            <div
-              className={classes.demoLayoutPreview}
-              data-basic={basic}
-              data-standalone={headerMode === "standalone"}
-              aria-hidden="true"
-            >
-              <div className={classes.demoPreviewTitle}>
-                <i />
-                <i />
-                <i />
-              </div>
-              <div className={classes.demoPreviewRail}>
-                <i />
-                <i />
-                <i />
-              </div>
-              <div className={classes.demoPreviewBody}>
-                <span />
-                <div>
-                  <i />
-                  <i />
-                </div>
-                <span />
-              </div>
-              <span className={classes.demoPreviewCaption}>
-                {basic ? "Basic shell" : "Navigation shell"} · {headerMode}
-              </span>
-            </div>
-            <p className={classes.demoCardFootnote}>Resize the window. Your workspace adapts with you.</p>
-          </section>
-
-          <section data-demo-draft className={classes.demoCard} aria-labelledby="scratchpad-title">
-            <div className={classes.demoCardHeading}>
-              <div className={classes.demoIconBox}>
-                <DemoIcon name="file" />
-              </div>
-              <div>
-                <h2 id="scratchpad-title">A place to start</h2>
-                <p>Try a thought, a task, or your next big idea.</p>
-              </div>
-            </div>
-            <div>
-              <TextInput
-                id="scratchpad"
-                label="Area draft"
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="What would you like to build?"
-                aria-describedby="draft-hint"
-              />
-            </div>
-            <div className={classes.demoNotePreview}>
-              <div className={classes.demoNoteMeta}>
-                <span>SCRATCHPAD</span>
-                <span className={classes.demoBadge}>Local draft</span>
-              </div>
-              <p className={`${classes.demoNoteText}${note ? "" : ` ${classes.demoNoteEmpty}`}`}>
-                {note || "Every great workspace starts with a little space to think."}
-              </p>
-              <div className={classes.demoNoteLines} aria-hidden="true">
-                <i />
-                <i />
-              </div>
-            </div>
-            <p id="draft-hint" className={classes.demoCardFootnote}>
-              Kept while you resize or change the title bar. Cleared on reload.
-            </p>
-          </section>
-        </div>
-
-        <Welcome />
-        <footer className={classes.demoFooter}>
-          <span>Built to feel at home, on web and desktop.</span>
-          <span>Layout foundation</span>
-        </footer>
+          <p className={classes.caption}>Host: {environment.shell.kind}.</p>
+        </section>
       </div>
-    </AppAreaLayout>
-  );
-  return basic ? (
-    <BasicShell title="Layout foundation" headerMode={headerMode}>
-      {areaLayout}
-    </BasicShell>
-  ) : (
-    <NavigationShell
-      title="Layout foundation"
-      headerMode={headerMode}
-      navigation={
-        <>
-          <span className={classes.demoBrand} title="Layout foundation" aria-hidden="true">
-            <DemoIcon name="layers" />
-          </span>
-          <Link data-native-control="" to={{ search: `?${homeParams.toString()}` }} aria-current="page">
-            <DemoIcon name="home" />
-            <span>Home</span>
-          </Link>
-          <a data-native-control="" href="https://reactrouter.com/docs">
-            <DemoIcon name="book" />
-            <span>Docs</span>
-          </a>
-          <span className={classes.demoRailFooter} aria-hidden="true">
-            LF
-          </span>
-          <Link
-            data-native-control=""
-            to="/settings"
-            target="_blank"
-            rel="noopener"
-            title="Open settings in a new window"
-          >
-            <DemoIcon name="settings" />
-            <span>Settings</span>
-          </Link>
-        </>
-      }
-    >
-      {areaLayout}
-    </NavigationShell>
+
+      <VisualSettings />
+      <Welcome />
+      <footer className={classes.demoFooter}>
+        <span>Built to feel at home, on web and desktop.</span>
+        <span>Layout foundation</span>
+      </footer>
+    </div>
   );
 }
