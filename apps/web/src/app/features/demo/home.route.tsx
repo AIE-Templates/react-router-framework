@@ -3,8 +3,8 @@ import { useState, type MouseEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { VisualSettings } from "~/components/appearance-settings";
+import { AppAreaLayout } from "~/layouts/app-area/app-area-layout";
 import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
-import { ModuleLayout } from "~/layouts/module/module-layout";
 import { useAppEnvironment } from "~/managers/environment/hooks";
 
 import type { Route } from "./+types/home.route";
@@ -39,14 +39,14 @@ export default function Home() {
   }
   const homeParams = new URLSearchParams(params);
   homeParams.set("shell", "navigation");
-  const module = (
-    <ModuleLayout
-      moduleId="welcome"
+  const areaLayout = (
+    <AppAreaLayout
+      areaId="welcome"
       contentAs="main"
       title="Layout foundation"
       sidebarOpen={sidebarOpen}
       onSidebarOpenChange={setSidebarOpen}
-      sidebarTitle="Module navigation"
+      sidebarTitle="Area navigation"
       sidebar={
         <div className={classes.demoPanel}>
           <p className={classes.demoEyebrow}>On this page</p>
@@ -63,7 +63,7 @@ export default function Home() {
             Resources
           </a>
           <p className={classes.demoPanelHint}>
-            A little space for your module&apos;s navigation. Independent of the application rail.
+            A little space for this area&apos;s navigation. Independent of the application rail.
           </p>
         </div>
       }
@@ -205,7 +205,7 @@ export default function Home() {
             <div>
               <TextInput
                 id="scratchpad"
-                label="Module draft"
+                label="Area draft"
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 placeholder="What would you like to build?"
@@ -237,11 +237,11 @@ export default function Home() {
           <span>Layout foundation</span>
         </footer>
       </div>
-    </ModuleLayout>
+    </AppAreaLayout>
   );
   return basic ? (
     <BasicShell title="Layout foundation" headerMode={headerMode}>
-      {module}
+      {areaLayout}
     </BasicShell>
   ) : (
     <NavigationShell
@@ -276,7 +276,7 @@ export default function Home() {
         </>
       }
     >
-      {module}
+      {areaLayout}
     </NavigationShell>
   );
 }
