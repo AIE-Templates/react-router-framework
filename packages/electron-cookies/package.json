@@ -29,7 +29,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:e2e": "tsc -p tsconfig.e2e.json && rolldown e2e/app/preload.ts --format cjs --external electron --file dist/e2e/fixture/e2e/app/preload.cjs",
-    "test:e2e": "pnpm build:e2e && playwright test",
+    "test:e2e": "pnpm build && pnpm build:e2e && playwright test",
     "typecheck": "tsc"
   },
   "devDependencies": {
