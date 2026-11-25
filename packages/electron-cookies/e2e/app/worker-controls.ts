@@ -39,6 +39,7 @@ export function workerControls(session: Session, profile: string) {
 
   const wakeAttempts: string[] = [];
   let wakeCount = 0;
+  let failedWakes = 0;
   function running() {
     // Electron 45 supplies the version ID as the record key.
     return Object.entries(serviceWorkers.getAllRunning()).map(([id, { scope, scriptUrl }]) => ({
@@ -85,9 +86,14 @@ export function workerControls(session: Session, profile: string) {
         async startWorkerForScope(scope) {
           wakeAttempts.push(scope);
           await cross("wake");
-          const worker = await serviceWorkers.startWorkerForScope(scope);
-          wakeCount++;
-          return worker;
+          try {
+            const worker = await serviceWorkers.startWorkerForScope(scope);
+            wakeCount++;
+            return worker;
+          } catch (error) {
+            failedWakes++;
+            throw error;
+          }
         },
       },
     };
@@ -107,6 +113,9 @@ export function workerControls(session: Session, profile: string) {
         return { wakes: wakeCount, pending };
       },
       wakeAttempts,
+      get failedWakes() {
+        return failedWakes;
+      },
       observedWrites,
       running,
       arm(point: WorkerGate) {

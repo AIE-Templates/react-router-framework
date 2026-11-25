@@ -140,6 +140,70 @@ test("SW-09 | unregister drops A's queued events; B keeps its first subscription
   expect(await command(page, { kind: "events" })).toMatchObject([{ version: "B", changed: [{ value: "first-B" }] }]);
 });
 
+test("SW-12a | external unregister shares one wake schedule and the replacement receives the next change", async ({
+  fixture,
+}) => {
+  const { page, app } = fixture;
+  const registration = await register(page);
+  await windowSubscriptions(page, "subscribe", "outage");
+  const hints = await index(fixture);
+  expect(hints).toMatchObject([{ scope: registration.scope, name: "outage", eligible: true }]);
+  // The fixture page is outside /area/. Remove its registration in Chromium without calling the page shim.
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("ServiceWorker.enable");
+    await cdp.send("ServiceWorker.unregister", { scopeURL: registration.scope });
+    await expect
+      .poll(() =>
+        page.evaluate(async (url) => (await navigator.serviceWorker.getRegistration(url))?.scope, registration.scope),
+      )
+      .toBeUndefined();
+  } finally {
+    await cdp.detach();
+  }
+  expect(await index(fixture)).toEqual(hints);
+
+  async function burstDuringWake(values: string[]) {
+    await arm(fixture, "wake");
+    try {
+      await write(page, "outage", values[0]);
+      await reached(fixture);
+      await page.evaluate(async (rest) => {
+        for (const value of rest) await cookieStore.set("outage", value);
+      }, values.slice(1));
+      // Main has seen every write in this burst before the native wake can settle.
+      await expect
+        .poll(() =>
+          app.evaluate((_e, length) => globalThis.cookieFixture.workers.observedWrites.slice(-length), values.length),
+        )
+        .toEqual(values);
+    } finally {
+      await release(fixture);
+    }
+  }
+
+  await burstDuringWake(Array.from({ length: 17 }, (_, i) => "offline-" + i));
+  await expect.poll(() => app.evaluate(() => globalThis.cookieFixture.workers.failedWakes)).toBe(4);
+  expect(await app.evaluate(() => globalThis.cookieFixture.workers.wakeAttempts.length)).toBe(4);
+  expect(await index(fixture)).toEqual(hints);
+
+  await register(page, "B");
+  expect(await windowSubscriptions(page, "list")).toEqual([]);
+  await windowSubscriptions(page, "subscribe", "outage");
+  await observe(page);
+  await write(page, "outage", "recovered");
+  expect(await waitForChanges(page, 1)).toMatchObject([{ version: "B", changed: [{ value: "recovered" }] }]);
+  expect(await app.evaluate(() => globalThis.cookieFixture.workers.wakeAttempts.length)).toBe(5);
+
+  const burst = Array.from({ length: 140 }, (_, i) => "burst-" + i);
+  await burstDuringWake(burst);
+  await page.waitForFunction((last) => window.swChanges.at(-1)?.changed[0].value === last, burst.at(-1));
+  expect(await page.evaluate(() => window.swChanges.map((event) => event.changed[0].value))).toEqual([
+    "recovered",
+    ...burst.slice(-128),
+  ]);
+});
+
 test("SW-09 | eligibility follows main's changed callback when a pre-subscription notification arrives late", async ({
   fixture,
 }) => {

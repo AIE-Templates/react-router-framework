@@ -30,6 +30,7 @@ export function installCookieIpc({
 }: CookieIpcOptions): void {
   const channels = cookieIpcChannels(prefix);
   const registrations = new Map<WebFrameMain, { creationUrl: string; documentId: string; sender: WebContents }>();
+  const observedSenders = new WeakSet<WebContents>();
   let cooldownUntil = 0;
   let cooldownGeneration = -1;
   const snapshots = createCookieSnapshots(script);
@@ -104,10 +105,22 @@ export function installCookieIpc({
     ),
   );
   ipcMain.on(channels.register, (event, url: unknown, documentId: unknown) => {
-    const frame = event.senderFrame;
-    if (frame && trusted(frame, event.sender, url) && typeof documentId === "string" && documentId) {
-      registrations.set(frame, { creationUrl: url, documentId, sender: event.sender });
+    const { sender, senderFrame: frame } = event;
+    if (!frame || !trusted(frame, sender, url) || frame.detached || typeof documentId !== "string" || !documentId)
+      return;
+    if (!observedSenders.has(sender)) {
+      observedSenders.add(sender);
+      sender.once("destroyed", () => {
+        for (const [registered, owner] of registrations) {
+          if (owner.sender === sender) registrations.delete(registered);
+        }
+      });
     }
+    // A document can disappear between cookie changes, including during a subframe navigation.
+    for (const registered of registrations.keys()) {
+      if (registered.isDestroyed() || registered.detached) registrations.delete(registered);
+    }
+    registrations.set(frame, { creationUrl: url, documentId, sender });
   });
   changes.on("changed", (_event, cookie, cause) => {
     if (cookie.domain?.replace(/^\./, "") !== script.storageHost) return;

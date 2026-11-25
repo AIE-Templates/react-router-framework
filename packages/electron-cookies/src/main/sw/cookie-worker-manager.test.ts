@@ -538,12 +538,13 @@ describe("registration changes during delivery", () => {
 });
 
 describe("active worker delivery and event lifetime", () => {
-  it("SW-12a: wakes immediately and retries at 100/400/1600 ms, warns once, then accepts the next event", async () => {
+  it("SW-12a: queued changes share one retry schedule and only the next change wakes the recovered scope", async () => {
     const h = setup([seed()]);
     for (let i = 0; i < 4; i++) h.startWorkerForScope.mockRejectedValueOnce(new Error("busy"));
-    h.change();
+    h.change("initial");
     for (const [i, delay] of [100, 400, 1_600].entries()) {
       await tick(delay - 1);
+      h.change("during backoff " + i);
       expect(h.startWorkerForScope).toHaveBeenCalledTimes(i + 1);
       await tick(1);
       expect(h.startWorkerForScope).toHaveBeenCalledTimes(i + 2);
@@ -551,9 +552,27 @@ describe("active worker delivery and event lifetime", () => {
     expect(h.logger.warn).toHaveBeenCalledExactlyOnceWith({ scope }, expect.stringContaining("three retries"));
     await tick(60_000);
     expect(h.startWorkerForScope).toHaveBeenCalledTimes(4);
-    h.change();
+    expect(h.disk()).toEqual([seed()]);
+    h.change("after recovery");
     await tick();
-    expect(h.worker.send).toHaveBeenCalledTimes(1);
+    expect(h.worker.send.mock.calls.map(([event]) => event.changed[0].value)).toEqual(["after recovery"]);
+    await h.manager.quitAll();
+  });
+
+  it("SW-12a: a recovering scope delivers only its newest 128 queued changes in order and warns once on overflow", async () => {
+    const h = setup([seed()]);
+    const retry = deferred<WorkerPort<Item>>();
+    h.startWorkerForScope.mockRejectedValueOnce(new Error("busy")).mockReturnValueOnce(retry.promise);
+    h.worker.send.mockImplementation(({ eventId }) => h.manager.ack({ versionId: h.worker.versionId, eventId }));
+    h.change("initial");
+    await tick(100);
+    const values = Array.from({ length: 160 }, (_, i) => String(i));
+    for (const value of values) h.change(value);
+    expect(h.logger.warn).toHaveBeenCalledExactlyOnceWith({ scope }, expect.stringContaining("queue"));
+    retry.resolve(h.worker);
+    await tick();
+    expect(h.worker.send.mock.calls.map(([event]) => event.changed[0].value)).toEqual(values.slice(-128));
+    expect(h.logger.warn).toHaveBeenCalledOnce();
     await h.manager.quitAll();
   });
 
