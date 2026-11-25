@@ -1,6 +1,13 @@
 import { writeSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  createCookieJar,
+  flushForQuit,
+  installCookieIpc,
+  installCookieWorkerIpc,
+  type CookieIpcOptions,
+} from "@repo/electron-cookies/main";
 import type { PortFetch } from "@repo/port-fetch";
 import {
   DESKTOP_PREFS_IPC,
@@ -9,7 +16,7 @@ import {
   type DesktopRequest,
   type VisualThemeSnapshot,
 } from "@repo/shared";
-import { app, type BrowserWindow, dialog, nativeTheme, protocol, safeStorage, session } from "electron";
+import { app, type BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session } from "electron";
 
 import type { DebugEnv } from "~/debug-env.contract.ts";
 // These three are replaced per build profile (vite.base.config.ts): import them by exactly these names.
@@ -17,10 +24,9 @@ import { readDebugEnv, utilityDebugEnv } from "~/debug-env.ts";
 import { selectMainRun } from "~/diagnostics/entry.ts";
 import { developmentHost } from "~/main/dev-host.ts";
 
-import { APP_ORIGIN, APP_SCHEME, isAppUrl } from "./main/app-url.ts";
+import { APP_HOST, APP_ORIGIN, APP_SCHEME, COOKIE_JAR_ORIGIN, isAppUrl } from "./main/app-url.ts";
 import { type BootProfile, createBootProfile } from "./main/boot-profile.ts";
 import { resolveChromePolicy } from "./main/chrome-policy.ts";
-import { COOKIE_JAR_ORIGIN, createCookieJar, flushForQuit } from "./main/cookie-jar.ts";
 import {
   checkCookieKeyProbe,
   COOKIE_KEY_PROBE_TEXT,
@@ -29,6 +35,7 @@ import {
   cookieKeyWriterCrashHandler,
   storeCookieKeyFirst,
 } from "./main/cookie-key.ts";
+import { cookieWakeStorage } from "./main/cookie-wake-storage.ts";
 import { createLogger, type Logger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
@@ -172,6 +179,7 @@ function start(): void {
       privileges: {
         standard: true,
         secure: true,
+        allowServiceWorkers: true,
         supportFetchAPI: true,
         stream: true,
         corsEnabled: true,
@@ -301,10 +309,11 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
   const chromePolicy = currentChromePolicy();
   const bootstrap: DesktopBootstrap = { protocolVersion: 1, shell, mode: chromePolicy.resolvedMode };
   if (chromePolicy.fallbackReason) log.info({ reason: chromePolicy.fallbackReason }, "using system window decoration");
+  const preloadPath = join(__dirname, "preload.cjs");
   const registry = createWindowRegistry({
     session: appSession,
     chrome: { bootstrap, currentPolicy: currentChromePolicy, visualThemeStore },
-    preloadPath: join(__dirname, "preload.cjs"),
+    preloadPath,
     appVersion: app.getVersion(),
     log,
     profile,
@@ -371,21 +380,43 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     });
     upstream = server.fetch;
   }
+  const cookies = createCookieJar({
+    store: appSession.cookies,
+    scheme: APP_SCHEME,
+    host: APP_HOST,
+    origin: APP_ORIGIN,
+    storageOrigin: COOKIE_JAR_ORIGIN,
+    upstreamHost: new URL(internalOrigin).hostname,
+    fromPartition: (partition) => session.fromPartition(partition),
+    installPermissionPolicy: (probe) => installPermissionPolicy(probe, log),
+    log,
+  });
+  const cookieIpc: CookieIpcOptions = {
+    jar: cookies,
+    prefix: "desktop",
+    ipcMain,
+    changes: appSession.cookies,
+    ownsSender: (sender) => registry.byContentsId(sender.id)?.webContents === sender && sender.session === appSession,
+    isAppUrl,
+    log,
+  };
+  installCookieIpc(cookieIpc);
+  const cookieWorkers = installCookieWorkerIpc({
+    ...cookieIpc,
+    serviceWorkers: appSession.serviceWorkers,
+    storage: cookieWakeStorage(app.getPath("userData"), log),
+  });
+  appSession.registerPreloadScript({ type: "service-worker", filePath: preloadPath });
   registerAppProtocol(appSession, {
     upstream,
     internalOrigin,
     desktop,
-    // A `Domain` attribute may name the jar's host or the host the server sees (the dev server's).
-    cookies: createCookieJar({
-      store: appSession.cookies,
-      hosts: [new URL(COOKIE_JAR_ORIGIN).hostname, new URL(internalOrigin).hostname],
-      log,
-    }),
+    cookies,
     log,
     profile,
   });
   if (dev) {
-    log.info({ devServerUrl: dev.serverUrl }, "development: forwarding app:// to react-router dev");
+    log.info({ devServerUrl: dev.serverUrl }, `development: forwarding ${APP_SCHEME}:// to react-router dev`);
     dev.onReloadRequest(() => {
       for (const win of registry.windows()) win.webContents.reload();
     });
@@ -417,7 +448,11 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     event.preventDefault();
     if (quitting) return;
     quitting = true;
-    void Promise.allSettled([server?.shutdown(), flushForQuit(appSession.cookies, log)]).finally(() => {
+    void Promise.allSettled([
+      cookieWorkers.quitAll(),
+      server?.shutdown(),
+      flushForQuit(appSession.cookies, log),
+    ]).finally(() => {
       app.off("will-quit", finishQuit);
       app.quit();
     });

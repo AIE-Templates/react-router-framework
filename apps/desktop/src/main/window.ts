@@ -106,7 +106,7 @@ function nativeOptions({ session, preloadPath, chrome, appVersion, fixedAppearan
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
+      nodeIntegrationInSubFrames: true,
       webviewTag: false,
       // Release builds have no DevTools. Every window gets these options, renderer-opened ones too.
       ...(DESKTOP_BUILD_PROFILE === "release" ? { devTools: false } : {}),

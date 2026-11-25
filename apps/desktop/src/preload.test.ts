@@ -3,12 +3,18 @@ import { DESKTOP_CHROME_IPC, DESKTOP_PREFS_IPC } from "@repo/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const wire = vi.hoisted(() => ({
+  workerCookies: vi.fn<() => void>(),
+  cookies: vi.fn<() => void>(),
   sendSync: vi.fn<() => unknown>(() => ({ revision: 0, preference: "auto" })),
   expose: vi.fn<(key: string, bridge: DesktopBridge) => void>(),
   invoke: vi.fn<(channel: string, payload: unknown) => Promise<unknown>>(),
   on: vi.fn<(channel: string, callback: (event: unknown, payload: unknown) => void) => void>(),
   off: vi.fn<(channel: string, callback: (event: unknown, payload: unknown) => void) => void>(),
   send: vi.fn<(channel: string, payload?: unknown) => void>(),
+}));
+vi.mock("@repo/electron-cookies/preload", () => ({
+  installWindowCookiePreload: wire.cookies,
+  installServiceWorkerCookiePreload: wire.workerCookies,
 }));
 vi.mock("electron", () => ({ contextBridge: { exposeInMainWorld: wire.expose }, ipcRenderer: wire }));
 
@@ -27,6 +33,7 @@ const state = (revision: number): DesktopWindowState => ({
 });
 async function load() {
   await import("./preload.ts");
+  expect(wire.cookies).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ frame: window, isMainFrame: true }));
   return wire.expose.mock.calls[0][1];
 }
 
@@ -170,6 +177,7 @@ it("does not expose the bridge, register teardown or announce paint in a sub-fra
   const paint = vi.fn<() => void>();
   vi.stubGlobal("requestAnimationFrame", paint);
   await import("./preload.ts");
+  expect(wire.cookies).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ frame: window, isMainFrame: false }));
   expect(wire.sendSync).not.toHaveBeenCalled();
   expect(wire.expose).not.toHaveBeenCalled();
   expect(window.addEventListener).not.toHaveBeenCalled();
@@ -238,4 +246,23 @@ it("preserves the bridge and can reconcile when the document seed is unavailable
   const stop = bridge.subscribeVisualTheme(listener);
   await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ revision: 3, preference: "dark" }));
   stop();
+});
+
+it("runs only the worker cookie installer without window globals in a service-worker preload", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "type");
+  Object.defineProperty(process, "type", { configurable: true, value: "service-worker" });
+  vi.stubGlobal("window", undefined);
+  try {
+    await import("./preload.ts");
+    expect(wire.workerCookies).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ appOrigin: "app://app", ipcRenderer: wire }),
+    );
+    expect(wire.cookies).not.toHaveBeenCalled();
+    expect(wire.expose).not.toHaveBeenCalled();
+    expect(wire.sendSync).not.toHaveBeenCalled();
+    expect(wire.send).not.toHaveBeenCalled();
+  } finally {
+    if (descriptor) Object.defineProperty(process, "type", descriptor);
+    else Reflect.deleteProperty(process, "type");
+  }
 });

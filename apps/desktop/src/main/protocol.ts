@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 
+import { type CookieJar, CookieStoreTimeoutError } from "@repo/electron-cookies/main";
 import { type PortFetch, PortClosedError } from "@repo/port-fetch";
 import type { DesktopRequest } from "@repo/shared";
 import type { WebRequestFilter } from "electron";
 
 import { APP_ORIGIN, APP_SCHEME } from "./app-url.ts";
 import type { BootProfile } from "./boot-profile.ts";
-import { type CookieJar, CookieStoreTimeoutError } from "./cookie-jar.ts";
 import { safeUrl } from "./log-url.ts";
 import type { Logger } from "./log.ts";
 import { failureStatus, shapeRequestHeaders, shapeResponseHeaders, toInternalUrl } from "./mapping.ts";
@@ -16,7 +16,9 @@ export const REQUEST_HEADERS_TIMEOUT_MS = 60_000;
 
 /** The part of Electron's `Session` the handler needs (structural, so tests can pass a fake). */
 export interface ProtocolSession {
-  protocol: { handle(scheme: string, handler: (request: Request) => Promise<Response>): void };
+  protocol: {
+    handle(scheme: string, handler: (request: Request & { initiatorOrigin?: string }) => Promise<Response>): void;
+  };
   webRequest: {
     onBeforeSendHeaders(
       filter: WebRequestFilter,
@@ -38,7 +40,7 @@ export interface AppProtocolOptions {
   /** The window's current title bar mode, full-screen state and preferences, injected per request. */
   desktop: (contentsId?: number) => DesktopRequest;
   /** The server's cookies, which Chromium does not keep for `app://` (HOST-09). */
-  cookies: CookieJar;
+  cookies: Pick<CookieJar, "cookieHeader" | "storeResponseCookies">;
   log: Logger;
   profile: BootProfile;
 }
@@ -105,7 +107,8 @@ export function registerAppProtocol(
         desktop: desktop(entry?.contentsId),
         internalOrigin,
       });
-      const cookie = await cookies.cookieHeader(pathname, signal);
+      const cookieRequest = { path: pathname, headers: request.headers, initiatorOrigin: request.initiatorOrigin };
+      const cookie = await cookies.cookieHeader(cookieRequest, signal);
       signal.throwIfAborted();
       if (cookie !== undefined) headers.set("cookie", cookie);
       const forwarded = new Request(internalUrl, {
@@ -118,7 +121,7 @@ export function registerAppProtocol(
       const isDocument = request.method === "GET" && (request.headers.get("accept") ?? "").includes("text/html");
       const response = await upstream(forwarded);
       if (isDocument) profile.mark("first-byte");
-      await cookies.storeResponseCookies(response.headers, pathname);
+      await cookies.storeResponseCookies(response.headers, cookieRequest);
       if (signal.aborted) {
         // An upstream can finish despite cancellation, including while cookies were being stored.
         void response.body?.cancel().catch(() => {});
@@ -133,7 +136,10 @@ export function registerAppProtocol(
       if (signal.aborted) return Response.error();
       const { status, message } = failureStatus(err);
       // Never the full URL: query strings can carry tokens.
-      log.error({ err, method: request.method, path: safeUrl(request.url, "path"), status }, "app:// request failed");
+      log.error(
+        { err, method: request.method, path: safeUrl(request.url, "path"), status },
+        `${APP_SCHEME}:// request failed`,
+      );
       // Let Electron report a failed main-document transport to the owning window's recovery.
       // An ordinary HTTP error from the host is still returned intact above.
       // A cookie store that did not answer is as transient: the request never left this process.

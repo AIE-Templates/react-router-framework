@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { globSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { ElectronApplication, Page } from "@playwright/test";
 
 import { expect, targetProcesses, quit, test, waitForApp } from "./desktop.ts";
@@ -6,7 +10,7 @@ import { expect, targetProcesses, quit, test, waitForApp } from "./desktop.ts";
 // persistent and session-only, plus localStorage and sessionStorage, observed right away, across a
 // reload, a closed and reopened window (macOS keeps the app running), a full quit and relaunch and a
 // hard kill on the same user data directory. Server cookies go through the main process's jar
-// (src/main/cookie-jar.ts, spec HOST-09). The /__e2e/cookies endpoints exist only with DESKTOP_E2E=1
+// (HOST-09). The /__e2e/cookies endpoints exist only with DESKTOP_E2E=1
 // (src/diagnostics/e2e/routes.ts).
 
 async function writeAll(page: Page): Promise<void> {
@@ -105,26 +109,15 @@ async function serverCookies(page: Page, path = "/__e2e/cookies"): Promise<Recor
   return cookiesOf(await page.evaluate(async (url) => (await fetch(url)).json(), path));
 }
 
-// Page scripts (2026-10-28, Electron 45): `app` is not a cookieable scheme. Chromium keeps a fixed
-// list of schemes that may hold cookies (http, https, ws, wss, optionally file); registering `app` as
-// standard and secure does not add it, and Electron has no API that does (electron/electron#27981,
-// open). So under app://app `document.cookie` writes are dropped, and the store refuses an app://
-// URL. This test pins that, so a change in Electron shows up here.
-//
-// Server cookies: Chromium ignores `Set-Cookie` on a `protocol.handle` response and sends no
-// `Cookie` to one, whatever the scheme. The main process keeps them instead (HOST-09): it stores each
-// response's `Set-Cookie` in the session's cookie store under https://app.desktop and adds a `Cookie`
-// header to later requests. Header cookies below reach the server; script cookies never do.
-const HEADER_COOKIES = { "e2e-header-persistent": "hp", "e2e-header-session": "hs" };
+const PERSISTENT_SCRIPT = { "e2e-script-expires": "se", "e2e-script-max-age": "sm" };
+const SCRIPT_COOKIES = { ...PERSISTENT_SCRIPT, "e2e-script-session": "ss" };
+const ALL_COOKIES = { ...SCRIPT_COOKIES, "e2e-header-persistent": "hp", "e2e-header-session": "hs" };
 
-test("page scripts have no cookies under app://: document.cookie writes are dropped", async ({
-  desktop: { app, page },
-}) => {
+test("page script writes under app:// share the jar with subsequent requests", async ({ desktop: { app, page } }) => {
   await writeAll(page);
   const observed = await observe(page);
-  expect(observed.script).toEqual({});
-  expect(Object.keys(observed.server).filter((name) => name.startsWith("e2e-script-"))).toEqual([]);
-  expect((await storedCookies(app)).filter(({ name }) => name.startsWith("e2e-script-"))).toEqual([]);
+  expect(observed.script).toEqual(SCRIPT_COOKIES);
+  expect(observed.server).toEqual(ALL_COOKIES);
   const direct = await app.evaluate(async ({ session }) =>
     session
       .fromPartition("persist:app")
@@ -141,19 +134,27 @@ test("a server's Set-Cookie round-trips through the main process to later reques
   desktop: { app, page },
 }) => {
   await writeAll(page);
-  expect(await observe(page)).toEqual({ script: {}, server: HEADER_COOKIES, local: "local", session: "session" });
-  expect(await documentCookies(page)).toEqual(HEADER_COOKIES);
+  expect(await observe(page)).toEqual({
+    script: SCRIPT_COOKIES,
+    server: ALL_COOKIES,
+    local: "local",
+    session: "session",
+  });
+  expect(await documentCookies(page)).toEqual(ALL_COOKIES);
   // Stored host-only under the jar's https URL, with their attributes; never under app://.
   expect(await storedCookies(app)).toEqual([
     { name: "e2e-header-persistent", session: false, httpOnly: true, expires: true },
     { name: "e2e-header-session", session: true, httpOnly: true, expires: false },
+    { name: "e2e-script-expires", session: false, httpOnly: false, expires: true },
+    { name: "e2e-script-max-age", session: false, httpOnly: false, expires: true },
+    { name: "e2e-script-session", session: true, httpOnly: false, expires: false },
   ]);
   const domains = await app.evaluate(async ({ session }) =>
     (await session.fromPartition("persist:app").cookies.get({}))
       .filter((cookie) => cookie.name.startsWith("e2e-"))
       .map((cookie) => `${cookie.domain} ${cookie.hostOnly} ${cookie.path}`),
   );
-  expect(domains).toEqual(["app.desktop true /", "app.desktop true /"]);
+  expect(domains).toEqual(Array.from({ length: 5 }, () => "app.desktop true /"));
 });
 
 test("a path-scoped cookie reaches only its path, and Max-Age=0 deletes", async ({ desktop: { page } }) => {
@@ -173,16 +174,17 @@ test("a path-scoped cookie reaches only its path, and Max-Age=0 deletes", async 
   expect(await serverCookies(page, "/__e2e/cookies/scoped")).toEqual({});
 });
 
-test("a non-HttpOnly server cookie round-trips, stays invisible to scripts, and replaces an HttpOnly one", async ({
+test("a non-HttpOnly server cookie round-trips, is visible to scripts, and replaces an HttpOnly one", async ({
   desktop: { page },
 }) => {
   await postCookie(page, { name: "e2e-plain", value: "p", httpOnly: false });
   expect(await serverCookies(page)).toEqual({ "e2e-plain": "p" });
-  // Not HttpOnly, but page scripts still have no cookies under app://.
-  expect(await page.evaluate(() => document.cookie)).toBe("");
+  expect((await observe(page)).script).toEqual({ "e2e-plain": "p" });
   // HttpOnly first, then the same name and path without it: a browser replaces the value.
   await postCookie(page, { name: "e2e-swap", value: "h", maxAge: 3600 });
+  expect((await observe(page)).script).toEqual({ "e2e-plain": "p" });
   await postCookie(page, { name: "e2e-swap", value: "plain", maxAge: 3600, httpOnly: false });
+  expect((await observe(page)).script).toEqual({ "e2e-plain": "p", "e2e-swap": "plain" });
   expect(await serverCookies(page)).toEqual({ "e2e-plain": "p", "e2e-swap": "plain" });
 });
 
@@ -251,7 +253,12 @@ test("localStorage and sessionStorage survive a reload, and so do server cookies
   await writeAll(page);
   await page.reload();
   await waitForApp(page);
-  expect(await observe(page)).toEqual({ script: {}, server: HEADER_COOKIES, local: "local", session: "session" });
+  expect(await observe(page)).toEqual({
+    script: SCRIPT_COOKIES,
+    server: ALL_COOKIES,
+    local: "local",
+    session: "session",
+  });
 });
 
 test("a closed and reopened window keeps localStorage and cookies, not sessionStorage", async ({
@@ -270,7 +277,7 @@ test("a closed and reopened window keeps localStorage and cookies, not sessionSt
   await waitForApp(next);
   expect(next.url()).toBe("app://app/");
   // The app kept running, so session cookies live on, as in a browser that stays open.
-  expect(await observe(next)).toEqual({ script: {}, server: HEADER_COOKIES, local: "local", session: null });
+  expect(await observe(next)).toEqual({ script: SCRIPT_COOKIES, server: ALL_COOKIES, local: "local", session: null });
 });
 
 test("after quit and relaunch, localStorage and persistent cookies survive, sessionStorage and session cookies do not", async ({
@@ -282,17 +289,92 @@ test("after quit and relaunch, localStorage and persistent cookies survive, sess
   await quit(first);
   const second = await launchApp();
   expect(await observe(second.page)).toEqual({
-    script: {},
-    server: { "e2e-header-persistent": "hp" },
+    script: PERSISTENT_SCRIPT,
+    server: { ...PERSISTENT_SCRIPT, "e2e-header-persistent": "hp" },
     local: "local",
     session: null,
   });
-  expect(await documentCookies(second.page)).toEqual({ "e2e-header-persistent": "hp" });
+  expect(await documentCookies(second.page)).toEqual({ ...PERSISTENT_SCRIPT, "e2e-header-persistent": "hp" });
   // Deleted before quitting: stays deleted after the relaunch.
   await postCookie(second.page, { name: "e2e-header-persistent", value: "x", delete: true });
   await quit(second);
   const third = await launchApp();
-  expect(await serverCookies(third.page)).toEqual({});
+  expect(await serverCookies(third.page)).toEqual(PERSISTENT_SCRIPT);
+});
+
+test("packaged persistent cookie is readable after relaunch and absent as plaintext from the Cookies database", async ({
+  launchApp,
+  target,
+}) => {
+  test.skip(target !== "packaged", "checks the packaged cookie encryption fuse in use");
+  const first = await launchApp();
+  const directory = await first.app.evaluate(({ session }) => session.fromPartition("persist:app").storagePath);
+  if (!directory) throw new Error("Missing persistent app session directory");
+  const name = "e2e-encryption-" + randomUUID();
+  const value = "secret-" + randomUUID();
+  await postCookie(first.page, { name, value, maxAge: 3600 });
+  expect(await serverCookies(first.page)).toEqual({ [name]: value });
+  await quit(first);
+  const files = globSync("**/Cookies", { cwd: directory });
+  expect(files).toHaveLength(1);
+  const bytes = readFileSync(join(directory, files[0]));
+  expect(bytes.subarray(0, 16).toString("ascii")).toBe("SQLite format 3\0");
+  expect(bytes.includes(Buffer.from(name))).toBe(true);
+  expect(bytes.includes(Buffer.from(value))).toBe(false);
+  const second = await launchApp();
+  expect(await serverCookies(second.page)).toEqual({ [name]: value });
+});
+
+test("a damaged wake index is backed up while native subscriptions survive and new subscriptions succeed", async ({
+  launchApp,
+  userDataDir,
+}) => {
+  const first = await launchApp();
+  const target = "/__e2e/scripts/";
+  // This existing same-origin fixture script can also evaluate in a worker without a document.
+  await first.page.evaluate(() =>
+    navigator.serviceWorker.register("/__e2e/scripts/js-cookie.js").then(() => undefined),
+  );
+  await first.page.waitForFunction(
+    async (scope) => (await navigator.serviceWorker.getRegistration(scope))?.active?.state === "activated",
+    target,
+  );
+  function subscriptions(page: Page, addName?: string) {
+    return page.evaluate(
+      async ({ scope, cookie }) => {
+        const registration = await navigator.serviceWorker.getRegistration(scope);
+        if (!registration) throw new Error("Missing test registration");
+        if (cookie !== undefined) await registration.cookies.subscribe([{ name: cookie }]);
+        return (await registration.cookies.getSubscriptions()).toSorted((a, b) =>
+          String(a.name).localeCompare(String(b.name)),
+        );
+      },
+      { scope: target, cookie: addName },
+    );
+  }
+  const initial = await subscriptions(first.page, "existing");
+  expect(initial).toMatchObject([{ name: "existing" }]);
+  await quit(first);
+  const file = join(userDataDir, "cookie-wake-index.json");
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject([{ name: "existing" }]);
+  const damaged = Buffer.from([0x7b, 0xff]);
+  writeFileSync(file, damaged);
+  const second = await launchApp();
+  expect(readFileSync(file + ".corrupt")).toEqual(damaged);
+  expect(await subscriptions(second.page)).toEqual(initial);
+  const native = await subscriptions(second.page, "new");
+  expect(native).toMatchObject([{ name: "existing" }, { name: "new" }]);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject([{ name: "new", eligible: true }]);
+  // Repeating the surviving native subscription restores the missing wake hint.
+  expect(await subscriptions(second.page, "existing")).toEqual(native);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject([
+    { name: "new", eligible: true },
+    { name: "existing", eligible: true },
+  ]);
+  await quit(second);
+  const third = await launchApp();
+  expect(await subscriptions(third.page)).toEqual(native);
+  expect(readFileSync(file + ".corrupt")).toEqual(damaged);
 });
 
 test("a persistent cookie survives a hard kill right after its response", async ({ launchApp, target }) => {
@@ -320,4 +402,43 @@ test("a session cookie replacing a persistent one stays replaced after a hard ki
   expect(targetProcesses(target)).toEqual([]);
   const second = await launchApp();
   expect(await serverCookies(second.page)).toEqual({});
+});
+
+test("DC-19 | same-origin srcdoc gets cookies while the desktop bridge and first-paint signal stay in the main frame", async ({
+  desktop: { app, page },
+}) => {
+  const probe = await app.evaluateHandle(({ ipcMain }) => {
+    let childPaints = 0;
+    const listener = (event: Electron.IpcMainEvent) => {
+      if (event.senderFrame && event.senderFrame !== event.sender.mainFrame) childPaints++;
+    };
+    ipcMain.on("desktop:first-paint", listener);
+    return { read: () => childPaints, dispose: () => ipcMain.off("desktop:first-paint", listener) };
+  });
+  try {
+    await page.evaluate(() => {
+      document.cookie = "e2e-frame=visible; Path=/";
+      const child = document.createElement("iframe");
+      child.srcdoc = "<body>Cookie frame</body>";
+      child.id = "e2e-cookie-frame";
+      document.body.append(child);
+    });
+    const result = await page
+      .frameLocator("#e2e-cookie-frame")
+      .getByText("Cookie frame")
+      .evaluate(async () => {
+        // The preload sends first paint after two animation frames. The subsequent synchronous
+        // cookie IPC fences earlier messages from this frame before the main-process assertion.
+        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+        return { bridge: typeof window.desktop, cookie: document.cookie };
+      });
+    expect(result.bridge).toBe("undefined");
+    expect(result.cookie.split("; ")).toContain("e2e-frame=visible");
+    expect(await probe.evaluate((p) => p.read())).toBe(0);
+  } finally {
+    await probe.evaluate((p) => {
+      p.dispose();
+    });
+    await probe.dispose();
+  }
 });

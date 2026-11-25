@@ -1,6 +1,5 @@
+import type { CookieStore } from "@repo/electron-cookies/main";
 import { vi } from "vitest";
-
-import type { CookieStore } from "./cookie-jar.ts";
 
 type Stored = Parameters<CookieStore["set"]>[0];
 
@@ -26,7 +25,9 @@ export function fakeCookieStore() {
         .toSorted((a, b) => b.path.length - a.path.length);
     }),
     set: vi.fn<CookieStore["set"]>(async (details) => {
-      const at = cookies.findIndex((c) => c.name === details.name && c.path === details.path);
+      const at = cookies.findIndex(
+        (c) => c.name === details.name && c.path === details.path && c.domain === details.domain,
+      );
       // Chromium (through Electron's `set`) does not let a non-HttpOnly cookie replace an HttpOnly one.
       if (at >= 0 && cookies[at].httpOnly && !details.httpOnly) throw new Error("EXCLUDE_OVERWRITE_HTTP_ONLY");
       if (at >= 0) cookies.splice(at, 1);

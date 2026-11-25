@@ -110,15 +110,6 @@ describe("window navigation confinement", () => {
   });
 });
 
-it("explicitly disables sub-frame Node integration and webviews", () => {
-  setup();
-  expect(native.createWindow).toHaveBeenCalledWith(
-    expect.objectContaining({
-      webPreferences: expect.objectContaining({ nodeIntegrationInSubFrames: false, webviewTag: false }),
-    }),
-  );
-});
-
 /** What the host creates a window with, and what it lets the renderer open one with. */
 function windowOptions() {
   const { contents } = setup();
@@ -134,6 +125,19 @@ function windowOptions() {
     opened: contents.setWindowOpenHandler.mock.calls[0][0](details),
   };
 }
+
+it("runs the sandboxed preload in subframes of host-created and renderer-opened windows", () => {
+  const { created, opened } = windowOptions();
+  const expected = expect.objectContaining({
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    nodeIntegrationInSubFrames: true,
+    webviewTag: false,
+  });
+  expect(created).toHaveProperty("webPreferences", expected);
+  expect(opened).toHaveProperty("overrideBrowserWindowOptions.webPreferences", expected);
+});
 
 it("keeps DevTools in dev and test builds and turns them off in release builds, for every window", () => {
   const test = windowOptions();
