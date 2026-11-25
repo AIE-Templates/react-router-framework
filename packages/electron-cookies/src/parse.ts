@@ -10,6 +10,8 @@ export interface JarCookie {
   name: string;
   value: string;
   path: string;
+  /** Source pathname when Chromium should derive the path at insertion. */
+  defaultPathRequest?: string;
   domain?: string;
   secure: boolean;
   httpOnly: boolean;
@@ -97,6 +99,7 @@ export function parseSetCookie(header: string, { requestPath, now, serverDate }:
     return { ok: false, reason: "noncanonical Path" };
   }
   const cookie: JarCookie = { name, value, path: cookiePath, secure, httpOnly, sameSite };
+  if (path === undefined) cookie.defaultPathRequest = requestPath;
   if (domain !== undefined) {
     if (domain === "." || domain.startsWith("..")) return { ok: false, reason: "invalid Domain" };
     cookie.domain = domain.replace(/^\./, "").toLowerCase();
@@ -116,6 +119,34 @@ export function defaultPath(requestPath: string): string {
 }
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+const weekday = /^(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)$/i;
+const httpTime = /^\d{1,2}:\d{2}:\d{2}$/;
+
+/** Parse the named-month UTC dates used in HTTP, including RFC 850 and asctime.
+ * Chromium's FromUTCString also accepts punctuation after fields and a leading clock.
+ * A letter attached to a numeric day or year invalidates that field.
+ */
+export function parseHttpDate(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const fields = value
+    .split(/[ \t,;/()[\]-]+/)
+    .map((field) => field.replace(/[^a-z0-9:]+$/i, ""))
+    .filter((field) => field && !weekday.test(field) && !/^(gmt|utc)$/i.test(field));
+  const clockAt = fields.findIndex((field) => httpTime.test(field));
+  const time = clockAt < 0 ? "00:00:00" : fields.splice(clockAt, 1)[0];
+  if (fields.length !== 3) return undefined;
+  const [first, second, year] = fields;
+  const monthFirst = /^[a-z]/i.test(first);
+  const month = MONTHS.indexOf((monthFirst ? first : second).slice(0, 3).toLowerCase());
+  const day = monthFirst ? second : first;
+  if (month < 0 || !/^\d{1,2}$/.test(day) || !/^(?:\d{2}|\d{4})$/.test(year)) return undefined;
+  const fullYear = year.length === 2 ? (Number(year) < 70 ? "20" : "19") + year : year;
+  const timestamp = Date.parse(
+    `${fullYear}-${String(month + 1).padStart(2, "0")}-${day.padStart(2, "0")}T${time.padStart(8, "0")}Z`,
+  );
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
 
 /** An `Expires` value as milliseconds since the epoch, per RFC 6265bis 5.1.1; undefined if invalid. */
 export function parseCookieDate(value: string): number | undefined {

@@ -60,7 +60,11 @@ export class ScopeOperations {
         if (!this.#requests.has(operationId)) return;
         if (operation.kind === "subscribe") {
           await this.#index.subscribe(scope, operation.subscriptions, this.#scheduler.now());
-          if (!this.#requests.has(operationId)) return;
+          if (!this.#requests.has(operationId)) {
+            // The owner disappeared during persistence and never received a grant.
+            await this.#index.finishSubscribe(scope, true);
+            return;
+          }
         }
         this.#index.advance(scope);
         request.granted = true;
@@ -84,6 +88,7 @@ export class ScopeOperations {
   async #apply(scope: string, operation: Operation, result: Outcome): Promise<void> {
     switch (operation.kind) {
       case "subscribe":
+        await this.#index.finishSubscribe(scope, result === "failure");
         if (result === "expired") await this.#index.editSubscriptions(scope, operation.subscriptions, "pin");
         break;
       case "unsubscribe":

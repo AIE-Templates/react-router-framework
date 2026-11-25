@@ -23,20 +23,27 @@ describe("application origin", () => {
   );
 });
 
+function containsSchemeLiteral(source: string): boolean {
+  const { comments } = parse(source, { sourceType: "module", plugins: ["typescript", "jsx"] });
+  // Remove only parser-identified comments, including when a quoted URL contains comment delimiters.
+  let code = source;
+  for (const comment of (comments ?? []).toReversed()) {
+    code = code.slice(0, comment.start) + " " + code.slice(comment.end);
+  }
+  return /\bapp:\/\/|["'`]app:?["'`]/i.test(code);
+}
+
+it("DC-23: flags mixed-case scheme literals and ignores examples in comments", () => {
+  expect(containsSchemeLiteral('const url = "ApP://app/path"')).toBe(true);
+  expect(containsSchemeLiteral('const scheme = "APP:"')).toBe(true);
+  expect(containsSchemeLiteral('// "APP://app"')).toBe(false);
+});
+
 it("uses the configured application scheme throughout desktop runtime code", () => {
   const root = resolve(import.meta.dirname, "..");
   const violations = globSync("**/*.{ts,tsx}", {
     cwd: root,
     exclude: ["**/*.test.{ts,tsx}", "main/app-url.ts"],
-  }).filter((file) => {
-    const source = readFileSync(resolve(root, file), "utf8");
-    const { comments } = parse(source, { sourceType: "module", plugins: ["typescript", "jsx"] });
-    // Remove only parser-identified comments, including when a quoted URL contains comment delimiters.
-    let code = source;
-    for (const comment of (comments ?? []).toReversed()) {
-      code = code.slice(0, comment.start) + " " + code.slice(comment.end);
-    }
-    return /\bapp:\/\/|["'`]app:?["'`]/.test(code);
-  });
+  }).filter((file) => containsSchemeLiteral(readFileSync(resolve(root, file), "utf8")));
   expect(violations).toEqual([]);
 });

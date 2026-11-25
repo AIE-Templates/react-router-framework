@@ -8,12 +8,23 @@ export interface SubscriptionBridge {
 
 /** Serialized into both window and service worker main worlds. */
 export function installSubscriptionShims(bridge: SubscriptionBridge): void {
-  const { ServiceWorkerRegistration: Registration, CookieStoreManager: Manager, URL: NativeURL } = globalThis;
+  const {
+    ServiceWorkerRegistration: Registration,
+    CookieStoreManager: Manager,
+    URL: NativeURL,
+    TypeError: NativeTypeError,
+  } = globalThis;
   if (!Registration || !Manager) return;
-  const { defineProperty, getOwnPropertyDescriptor } = Object;
+  const { defineProperty, getOwnPropertyDescriptor, getPrototypeOf } = Object;
   const { apply } = Reflect;
   const { toWellFormed } = String.prototype;
-  const scopes = new WeakMap<CookieStoreManager, string>();
+  const { startsWith } = String.prototype;
+  const { canParse } = NativeURL;
+  const href = getOwnPropertyDescriptor(NativeURL.prototype, "href")!.get!;
+  const registrations = new WeakMap<CookieStoreManager, ServiceWorkerRegistration>();
+  const remember = registrations.set.bind(registrations);
+  const lookup = registrations.get.bind(registrations);
+  const lookupKey = Symbol.for("@repo/electron-cookies/lookup-registration");
   const registration = Registration.prototype;
   const cookies = getOwnPropertyDescriptor(registration, "cookies")!;
   const scope = getOwnPropertyDescriptor(registration, "scope")!.get!;
@@ -22,7 +33,7 @@ export function installSubscriptionShims(bridge: SubscriptionBridge): void {
     ...cookies,
     get(this: ServiceWorkerRegistration) {
       const manager: CookieStoreManager = apply(cookies.get!, this, []);
-      scopes.set(manager, apply(scope, this, []));
+      remember(manager, this);
       return manager;
     },
   });
@@ -48,31 +59,45 @@ export function installSubscriptionShims(bridge: SubscriptionBridge): void {
   }
   for (const kind of ["subscribe", "unsubscribe"] as const) {
     const native = Manager.prototype[kind];
-    Manager.prototype[kind] = async function (input) {
-      const target = scopes.get(this);
-      if (!target) throw new TypeError("Unknown CookieStoreManager receiver");
+    const wrapped = async function (this: CookieStoreManager, input: CookieStoreGetOptions[]) {
+      const owner = lookup(this);
+      if (!owner) {
+        // A borrowed method can receive a manager from another installation. Only
+        // its own registration knows the scope and owns its subscription bridge.
+        const proto: object | null = this && getPrototypeOf(this);
+        const method = proto && getOwnPropertyDescriptor(proto, kind)?.value;
+        const foreignLookup = method && getOwnPropertyDescriptor(method, lookupKey)?.value;
+        const foreignOwner = foreignLookup && apply(foreignLookup, undefined, [this]);
+        if (foreignOwner && apply(cookies.get!, foreignOwner, []) === this) return apply(method, this, arguments);
+        // Unwrapped realms and invalid receivers retain native Web IDL behavior.
+        return apply(native, this, arguments);
+      }
+      const target: string = apply(scope, owner, []);
       // Snapshot the Web IDL sequence once, before the first await. Native and the
       // index must see identical entries even if input is a generator or has getters.
-      if (!input || typeof input !== "object") throw new TypeError("Expected a sequence of cookie subscriptions");
+      if (!input || (typeof input !== "object" && typeof input !== "function"))
+        throw new NativeTypeError("Expected a sequence of cookie subscriptions");
       const subscriptions: Subscription[] = [];
       for (const entry of input) {
         if (entry != null && typeof entry !== "object" && typeof entry !== "function")
-          throw new TypeError("Invalid subscription");
+          throw new NativeTypeError("Invalid subscription");
         const rawName = entry?.name;
         const name = rawName === undefined ? undefined : usv(rawName);
         const rawUrl = entry?.url;
         let url: string | undefined;
         if (rawUrl !== undefined) {
           const text = usv(rawUrl);
-          if (NativeURL.canParse(text, target)) url = new NativeURL(text, target).href;
-          if (!url?.startsWith(target))
-            throw new TypeError(
+          if (canParse(text, target)) url = apply(href, new NativeURL(text, target), []);
+          if (!url || !apply(startsWith, url, [target]))
+            throw new NativeTypeError(
               `Failed to execute '${kind}' on 'CookieStoreManager': URL must be within ServiceWorker scope`,
             );
         }
-        subscriptions.push({ name, url });
+        subscriptions[subscriptions.length] = { name, url };
       }
-      await run(target, { kind, subscriptions }, () => apply(native, this, [subscriptions]));
+      return run(target, { kind, subscriptions }, () => apply(native, this, [subscriptions]));
     };
+    defineProperty(wrapped, lookupKey, { value: lookup });
+    Manager.prototype[kind] = wrapped;
   }
 }

@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { globSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { ElectronApplication, Page } from "@playwright/test";
 
 import { expect, targetProcesses, quit, test, waitForApp } from "./desktop.ts";
@@ -296,6 +300,81 @@ test("after quit and relaunch, localStorage and persistent cookies survive, sess
   await quit(second);
   const third = await launchApp();
   expect(await serverCookies(third.page)).toEqual(PERSISTENT_SCRIPT);
+});
+
+test("packaged persistent cookie is readable after relaunch and absent as plaintext from the Cookies database", async ({
+  launchApp,
+  target,
+}) => {
+  test.skip(target !== "packaged", "checks the packaged cookie encryption fuse in use");
+  const first = await launchApp();
+  const directory = await first.app.evaluate(({ session }) => session.fromPartition("persist:app").storagePath);
+  if (!directory) throw new Error("Missing persistent app session directory");
+  const name = "e2e-encryption-" + randomUUID();
+  const value = "secret-" + randomUUID();
+  await postCookie(first.page, { name, value, maxAge: 3600 });
+  expect(await serverCookies(first.page)).toEqual({ [name]: value });
+  await quit(first);
+  const files = globSync("**/Cookies", { cwd: directory });
+  expect(files).toHaveLength(1);
+  const bytes = readFileSync(join(directory, files[0]));
+  expect(bytes.subarray(0, 16).toString("ascii")).toBe("SQLite format 3\0");
+  expect(bytes.includes(Buffer.from(name))).toBe(true);
+  expect(bytes.includes(Buffer.from(value))).toBe(false);
+  const second = await launchApp();
+  expect(await serverCookies(second.page)).toEqual({ [name]: value });
+});
+
+test("a damaged wake index is backed up while native subscriptions survive and new subscriptions succeed", async ({
+  launchApp,
+  userDataDir,
+}) => {
+  const first = await launchApp();
+  const target = "/__e2e/scripts/";
+  // This existing same-origin fixture script can also evaluate in a worker without a document.
+  await first.page.evaluate(() =>
+    navigator.serviceWorker.register("/__e2e/scripts/js-cookie.js").then(() => undefined),
+  );
+  await first.page.waitForFunction(
+    async (scope) => (await navigator.serviceWorker.getRegistration(scope))?.active?.state === "activated",
+    target,
+  );
+  function subscriptions(page: Page, addName?: string) {
+    return page.evaluate(
+      async ({ scope, cookie }) => {
+        const registration = await navigator.serviceWorker.getRegistration(scope);
+        if (!registration) throw new Error("Missing test registration");
+        if (cookie !== undefined) await registration.cookies.subscribe([{ name: cookie }]);
+        return (await registration.cookies.getSubscriptions()).toSorted((a, b) =>
+          String(a.name).localeCompare(String(b.name)),
+        );
+      },
+      { scope: target, cookie: addName },
+    );
+  }
+  const initial = await subscriptions(first.page, "existing");
+  expect(initial).toMatchObject([{ name: "existing" }]);
+  await quit(first);
+  const file = join(userDataDir, "cookie-wake-index.json");
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject([{ name: "existing" }]);
+  const damaged = Buffer.from([0x7b, 0xff]);
+  writeFileSync(file, damaged);
+  const second = await launchApp();
+  expect(readFileSync(file + ".corrupt")).toEqual(damaged);
+  expect(await subscriptions(second.page)).toEqual(initial);
+  const native = await subscriptions(second.page, "new");
+  expect(native).toMatchObject([{ name: "existing" }, { name: "new" }]);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject([{ name: "new", eligible: true }]);
+  // Repeating the surviving native subscription restores the missing wake hint.
+  expect(await subscriptions(second.page, "existing")).toEqual(native);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject([
+    { name: "new", eligible: true },
+    { name: "existing", eligible: true },
+  ]);
+  await quit(second);
+  const third = await launchApp();
+  expect(await subscriptions(third.page)).toEqual(native);
+  expect(readFileSync(file + ".corrupt")).toEqual(damaged);
 });
 
 test("a persistent cookie survives a hard kill right after its response", async ({ launchApp, target }) => {

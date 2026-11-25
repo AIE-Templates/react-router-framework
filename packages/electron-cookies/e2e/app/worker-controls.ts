@@ -8,7 +8,7 @@ import type { CookieWorkerIpcOptions, WakeRecord, WakeStorage } from "../../src/
 import { deferred } from "../../src/main/sw/deferred.ts";
 import { cookieIpcChannels } from "../../src/shared.ts";
 
-export type WorkerGate = "index-written" | "native-complete" | "wake";
+export type WorkerGate = "index-written" | "native-complete" | "wake" | "change-notification" | "unregister-granted";
 
 export function workerControls(session: Session, profile: string) {
   const { serviceWorkers } = session;
@@ -47,34 +47,50 @@ export function workerControls(session: Session, profile: string) {
       scriptUrl,
     }));
   }
-  const options: Pick<CookieWorkerIpcOptions, "storage" | "serviceWorkers" | "ipcMain" | "taskTimeoutMs"> = {
-    storage,
-    taskTimeoutMs: process.env.COOKIE_FIXTURE_TASK_TIMEOUT_MS
-      ? Number(process.env.COOKIE_FIXTURE_TASK_TIMEOUT_MS)
-      : undefined,
-    ipcMain: {
-      on: ipcMain.on.bind(ipcMain),
-      handle(channel, listener) {
-        ipcMain.handle(channel, async (event, ...args) => {
-          // A successful native window subscribe has returned, but main has not received completion.
-          if (channel === channels.complete && args[2] === true) await cross("native-complete");
-          return listener(event, ...args);
-        });
+  const options: Pick<CookieWorkerIpcOptions, "storage" | "serviceWorkers" | "ipcMain" | "taskTimeoutMs" | "changes"> =
+    {
+      storage,
+      changes: {
+        on(event, listener) {
+          session.cookies.on(event, (...args) => {
+            const [, cookie, cause] = args;
+            const wait =
+              cookie.name === "late" && cookie.value === "before" && cause === "inserted"
+                ? cross("change-notification")
+                : undefined;
+            if (wait) void wait.then(() => listener(...args));
+            else listener(...args);
+          });
+        },
       },
-    },
-    serviceWorkers: {
-      on: serviceWorkers.on.bind(serviceWorkers),
-      getAllRunning: () => serviceWorkers.getAllRunning(),
-      getWorkerFromVersionID: (id) => serviceWorkers.getWorkerFromVersionID(id),
-      async startWorkerForScope(scope) {
-        wakeAttempts.push(scope);
-        await cross("wake");
-        const worker = await serviceWorkers.startWorkerForScope(scope);
-        wakeCount++;
-        return worker;
+      taskTimeoutMs: process.env.COOKIE_FIXTURE_TASK_TIMEOUT_MS
+        ? Number(process.env.COOKIE_FIXTURE_TASK_TIMEOUT_MS)
+        : undefined,
+      ipcMain: {
+        on: ipcMain.on.bind(ipcMain),
+        handle(channel, listener) {
+          ipcMain.handle(channel, async (event, ...args) => {
+            // A successful native window subscribe has returned, but main has not received completion.
+            if (channel === channels.complete && args[2] === true) await cross("native-complete");
+            const result: unknown = await listener(event, ...args);
+            if (channel === channels.acquire && args[2]?.kind === "unregister") await cross("unregister-granted");
+            return result;
+          });
+        },
       },
-    },
-  };
+      serviceWorkers: {
+        on: serviceWorkers.on.bind(serviceWorkers),
+        getAllRunning: () => serviceWorkers.getAllRunning(),
+        getWorkerFromVersionID: (id) => serviceWorkers.getWorkerFromVersionID(id),
+        async startWorkerForScope(scope) {
+          wakeAttempts.push(scope);
+          await cross("wake");
+          const worker = await serviceWorkers.startWorkerForScope(scope);
+          wakeCount++;
+          return worker;
+        },
+      },
+    };
   return {
     options,
     controls: {

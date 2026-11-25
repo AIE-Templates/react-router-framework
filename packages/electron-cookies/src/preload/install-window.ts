@@ -62,10 +62,12 @@ export function installWindowCookiePreload({
       }
     },
   };
-  const subscriptions: SubscriptionBridge = {
-    acquire: (scope, operation) => ipcRenderer.invoke(channels.acquire, documentId, scope, operation),
-    complete: (id, success) => ipcRenderer.invoke(channels.complete, documentId, id, success),
-  };
-  contextBridge.executeInMainWorld({ func: installSubscriptionShims, args: [subscriptions] });
+  if (installation.cookieApi) {
+    const subscriptions: SubscriptionBridge = {
+      acquire: (scope, operation) => ipcRenderer.invoke(channels.acquire, documentId, scope, operation),
+      complete: (id, success) => ipcRenderer.invoke(channels.complete, documentId, id, success),
+    };
+    contextBridge.executeInMainWorld({ func: installSubscriptionShims, args: [subscriptions] });
+  }
   contextBridge.executeInMainWorld({ func: installCookieShims, args: [bridge] });
 }

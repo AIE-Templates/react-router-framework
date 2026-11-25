@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
+
 import { createCookieJar, type CookieStore, STORE_TIMEOUT_MS } from "@repo/electron-cookies/main";
 import { OMIT_COOKIES_HEADER } from "@repo/electron-cookies/shared";
 import type { DesktopRequest } from "@repo/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { APP_HOST, APP_SCHEME, APP_ORIGIN, COOKIE_JAR_ORIGIN } from "./app-url.ts";
+import { APP_HOST, APP_SCHEME, APP_ORIGIN, COOKIE_JAR_ORIGIN, isAppUrl } from "./app-url.ts";
 import { createBootProfile } from "./boot-profile.ts";
 import { fakeCookieStore } from "./cookie-store-testing.ts";
 import { createDevProxyFetch } from "./dev-proxy.ts";
@@ -11,17 +14,24 @@ import type { Logger } from "./log.ts";
 import { INTERNAL_ORIGIN } from "./mapping.ts";
 import { type ProtocolSession, registerAppProtocol, REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
 
-// Exercise protocol wiring with a different registered scheme and host.
-vi.mock("./app-url.ts", async (original) => ({
-  ...(await original<typeof import("./app-url.ts")>()),
-  APP_SCHEME: "xxx-app",
-  APP_HOST: "site",
-  APP_ORIGIN: "xxx-app://site",
-  isAppUrl: (value: string) => {
-    const url = new URL(value);
-    return url.protocol === "xxx-app:" && url.host === "site";
-  },
-}));
+// Load the production module with only its storage identity changed. All consumers use its real predicate.
+vi.mock("./app-url.ts", async () => {
+  const original = readFileSync(new URL("./app-url.ts", import.meta.url), "utf8");
+  const source = original
+    .replace('APP_SCHEME = "app"', 'APP_SCHEME = "xxx-app"')
+    .replace('APP_HOST = "app"', 'APP_HOST = "site"');
+  return import(
+    /* @vite-ignore */ "data:text/javascript;base64," + Buffer.from(stripTypeScriptTypes(source)).toString("base64")
+  );
+});
+
+it("DC-23: the production predicate follows a changed application scheme and host", () => {
+  expect(APP_ORIGIN).toBe("xxx-app://site");
+  expect(isAppUrl("xxx-app://site/area/")).toBe(true);
+  for (const url of ["app://app/", "app://site/", "xxx-app://app/", "xxx-app://site:123/", "invalid"]) {
+    expect(isAppUrl(url)).toBe(false);
+  }
+});
 
 type Handler = (request: Request) => Promise<Response>;
 

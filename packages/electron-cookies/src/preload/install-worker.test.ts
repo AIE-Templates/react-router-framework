@@ -15,6 +15,7 @@ const channels = cookieIpcChannels("fixture");
 const item = { name: "x", path: "/", sameSite: "strict", partitioned: false, secure: true, domain: null } as const;
 
 function setup(target = scope) {
+  const reported = vi.fn<(error: unknown) => void>();
   const invoke = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({ ok: true, value: [] });
   const subscribe = vi.fn<(subscriptions: Subscription[]) => Promise<void>>().mockResolvedValue(undefined);
   const unsubscribe = vi.fn<(subscriptions: Subscription[]) => Promise<void>>().mockResolvedValue(undefined);
@@ -33,13 +34,20 @@ function setup(target = scope) {
   }
   const manager = new Manager();
   class Registration {
+    readonly manager = manager;
     get scope() {
       return target;
     }
     get cookies() {
-      return manager;
+      return this.manager;
     }
-    active: object | null = {};
+    #active: object | null = {};
+    get active() {
+      return this.#active;
+    }
+    set active(value: object | null) {
+      this.#active = value;
+    }
     unregister() {
       return unregister();
     }
@@ -86,6 +94,7 @@ function setup(target = scope) {
     fetch,
     URL,
     DOMException,
+    reportError: reported,
     ServiceWorkerRegistration: Registration,
     CookieStoreManager: Manager,
   });
@@ -110,6 +119,7 @@ function setup(target = scope) {
     ipc.emit(channels.deliver, {}, { eventId, changed: [item], deleted: [], ...overrides });
   return {
     ipc,
+    reported,
     send,
     realm,
     originalGetAll,
@@ -143,7 +153,9 @@ describe("serialized service-worker preload", () => {
     await store.getAll({ name: "x", url: "sw.js/deeper#x" });
     expect(h.invoke).toHaveBeenCalledWith(channels.getAll, "x", scriptUrl + "/deeper");
     await store.set({ name: "x", value: "v", path: "" });
-    expect(h.invoke).toHaveBeenCalledWith(channels.storeSet, expect.objectContaining({ path: "/scripts" }));
+    expect(h.invoke).toHaveBeenLastCalledWith(channels.storeSet, expect.objectContaining({ path: "", value: "v" }));
+    await store.delete({ name: "x", path: "" });
+    expect(h.invoke).toHaveBeenLastCalledWith(channels.storeSet, expect.objectContaining({ path: "", expires: 0 }));
     await expect(store.set("__Http-x", "v")).rejects.toThrow("__Http-");
     const fetch: typeof globalThis.fetch = h.realm.fetch;
     await fetch(origin + "/data", { credentials: "omit" });
@@ -205,6 +217,103 @@ describe("serialized service-worker preload", () => {
       }
     }
     expect(h.invoke).not.toHaveBeenCalled();
+  });
+
+  it("accepts callable subscription iterables and consumes each once", async () => {
+    const h = setup();
+    const iterate = vi.fn<() => ArrayIterator<{ name: string }>>(() => [{ name: "x" }].values());
+    const input = Object.assign(() => {}, { [Symbol.iterator]: iterate });
+    const manager = h.registration.cookies;
+    for (const kind of ["subscribe", "unsubscribe"] as const) {
+      await Reflect.apply(manager[kind], manager, [input]);
+      expect(h[kind]).toHaveBeenCalledExactlyOnceWith([{ name: "x", url: undefined }]);
+    }
+    expect(iterate).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the receiver's registration for subscription methods borrowed across installations", async () => {
+    const caller = setup();
+    const owner = setup(origin + "/other/");
+    const manager = owner.registration.cookies;
+    for (const kind of ["subscribe", "unsubscribe"] as const) {
+      await caller.registration.cookies[kind].call(manager, [{ url: "page" }]);
+      const expected = [{ name: undefined, url: origin + "/other/page" }];
+      expect(owner.invoke).toHaveBeenCalledWith(channels.acquire, origin + "/other/", {
+        kind,
+        subscriptions: expected,
+      });
+      expect(owner[kind]).toHaveBeenCalledExactlyOnceWith(expected);
+    }
+    expect(caller.invoke).not.toHaveBeenCalled();
+  });
+
+  it("keeps subscription conversion, filtering and finish working after builtin replacements", async () => {
+    const h = setup();
+    const restore: () => void = runInContext(
+      `(() => {
+      const replacements = [
+        [WeakMap.prototype, "get"], [WeakMap.prototype, "set"], [Array.prototype, "some"],
+        [Array.prototype, "filter"], [Array.prototype, "push"], [Map.prototype, "get"],
+        [Map.prototype, "set"], [Map.prototype, "delete"], [URL, "canParse"], [globalThis, "TypeError"],
+        [String.prototype, "startsWith"], [String.prototype, "endsWith"],
+      ];
+      const originals = replacements.map(([object, key]) => object[key]);
+      replacements.forEach(([object, key]) => { object[key] = function () { throw new Error("replaced " + key); }; });
+      return () => replacements.forEach(([object, key], i) => { object[key] = originals[i]; });
+    })()`,
+      h.realm,
+    );
+    try {
+      const manager = h.registration.cookies;
+      await manager.subscribe([{ name: "x", url: "page" }]);
+      await expect(manager.unsubscribe([{ url: "../outside" }])).rejects.toMatchObject({ name: "TypeError" });
+      const changed: WorkerCookieEvent["changed"] = runInContext('[{name: "x", path: "/"}]', h.realm);
+      const subscriptions: Subscription[] = runInContext('[{name: "x"}]', h.realm);
+      h.getSubscriptions.mockResolvedValue(subscriptions);
+      const pending = deferred<void>();
+      let event: InstanceType<typeof h.ChangeEvent> | undefined;
+      h.self.addEventListener("cookiechange", (e) => {
+        if (!(e instanceof h.ChangeEvent)) throw new Error("wrong event interface");
+        event = e;
+        e.waitUntil(pending.promise);
+      });
+      h.send("A", { changed, deleted: changed });
+      await vi.waitFor(() => expect(event?.changed).toEqual(changed));
+      h.ipc.emit(channels.finish, {}, "A");
+      expect(() => event!.waitUntil(pending.promise)).toThrow(expect.objectContaining({ name: "InvalidStateError" }));
+      pending.resolve();
+      h.send("B", { changed, deleted: changed });
+      await vi.waitFor(() =>
+        expect(h.ipc.send.mock.calls).toEqual([
+          [channels.started, "A"],
+          [channels.started, "B"],
+          [channels.ack, "B"],
+        ]),
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("NACKs a failed subscription read before dispatch and delivers the retry after recovery", async () => {
+    const h = setup();
+    const error = new Error("subscription store unavailable");
+    const listener = vi.fn<() => void>();
+    h.self.addEventListener("cookiechange", listener);
+    h.getSubscriptions.mockRejectedValueOnce(error);
+    h.send("first");
+    await vi.waitFor(() => expect(h.ipc.send.mock.calls).toEqual([[channels.nack, "first"]]));
+    expect(listener).not.toHaveBeenCalled();
+    expect(h.reported).toHaveBeenCalledWith(error);
+    h.send("retry");
+    await vi.waitFor(() =>
+      expect(h.ipc.send.mock.calls).toEqual([
+        [channels.nack, "first"],
+        [channels.started, "retry"],
+        [channels.ack, "retry"],
+      ]),
+    );
+    expect(listener).toHaveBeenCalledOnce();
   });
 
   it("SW-10/13 rechecks active after getSubscriptions, filters by name/path, and NACKs stale versions", async () => {

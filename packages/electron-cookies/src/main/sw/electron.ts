@@ -35,9 +35,6 @@ function validateOperation(scope: string, input: unknown): SubscriptionOperation
   return { kind, subscriptions };
 }
 
-// Epoch-relative sub-millisecond time survives restarts and distinguishes a write immediately after subscribe.
-const now = () => performance.timeOrigin + performance.now();
-
 export function installCookieWorkerIpc({
   serviceWorkers,
   storage,
@@ -50,6 +47,9 @@ export function installCookieWorkerIpc({
   ownsSender,
   log,
 }: CookieWorkerIpcOptions): { quitAll(): Promise<void> } {
+  // Electron exposes notification order, without a store commit timestamp.
+  let sequence = 0;
+  const now = () => ++sequence;
   const channels = cookieIpcChannels(prefix);
   const running = new Map<number, ServiceWorkerMain>();
   const installed = new WeakSet<ServiceWorkerMain>();
@@ -115,8 +115,8 @@ export function installCookieWorkerIpc({
       }),
     );
     worker.ipc.handle(channels.storeSet, (_event, input: unknown) =>
-      invokeCookieStore(current() ? worker.scriptURL : undefined, (_url, signal) =>
-        script.writeStructured(input, signal),
+      invokeCookieStore(current() ? worker.scriptURL : undefined, (scriptUrl, signal) =>
+        script.writeStructured(scriptUrl, input, signal),
       ),
     );
     worker.ipc.handle(channels.acquire, (_event, scope: unknown, operation: unknown) => {

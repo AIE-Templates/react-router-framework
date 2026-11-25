@@ -1,4 +1,5 @@
 import { compareNative, expect, requestCookie, test, type Fixture } from "./fixture.ts";
+import { index, register } from "./service-worker-fixture.ts";
 
 async function expectOpaqueDenial({ app }: Fixture, url: string) {
   const targetFrame = await app.evaluate((_electron, target) => globalThis.cookieFixture.probeOpaque(target), url);
@@ -140,7 +141,26 @@ test("DC-21/25 | about:blank and blob documents preserve their cookie and fetch 
   await compareNative(fixture, "/", async (site) => {
     await fixture.set(["root=visible; Path=/"]);
     const { page } = fixture;
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
+      const initial = document.createElement("iframe");
+      initial.id = "initial";
+      document.body.append(initial);
+
+      const navigated = document.createElement("iframe");
+      navigated.id = "navigated";
+      const loaded = new Promise<void>((resolve) =>
+        navigated.addEventListener("load", () => resolve(), { once: true }),
+      );
+      navigated.src = "/previous";
+      document.body.append(navigated);
+      await loaded;
+      if (navigated.contentWindow?.location.pathname !== "/previous") throw new Error("Missing previous document");
+      const blankLoaded = new Promise<void>((resolve) =>
+        navigated.addEventListener("load", () => resolve(), { once: true }),
+      );
+      navigated.src = "about:blank";
+      await blankLoaded;
+
       for (const [id, src] of [
         ["blank", "about:blank"],
         ["blob", URL.createObjectURL(new Blob(["<body>blob</body>"], { type: "text/html" }))],
@@ -152,14 +172,24 @@ test("DC-21/25 | about:blank and blob documents preserve their cookie and fetch 
       }
     });
     const echoUrl = fixture.origins[site] + "/echo";
-    const blank = await page
-      .frameLocator("#blank")
-      .locator("html")
-      .evaluate(
-        async (_el, url) => ({ text: document.cookie, omit: await (await fetch(url, { credentials: "omit" })).text() }),
-        echoUrl,
-      );
-    expect(blank).toEqual(site === "jar" ? { text: "", omit: "root=visible" } : { text: "root=visible", omit: "" });
+    for (const selector of ["#initial", "#navigated", "#blank"]) {
+      const blank = await page
+        .frameLocator(selector)
+        .locator("html")
+        .evaluate(
+          async (_el, url) => ({
+            href: location.href,
+            text: document.cookie,
+            omit: await (await fetch(url, { credentials: "omit" })).text(),
+          }),
+          echoUrl,
+        );
+      expect(blank, selector).toEqual({
+        href: "about:blank",
+        text: site === "jar" ? "" : "root=visible",
+        omit: site === "jar" ? "root=visible" : "",
+      });
+    }
     const blob = await page
       .frameLocator("#blob")
       .getByText("blob")
@@ -303,4 +333,122 @@ test("DC-18 | nested srcdoc inherits the document cookie URL for mutations, even
     },
     (native) => ({ ...native, events: native.events.map((e) => ({ ...e, isTrusted: false })) }),
   );
+});
+
+test("DC-21 | blob and srcdoc without a parent cookie URL retain native registration methods", async ({ fixture }) => {
+  await compareNative(fixture, "/", async (site) => {
+    const { page } = fixture;
+    await fixture.set(["root=visible; Path=/"]);
+    await page.evaluate(async () => {
+      const frame = document.createElement("iframe");
+      const loaded = new Promise<void>((resolve) => frame.addEventListener("load", () => resolve(), { once: true }));
+      frame.name = "registration-method-probe";
+      frame.src = URL.createObjectURL(
+        new Blob(
+          ['<body>blob<iframe name="registration-method-probe" srcdoc="<title>nested</title>"></iframe></body>'],
+          { type: "text/html" },
+        ),
+      );
+      document.body.append(frame);
+      await loaded;
+    });
+    const blob = page.frameLocator("iframe");
+    const results = [];
+    for (const frame of [blob, blob.frameLocator("iframe")]) {
+      const result = await frame.locator("body").evaluate(async (_el, url) => {
+        return {
+          document: location.protocol === "blob:" ? "blob:" : location.href,
+          nativeMethods: window.fixtureNativeRegistrationMethods(),
+          wire: await (await fetch(url)).text(),
+          omit: await (await fetch(url, { credentials: "omit" })).text(),
+        };
+      }, fixture.origins[site] + "/echo");
+      results.push(result);
+    }
+    expect(results).toEqual(
+      ["blob:", "about:srcdoc"].map((documentUrl) => ({
+        document: documentUrl,
+        nativeMethods: [true, true, true, true],
+        wire: "root=visible",
+        omit: "",
+      })),
+    );
+    return results;
+  });
+});
+
+test("DC-21 | direct registration lookup from initial blank, navigated blank, blob and nested srcdoc", async ({
+  fixture,
+}) => {
+  await compareNative(fixture, "/", async (site) => {
+    const { page } = fixture;
+    const { scope: url } = await register(page);
+    const frame = page.frameLocator("iframe");
+    const inspect = (child: typeof frame, name: string) =>
+      child.locator("html").evaluate(
+        async (_html, input) => {
+          let registration;
+          try {
+            registration = await navigator.serviceWorker.getRegistration(input.url);
+          } catch (error) {
+            if (!(error instanceof DOMException)) throw error;
+            return { frame: input.name, error: { name: error.name, message: error.message } };
+          }
+          if (registration?.scope !== input.url) throw new Error("Missing registration for " + input.url);
+          await registration.cookies.subscribe([{ name: input.name }]);
+          return { frame: input.name, subscribed: true };
+        },
+        { url, name },
+      );
+
+    await page.evaluate(() => document.body.append(document.createElement("iframe")));
+    const initial = await inspect(frame, "initial");
+    expect(initial).toEqual({
+      frame: "initial",
+      error: {
+        name: "InvalidStateError",
+        message: "Failed to get a ServiceWorkerRegistration: The document is in an invalid state.",
+      },
+    });
+
+    // Give the other documents a controlled parent, with a known active registration.
+    await page.goto(url + "client");
+    expect(await page.evaluate(() => navigator.serviceWorker.controller?.state)).toBe("activated");
+    await page.evaluate(async () => {
+      const child = document.createElement("iframe");
+      const loaded = () =>
+        new Promise<void>((resolve) => child.addEventListener("load", () => resolve(), { once: true }));
+      const previous = loaded();
+      child.src = "previous";
+      document.body.append(child);
+      await previous;
+      if (!child.contentWindow?.location.pathname.endsWith("/previous")) throw new Error("Missing previous document");
+      const blank = loaded();
+      child.src = "about:blank";
+      await blank;
+    });
+    const navigated = await inspect(frame, "navigated");
+    await page.evaluate(async () => {
+      const child = document.querySelector("iframe")!;
+      const loaded = new Promise<void>((resolve) => child.addEventListener("load", () => resolve(), { once: true }));
+      child.src = URL.createObjectURL(new Blob(['<iframe srcdoc="<p>nested</p>"></iframe>'], { type: "text/html" }));
+      await loaded;
+    });
+    const results = [
+      initial,
+      navigated,
+      await inspect(frame, "blob"),
+      await inspect(frame.frameLocator("iframe"), "srcdoc"),
+    ];
+    const names = await page.evaluate(async (target) => {
+      const registration = await navigator.serviceWorker.getRegistration(target);
+      if (!registration) throw new Error("Missing parent registration");
+      return (await registration.cookies.getSubscriptions()).map((entry) => entry.name);
+    }, url);
+    const subscribed = results.filter((result) => result.subscribed).map((result) => result.frame);
+    expect(names).toHaveLength(subscribed.length);
+    expect(new Set(names)).toEqual(new Set(subscribed));
+    if (site === "jar") expect(await index(fixture)).toEqual([]);
+    return results;
+  });
 });

@@ -1,6 +1,6 @@
 import type { Cookie } from "electron";
 
-import { parseSetCookie, type JarCookie } from "./parse.ts";
+import { defaultPath, parseSetCookie, type JarCookie } from "./parse.ts";
 import type { WindowCookie } from "./shared.ts";
 import {
   abandonOn,
@@ -18,14 +18,16 @@ const malformed = "Cookie was malformed and could not be stored, due to problem(
 
 // The preload has already performed Web IDL conversion. Validate the wire data independently
 // and construct only non-HttpOnly writes, even when the renderer supplies extra fields.
-function structuredCookie(input: unknown, host: string): JarCookie {
+function structuredCookie(input: unknown, host: string, url: string): JarCookie {
   if (!input || typeof input !== "object") throw new TypeError(malformed);
   const { name, value, path, expires, domain, sameSite, secure, partitioned } = input as Partial<WindowCookie>;
+  const defaultPathRequest = path === "" ? new URL(url).pathname : undefined;
+  const cookiePath = defaultPathRequest === undefined ? path : defaultPath(defaultPathRequest);
   if (
     typeof name !== "string" ||
     typeof value !== "string" ||
-    typeof path !== "string" ||
-    !path.startsWith("/") ||
+    typeof cookiePath !== "string" ||
+    !cookiePath.startsWith("/") ||
     (domain !== null && domain !== host) ||
     secure !== true ||
     partitioned !== false ||
@@ -35,7 +37,7 @@ function structuredCookie(input: unknown, host: string): JarCookie {
     invalidData.test(value) ||
     Buffer.byteLength(name + value) > 4096 ||
     /^__(?:host-)?http-/i.test(name) ||
-    (/^__host-/i.test(name) && (domain !== null || path !== "/")) ||
+    (/^__host-/i.test(name) && (domain !== null || cookiePath !== "/")) ||
     (!name && /^__(?:secure|host|http)-/i.test(value)) ||
     name.includes("=") ||
     (!name && (!value || value.includes("=")))
@@ -44,7 +46,8 @@ function structuredCookie(input: unknown, host: string): JarCookie {
   return {
     name,
     value,
-    path,
+    path: cookiePath,
+    defaultPathRequest,
     domain: domain ?? undefined,
     expirationDate: expires === null ? undefined : expires <= 0 ? 1 : expires / 1000,
     secure: true,
@@ -60,8 +63,10 @@ export function createScriptCookies(
   storageOrigin: string,
   storageHost: string,
 ) {
-  async function read(url: string, signal: AbortSignal) {
-    const cookies = await abandonOn(store.get({ url: storageOrigin + new URL(url).pathname, httpOnly: false }), signal);
+  async function read(url: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const pending = store.get({ url: storageOrigin + new URL(url).pathname, httpOnly: false });
+    const cookies = await (signal ? abandonOn(pending, signal) : pending);
     return orderCookies(cookies.filter((cookie) => !cookie.httpOnly));
   }
 
@@ -89,7 +94,7 @@ export function createScriptCookies(
     origin,
     storageHost,
     publicCookie,
-    async readText(url: string, signal: AbortSignal) {
+    async readText(url: string, signal?: AbortSignal) {
       return serializeCookies(await read(url, signal));
     },
     async readAll(url: string, name: string | undefined, signal: AbortSignal) {
@@ -101,8 +106,8 @@ export function createScriptCookies(
         return { status: "rejected", reason: "invalid script cookie" };
       return write(parsed.cookie, signal);
     },
-    async writeStructured(input: unknown, signal: AbortSignal) {
-      const result = await write(structuredCookie(input, host), signal);
+    async writeStructured(url: string, input: unknown, signal: AbortSignal) {
+      const result = await write(structuredCookie(input, host, url), signal);
       if (result.status === "rejected") throw new TypeError(malformed);
       if (result.status === "unknown") throw signal.reason;
     },

@@ -14,6 +14,7 @@ export interface WakeStorage {
 }
 
 export interface Scheduler {
+  /** Positive, strictly increasing observation order within this launch. */
   now(): number;
   /** Returns a function that cancels this one-shot timer. */
   after(ms: number, callback: () => void): () => void;
@@ -37,7 +38,7 @@ export interface ChangeItems<Item extends CookieItem> {
 }
 
 export interface CookieChange<Item extends CookieItem> extends ChangeItems<Item> {
-  /** Uses the same persistent time base as Scheduler.now(). */
+  /** Order of the change notification on the same launch-local clock as Scheduler.now(). */
   readonly time: number;
 }
 

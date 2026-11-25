@@ -180,6 +180,23 @@ describe("serialized main-world cookie installer", () => {
     expect(bridge.getAll.mock.calls).toEqual([[creationUrl, undefined]]);
   });
 
+  it.each(["/group;v=1", "/" + "a".repeat(1024)])(
+    "preserves empty paths after pushState and rejects the same directory as an explicit path (case %#)",
+    async (directory) => {
+      const url = location.origin + directory + "/page";
+      const { page, store, bridge } = install({ cookieApi: true, fetch: true, creationUrl: url });
+      page.history.pushState(null, "", "/elsewhere/page");
+      await store.set({ name: "a", value: "b", path: "" });
+      await store.delete({ name: "a", path: "" });
+      await expect(store.set({ name: "a", value: "b", path: directory })).rejects.toBeInstanceOf(page.TypeError);
+      await expect(store.delete({ name: "a", path: directory })).rejects.toBeInstanceOf(page.TypeError);
+      expect(bridge.set.mock.calls).toEqual([
+        [url, { ...sample, path: "" }],
+        [url, { ...sample, value: "", expires: 0, path: "" }],
+      ]);
+    },
+  );
+
   it("CS-05/06/08/15 normalizes writes and expires the same identity for delete", async () => {
     const { store, bridge } = install();
     await store.set("a", "b");
@@ -241,6 +258,10 @@ describe("serialized main-world cookie installer", () => {
       { name: "a", value: "v", sameSite: "INVALID" },
       "Failed to read the 'sameSite' property from 'CookieInit': The provided value 'INVALID' is not a valid enum value of type CookieSameSite.",
     ],
+    [
+      { name: "a", value: "v", sameSite: "bad\ud800" },
+      "Failed to read the 'sameSite' property from 'CookieInit': The provided value 'bad\ud800' is not a valid enum value of type CookieSameSite.",
+    ],
     [{ name: "a" }, "Failed to read the 'value' property from 'CookieInit': Required member is undefined."],
   ] as const)("CS-07 rejects invalid dictionary %# before IPC", async (input, message) => {
     const { page, store, bridge } = install();
@@ -292,13 +313,47 @@ describe("serialized main-world cookie installer", () => {
         message: `Failed to execute '${method}' on 'CookieStore': ${malformed}`,
       });
     }
-    const timeout = { name: "TimeoutError", message: "store timed out" };
-    bridge.getAll.mockRejectedValueOnce(timeout);
-    const pending = store.getAll();
-    await expect(pending).rejects.toBeInstanceOf(page.DOMException);
-    await expect(pending).rejects.toMatchObject(timeout);
+    const errors = [
+      { name: "TimeoutError", message: "Cookie store timed out" },
+      { name: "SecurityError", message: "Access to the CookieStore API is denied in this context." },
+    ];
+    for (const error of errors) {
+      bridge.getAll.mockResolvedValueOnce({ ok: false, error });
+      const read = store.getAll();
+      await expect(read).rejects.toBeInstanceOf(page.DOMException);
+      await expect(read).rejects.toMatchObject(error);
+      bridge.set.mockResolvedValueOnce({ ok: false, error });
+      const write = store.set("a", "b");
+      await expect(write).rejects.toBeInstanceOf(page.DOMException);
+      await expect(write).rejects.toMatchObject(error);
+    }
     await expect(store.getAll()).resolves.toEqual([]);
     await expect(store.set("a", "b")).resolves.toBeUndefined();
+  });
+
+  it.each(["prototype", "borrowed"])("registers the first change listener through a %s method", (source) => {
+    const { page, bridge, store } = install();
+    const add = source === "prototype" ? page.EventTarget.prototype.addEventListener : page.document.addEventListener;
+    const listener = vi.fn<() => void>();
+    add.call(page.document, "change", listener);
+    expect(bridge.registerChanges).not.toHaveBeenCalled();
+    add.call(store, "change", listener);
+    expect(bridge.registerChanges).toHaveBeenCalledExactlyOnceWith(creationUrl, documentId, expect.any(Function));
+    expect(Object.hasOwn(page.CookieStore.prototype, "addEventListener")).toBe(false);
+    const [, , receive] = bridge.registerChanges.mock.calls[0];
+    receive({ documentId, changed: [sample], deleted: [] });
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it("registers the receiver when addEventListener is borrowed from another installed window", () => {
+    const caller = install();
+    const owner = install();
+    const listener = vi.fn<() => void>();
+    caller.page.document.addEventListener.call(owner.store, "change", listener);
+    expect(owner.bridge.registerChanges).toHaveBeenCalledOnce();
+    expect(caller.bridge.registerChanges).not.toHaveBeenCalled();
+    owner.bridge.registerChanges.mock.calls[0][2]({ documentId, changed: [sample], deleted: [] });
+    expect(listener).toHaveBeenCalledOnce();
   });
 
   it.each(["onchange", "addEventListener"])(

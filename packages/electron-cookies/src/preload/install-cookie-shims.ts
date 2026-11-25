@@ -5,8 +5,9 @@ import type { CookieReply, CookieShimBridge, WindowCookie, WorkerStoreBridge } f
 /** Electron serializes this function; keep every runtime dependency inside it. */
 export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge): void {
   const realm = globalThis;
-  const { apply } = Reflect;
-  const { defineProperty, getOwnPropertyDescriptor } = Object;
+  const { apply, get } = Reflect;
+  const NativeProxy = Proxy;
+  const { defineProperty, getOwnPropertyDescriptor, getPrototypeOf } = Object;
   const { URL: NativeURL, TypeError: NativeTypeError, DOMException: NativeDOMException } = realm;
   const { options: installation } = bridge;
 
@@ -184,7 +185,8 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
     if (!path) {
       const directory = apply(slice, creationPath, [0, apply(lastIndexOf, creationPath, ["/"])]) || "/";
       if (hostPrefix && directory !== "/") fail(method, malformed);
-      return directory;
+      // Chromium derives this path from the cookie URL, including directories invalid as explicit Path attributes.
+      return "";
     }
     if (hostPrefix && path !== "/") fail(method, 'Cookies with "__Host-" prefix cannot have a non-"/" path');
     if (path[0] !== "/") fail(method, 'Cookie path must start with "/"');
@@ -228,7 +230,7 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
     const rawPath = options.path;
     const path = rawPath === undefined ? "/" : usv(rawPath);
     const rawSite = method === "set" ? options.sameSite : undefined;
-    const sameSite = rawSite === undefined ? "strict" : usv(rawSite);
+    const sameSite = rawSite === undefined ? "strict" : domString(rawSite);
     if (sameSite !== "strict" && sameSite !== "lax" && sameSite !== "none") {
       fail(
         method,
@@ -333,7 +335,7 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
     const invoke = methods[method];
     defineProperty(prototype, method, {
       ...getOwnPropertyDescriptor(prototype, method),
-      value: new Proxy(native, {
+      value: new NativeProxy(native, {
         apply(original, receiver, args) {
           return apply(receiver === store ? invoke : original, receiver, args);
         },
@@ -342,6 +344,43 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
   }
   if (windowBridge) {
     const onchange = getOwnPropertyDescriptor(prototype, "onchange")!;
+    const ownerKey = Symbol.for("@repo/electron-cookies/window-change-listener");
+    const addListener = new NativeProxy(add, {
+      apply(original, receiver, args) {
+        if (args.length < 2 || args[1] == null || (typeof args[0] === "string" && args[0] !== "change")) {
+          return apply(original, receiver, args);
+        }
+        if (receiver !== store) {
+          // Register in the receiving window even when another window supplies the method.
+          // Only a patched CookieStore setter can identify its owning singleton.
+          const proto = receiver && typeof receiver === "object" && getPrototypeOf(receiver);
+          const setter = proto && getOwnPropertyDescriptor(proto, "onchange")?.set;
+          const lookup = setter && getOwnPropertyDescriptor(setter, ownerKey)?.value;
+          const ownedAdd = typeof lookup === "function" ? apply(lookup, undefined, [receiver]) : undefined;
+          return apply(typeof ownedAdd === "function" ? ownedAdd : original, receiver, args);
+        }
+        if (registered) return apply(original, receiver, args);
+        const type = domString(args[0]);
+        args[0] = type;
+        if (type !== "change") return apply(original, receiver, args);
+        const options: AddEventListenerOptions | boolean | undefined = args[2];
+        // Let Web IDL validate the listener before reading options. Record the signal
+        // used by the native call without reading any application getter twice.
+        let signal: unknown;
+        if (options !== null && (typeof options === "object" || typeof options === "function")) {
+          args[2] = new NativeProxy(options, {
+            get(target, key) {
+              const value: unknown = get(target, key);
+              if (key === "signal") signal = value;
+              return value;
+            },
+          });
+        }
+        const added = apply(original, receiver, args);
+        if (!signal || !apply(getAborted, signal, [])) listen();
+        return added;
+      },
+    });
     defineProperty(prototype, "onchange", {
       ...onchange,
       set(this: CookieStore, value: unknown) {
@@ -349,30 +388,12 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
         if (this === store && apply(onchange.get!, this, [])) listen();
       },
     });
-    defineProperty(prototype, "addEventListener", {
-      configurable: true,
-      writable: true,
-      value: function addEventListener(
-        this: EventTarget,
-        type: string,
-        listener: EventListenerOrEventListenerObject | null,
-        options?: boolean | AddEventListenerOptions,
-      ) {
-        const eventType = domString(type);
-        if (this !== store || eventType !== "change" || listener == null || registered) {
-          apply(add, this, [eventType, listener, options]);
-          return;
-        }
-        // Snapshot the dictionary once: an already-aborted signal installs no listener.
-        if (typeof options === "object" && options !== null) {
-          const { capture, once, passive, signal } = options;
-          apply(add, this, [eventType, listener, { capture, once, passive, signal }]);
-          if (signal && apply(getAborted, signal, [])) return;
-        } else {
-          apply(add, this, [eventType, listener, options]);
-        }
-        listen();
-      },
+    defineProperty(getOwnPropertyDescriptor(prototype, "onchange")!.set!, ownerKey, {
+      value: (receiver: unknown) => (receiver === store ? addListener : undefined),
+    });
+    defineProperty(NativeEventTarget.prototype, "addEventListener", {
+      ...getOwnPropertyDescriptor(NativeEventTarget.prototype, "addEventListener"),
+      value: addListener,
     });
   }
 }

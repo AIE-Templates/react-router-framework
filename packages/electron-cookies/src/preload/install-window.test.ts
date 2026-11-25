@@ -47,7 +47,10 @@ function setup() {
 it("binds each operation to the captured document and registers the filtered receiver before sending", async () => {
   const { wire, frame, executeInMainWorld, install } = setup();
   const bridge = install();
-  expect(executeInMainWorld.mock.lastCall![0].func).toBe(installCookieShims);
+  expect(executeInMainWorld.mock.calls.map(([entry]) => entry.func)).toEqual([
+    installSubscriptionShims,
+    installCookieShims,
+  ]);
   expect(bridge.options).toMatchObject({
     creationUrl: href,
     markerHeader: OMIT_COOKIES_HEADER,
@@ -112,6 +115,7 @@ it("selects opaque, blob and srcdoc installations without registering unused coo
   expect(install().options).toMatchObject({ cookieApi: false, fetch: true, creationUrl: null });
   frame.location = { protocol: "about:", href: "about:srcdoc" };
   expect(install().options).toMatchObject({ cookieApi: false, fetch: true, creationUrl: null });
+  expect(executeInMainWorld.mock.calls.map(([entry]) => entry.func)).toEqual([installCookieShims, installCookieShims]);
   expect(wire.on).not.toHaveBeenCalled();
   expect(wire.sendSync).not.toHaveBeenCalled();
 });

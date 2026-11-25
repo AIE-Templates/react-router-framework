@@ -17,12 +17,16 @@ export class WakeIndex {
   readonly #storage: WakeStorage;
   readonly #revisions = new Map<string, number>();
   readonly #records = new Map<string, WakeRecord[]>();
+  // On disk these hints cover a crash after native subscribe. In this process we can wait for its outcome.
+  readonly #pending = new WeakSet<WakeRecord>();
   #lastWrite: Promise<void> = Promise.resolve();
 
   constructor(storage: WakeStorage) {
     this.#storage = storage;
     // A holder from a previous process cannot resume. Its native subscription may still exist.
-    for (const { pinned: _pinned, ...record } of storage.read()) {
+    for (const { pinned: _pinned, ...stored } of storage.read()) {
+      // A restored subscription predates every notification in this launch, even after a clock rollback.
+      const record = { ...stored, since: 0 };
       const records = this.#records.get(record.scope);
       if (records) records.push(record);
       else this.#records.set(record.scope, [record]);
@@ -62,10 +66,25 @@ export class WakeIndex {
     const records = [...(this.#records.get(scope) ?? [])];
     for (const subscription of subscriptions) {
       const i = records.findIndex((r) => sameSubscription(scope, r, subscription));
-      if (i < 0) records.push({ ...subscription, scope, since, eligible: true });
-      else if (!records[i].eligible) records[i] = { ...records[i], since, eligible: true };
+      if (i >= 0 && records[i].eligible) continue;
+      const record = { ...(i < 0 ? subscription : records[i]), scope, since, eligible: true };
+      this.#pending.add(record);
+      if (i < 0) records.push(record);
+      else records[i] = record;
     }
     return this.#write(scope, records, "after-write");
+  }
+
+  finishSubscribe(scope: string, failed: boolean): Promise<void> {
+    // Operations are serialized per scope. A failed duplicate must preserve an older successful subscribe.
+    const records = this.#records.get(scope) ?? [];
+    let changed = false;
+    const next = records.map((record) => {
+      if (!this.#pending.delete(record) || !failed) return record;
+      changed = true;
+      return { ...record, eligible: false };
+    });
+    return changed ? this.#write(scope, next, "immediately") : Promise.resolve();
   }
 
   editSubscriptions(scope: string, subscriptions: readonly Subscription[], action: "remove" | "pin"): Promise<void> {
@@ -93,7 +112,9 @@ export class WakeIndex {
   }
 
   eligibleItems<Item extends CookieItem>(scope: string, event: CookieChange<Item>) {
-    const records = (this.#records.get(scope) ?? []).filter((r) => r.eligible && r.since < event.time);
+    const records = (this.#records.get(scope) ?? []).filter(
+      (r) => r.eligible && !this.#pending.has(r) && r.since < event.time,
+    );
     const eligible = (item: Item) => records.some((r) => matches(r, item));
     return { changed: event.changed.filter(eligible), deleted: event.deleted.filter(eligible) };
   }

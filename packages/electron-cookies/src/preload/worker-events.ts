@@ -22,20 +22,30 @@ export function installWorkerEvents(bridge: WorkerEventBridge): void {
   const { cookies, scope } = registration;
   const { getSubscriptions } = cookies;
   const { apply } = Reflect;
-  const { defineProperty } = Object;
+  const { defineProperty, getOwnPropertyDescriptor } = Object;
   const { dispatchEvent } = EventTarget.prototype;
   const { URL: NativeURL, DOMException: NativeDOMException } = globalThis;
+  const pathname = getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
+  const active = getOwnPropertyDescriptor(ServiceWorkerRegistration.prototype, "active")!.get!;
+  const { startsWith, endsWith } = String.prototype;
+  const { some, filter } = Array.prototype;
+  const report = globalThis.reportError.bind(globalThis);
   const resolve = Promise.resolve.bind(Promise);
   const { then } = Promise.prototype;
   const events = new Map<string, () => void>();
 
+  const track = events.set.bind(events);
+  const lookup = events.get.bind(events);
+  const forget = events.delete.bind(events);
+
   async function deliver({ eventId, changed, deleted }: WorkerCookieEvent) {
     let dispatching = true;
     let pending = 0;
+    let started = false;
     let finished = false;
     function finish() {
       finished = true;
-      events.delete(eventId);
+      forget(eventId);
     }
     function acknowledge() {
       if (!finished && !dispatching && pending === 0) {
@@ -47,29 +57,32 @@ export function installWorkerEvents(bridge: WorkerEventBridge): void {
       pending--;
       acknowledge();
     }
-    events.set(eventId, finish);
+    track(eventId, finish);
     try {
-      if (registration.active !== serviceWorker) {
+      if (apply(active, registration, []) !== serviceWorker) {
         finish();
         bridge.nack(eventId);
         return;
       }
       const subscriptions = await apply(getSubscriptions, cookies, []);
       if (finished) return; // Timed out while Chromium was reading subscriptions.
-      if (registration.active !== serviceWorker) {
+      if (apply(active, registration, []) !== serviceWorker) {
         finish();
         bridge.nack(eventId);
         return;
       }
       const matches = (item: WorkerCookieItem) =>
-        subscriptions.some(({ name, url }) => {
-          const path = new NativeURL(url ?? scope).pathname;
-          return (
-            (name === undefined || name === item.name) &&
-            (path === item.path || path.startsWith(item.path.endsWith("/") ? item.path : item.path + "/"))
-          );
-        });
-      const init = { changed: changed.filter(matches), deleted: deleted.filter(matches) };
+        apply(some, subscriptions, [
+          ({ name, url }: CookieStoreGetOptions) => {
+            const path: string = apply(pathname, new NativeURL(url ?? scope), []);
+            return (
+              (name === undefined || name === item.name) &&
+              (path === item.path ||
+                apply(startsWith, path, [apply(endsWith, item.path, ["/"]) ? item.path : item.path + "/"]))
+            );
+          },
+        ]);
+      const init = { changed: apply(filter, changed, [matches]), deleted: apply(filter, deleted, [matches]) };
       if (init.changed.length || init.deleted.length) {
         const event = new ChangeEvent("cookiechange", init);
         defineProperty(event, "waitUntil", {
@@ -80,8 +93,15 @@ export function installWorkerEvents(bridge: WorkerEventBridge): void {
           },
         });
         bridge.started(eventId);
+        started = true;
         apply(dispatchEvent, worker, [event]);
       }
+    } catch (error) {
+      if (!started && !finished) {
+        finish();
+        bridge.nack(eventId);
+      }
+      throw error;
     } finally {
       dispatching = false;
       acknowledge();
@@ -89,8 +109,8 @@ export function installWorkerEvents(bridge: WorkerEventBridge): void {
   }
   bridge.listen(
     (message) => {
-      void deliver(message).catch((error: unknown) => globalThis.reportError(error));
+      void apply(then, deliver(message), [undefined, report]);
     },
-    (id) => events.get(id)?.(),
+    (id) => lookup(id)?.(),
   );
 }

@@ -291,3 +291,93 @@ test("SRV-01 | future Expires and Max-Age including the 400-day ceiling", async 
     });
   });
 });
+
+test("SRV-04 | equal-path order when a downgrade precedes a new sibling in the same response", async ({ fixture }) => {
+  await compareNative(
+    fixture,
+    "/",
+    async (site) => {
+      await fixture.set(["x=old; HttpOnly; Path=/"]);
+      await fixture.set(["x=new; Path=/", "y=new; Path=/"]);
+      const header = await requestCookie(fixture.page);
+      const text = await fixture.page.evaluate(() => document.cookie);
+      const expected = site === "jar" ? "y=new; x=new" : "x=new; y=new";
+      expect([header, text]).toEqual([expected, expected]);
+      return [header, text];
+    },
+    () => ["y=new; x=new", "y=new; x=new"],
+  );
+});
+
+for (const [label, directory] of [
+  ["semicolon", "/group;v=1"],
+  ["long directory", "/" + "a".repeat(1024)],
+]) {
+  test("SRV-01/DC-03 | URL-derived default Path with a " + label, async ({ fixture }) => {
+    const page = directory + "/page";
+    await compareNative(fixture, page, async (site) => {
+      await fixture.set(["hidden=old; HttpOnly"], page);
+      await fixture.set(["hidden=new"], page);
+      await fixture.page.evaluate(() => {
+        document.cookie = "text=ok";
+      });
+      const rows = (await fixture.stored(site)).map(({ name, path }) => [name, path]);
+      const here = await requestCookie(fixture.page, directory + "/child");
+      const sibling = await requestCookie(fixture.page, directory + "-sibling/child");
+      expect(rows).toEqual([
+        ["hidden", directory],
+        ["text", directory],
+      ]);
+      expect(here).toBe("hidden=new; text=ok");
+      expect(sibling).toBe("");
+      return { rows, here, sibling, text: await fixture.page.evaluate(() => document.cookie) };
+    });
+  });
+
+  test("CS-06/08 | cookieStore uses the URL directory for empty path with a " + label, async ({ fixture }) => {
+    await compareNative(fixture, directory + "/page", async () => {
+      const outcome = await fixture.page.evaluate(async () => {
+        try {
+          await cookieStore.set({ name: "structured", value: "ok", path: "" });
+          const stored = await cookieStore.get("structured");
+          await cookieStore.delete({ name: "structured", path: "" });
+          return {
+            path: stored && "path" in stored ? stored.path : undefined,
+            deleted: (await cookieStore.get("structured")) === null,
+          };
+        } catch (error) {
+          return { error: error instanceof Error ? error.name : String(error) };
+        }
+      });
+      expect(outcome).toEqual({ path: directory, deleted: true });
+      return outcome;
+    });
+  });
+}
+
+test("SRV-01 | a leading UTF-8 BOM in Set-Cookie is part of the name", async ({ fixture }) => {
+  await compareNative(fixture, "/", async (site) => {
+    const pair = bytes("\uFEFFkey=value");
+    await fixture.set([pair + "; Path=/", "key=plain; Path=/"]);
+    const wire = await requestCookie(fixture.page);
+    expect(wire).toBe(pair + "; key=plain");
+    return { wire, text: await fixture.page.evaluate(() => document.cookie), rows: await fixture.stored(site) };
+  });
+});
+
+test("SRV-06 | malformed response Date and legacy Chromium date parsing", async ({ fixture }) => {
+  await compareNative(
+    fixture,
+    "/",
+    async (site) => {
+      const expired = "; Expires=Sun, 02 Jan 2000 00:00:00 GMT; Path=/";
+      await fixture.set(["invalid=v" + expired], "/set", "01x Jan 2000 00:00:00 GMT");
+      await fixture.set(["legacy=v" + expired], "/set", "00:00:00! 01!!! january??? 2000???");
+      await fixture.set(["numeric=v" + expired], "/set", "01/01/2000 00:00:00 GMT");
+      const names = (await fixture.stored(site)).map(({ name }) => name);
+      expect(names).toEqual(site === "jar" ? ["legacy"] : ["legacy", "numeric"]);
+      return names;
+    },
+    () => ["legacy"],
+  );
+});

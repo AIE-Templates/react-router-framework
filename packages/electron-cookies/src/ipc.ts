@@ -47,6 +47,7 @@ export function installCookieIpc({
   }
 
   async function sync(event: IpcMainEvent, url: unknown, op: "get" | "set", text?: unknown) {
+    const receivedAt = performance.now();
     let reply: string | null = op === "get" ? "" : null;
     let deadline: ReturnType<typeof storeDeadline> | undefined;
     let acceptedUrl: string | undefined;
@@ -56,8 +57,8 @@ export function installCookieIpc({
       const frame = event.senderFrame;
       generation = script.successfulStoreCalls;
       probing = cooling(generation);
-      deadline = storeDeadline(probing ? SYNC_STORE_PROBE_TIMEOUT_MS : SYNC_STORE_TIMEOUT_MS);
       if (!trusted(frame, event.sender, url)) return;
+      deadline = storeDeadline(probing ? SYNC_STORE_PROBE_TIMEOUT_MS : SYNC_STORE_TIMEOUT_MS, receivedAt);
       acceptedUrl = url;
       if (op === "get") {
         const value = await script.readText(url, deadline.signal);
@@ -98,7 +99,9 @@ export function installCookieIpc({
     }),
   );
   ipcMain.handle(channels.storeSet, (event, url: unknown, input: unknown) =>
-    invokeCookieStore(trustedUrl(event, url), (_url, signal) => script.writeStructured(input, signal)),
+    invokeCookieStore(trustedUrl(event, url), (creationUrl, signal) =>
+      script.writeStructured(creationUrl, input, signal),
+    ),
   );
   ipcMain.on(channels.register, (event, url: unknown, documentId: unknown) => {
     const frame = event.senderFrame;

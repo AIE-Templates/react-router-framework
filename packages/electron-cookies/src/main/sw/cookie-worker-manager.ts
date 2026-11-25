@@ -93,8 +93,8 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
   }
 
   async #wake(scope: string, lane: Lane<Item>, event: CookieChange<Item>): Promise<void> {
-    const revision = this.#index.revision(scope);
     for (let attempt = 0; this.#lanes.get(scope) === lane; attempt++) {
+      const revision = this.#index.revision(scope);
       let worker: WorkerPort<Item> | null | undefined;
       try {
         worker = await this.#options.native.startWorkerForScope(scope);

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { installWorkerEvents, type WorkerEventBridge } from "../../preload/worker-events.ts";
 import {
   CookieWorkerManager,
   type ChangeItems,
@@ -25,7 +26,7 @@ type Message = ChangeItems<Item> & { eventId: string };
 const cookie = (name: string, path: string) => ({ name, path });
 
 function seed(name = "x", target = scope): WakeRecord {
-  return { scope: target, name, since: 1, eligible: true };
+  return { scope: target, name, since: 0, eligible: true };
 }
 
 function workerPort(versionId: number, target = scope) {
@@ -117,10 +118,9 @@ describe("wake index and subscription ownership", () => {
   });
 
   it("SW-07/09: omitted URL uses scope, empty name is exact, and only strictly older subscriptions qualify", async () => {
-    const h = setup([
-      { ...seed(""), since: Date.now() },
-      { ...seed("any"), eligible: false },
-    ]);
+    const h = setup([{ ...seed("any"), eligible: false }]);
+    const grant = await h.manager.acquire(scope, { kind: "subscribe", subscriptions: [{ name: "" }] }, 7);
+    await h.manager.complete(grant.operationId, true);
     h.change();
     h.manager.onChange({ changed: [{ name: "", path: "/sub/private" }], deleted: [], time: Date.now() });
     expect(h.startWorkerForScope).not.toHaveBeenCalled();
@@ -163,8 +163,18 @@ describe("wake index and subscription ownership", () => {
     expect(removed).not.toHaveBeenCalled();
     await h.manager.complete(first.operationId, true);
     const second = await b;
+    await tick(1);
+    const writingAgain = deferred<void>();
+    h.storage.write.mockImplementationOnce(persist).mockImplementationOnce(async (snapshot) => {
+      await writingAgain.promise;
+      await persist(snapshot);
+    });
     const again = h.manager.acquire(scope, subscribe, "frame");
     await h.manager.complete(second.operationId, true);
+    expect(h.disk()).toEqual([]);
+    h.change();
+    expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    writingAgain.resolve();
     await h.manager.complete((await again).operationId, true);
     await h.manager.complete(second.operationId, true);
     expect(h.disk()).toEqual([{ ...seed(), since: Date.now() }]);
@@ -180,8 +190,82 @@ describe("wake index and subscription ownership", () => {
     await tick(1);
     const next = await h.manager.acquire(scope, subscribe, "frame");
     await h.manager.complete(next.operationId, false);
-    expect(h.disk()).toEqual([{ ...seed(), since: Date.now() }]);
-    expect(h.storage.write).toHaveBeenCalledTimes(2);
+    expect(h.disk()).toEqual([{ ...seed(), since: Date.now(), eligible: false }]);
+    expect(h.storage.write).toHaveBeenCalledTimes(3);
+  });
+
+  it("SW-09: a failed wildcard wakes but cannot authorize an event older than the first successful subscribe", async () => {
+    const h = setup();
+    const old = await h.manager.acquire(scope, { kind: "subscribe", subscriptions: [{}] }, "frame");
+    await h.manager.complete(old.operationId, false);
+    const wake = deferred<WorkerPort<Item>>();
+    h.startWorkerForScope.mockReturnValueOnce(wake.promise);
+    await tick(1);
+    h.change("before subscribe");
+    expect(h.startWorkerForScope).toHaveBeenCalledOnce();
+    await tick(1);
+    const next = await h.manager.acquire(scope, subscribe, 7);
+    await h.manager.complete(next.operationId, true);
+    wake.resolve(h.worker);
+    await tick();
+    expect(h.worker.send).not.toHaveBeenCalled();
+    await tick(1);
+    h.change("after subscribe");
+    await tick();
+    expect(h.worker.send.mock.calls.map(([event]) => event.changed[0].value)).toEqual(["after subscribe"]);
+    await h.manager.quitAll();
+  });
+
+  it("SW-08: losing the owner during persistence leaves its ungranted hint wake-only after restart", async () => {
+    const h = setup();
+    const writing = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await writing.promise;
+      await persist(records);
+    });
+    const acquiring = h.manager.acquire(scope, subscribe, "frame");
+    await tick();
+    expect(h.storage.write).toHaveBeenCalledOnce();
+    h.manager.ownerDestroyed("frame");
+    await expect(acquiring).rejects.toThrow("owner destroyed");
+    writing.resolve();
+    await h.manager.quitAll();
+    expect(h.disk()).toEqual([{ ...seed(), eligible: false, since: 1_000 }]);
+    const restarted = new CookieWorkerManager(h.options);
+    restarted.onChange({ changed: [x], deleted: [], time: Date.now() });
+    await tick();
+    expect(h.startWorkerForScope).toHaveBeenCalledOnce();
+    expect(h.worker.send).not.toHaveBeenCalled();
+    await restarted.quitAll();
+  });
+
+  it("SW-09: a failed subscribe preserves existing eligibility and withholds new hints until completion", async () => {
+    const h = setup([seed()]);
+    const grant = await h.manager.acquire(scope, { kind: "subscribe", subscriptions: [{ name: "x" }, {}] }, 7);
+    await tick(1);
+    h.manager.onChange({ changed: [x, y], deleted: [], time: Date.now() });
+    await tick();
+    expect(h.worker.send.mock.calls[0][0].changed).toEqual([x]);
+    h.manager.ack(h.ref());
+    await h.manager.complete(grant.operationId, false);
+    h.manager.onChange({ changed: [x, y], deleted: [], time: Date.now() });
+    await tick();
+    expect(h.worker.send.mock.calls[1][0].changed).toEqual([x]);
+    await h.manager.quitAll();
+  });
+
+  it("SW-08: the first change after a backward clock jump on restart reaches the old subscription", async () => {
+    const h = setup();
+    const grant = await h.manager.acquire(scope, subscribe, "frame");
+    await h.manager.complete(grant.operationId, true);
+    await h.manager.quitAll();
+    vi.setSystemTime(500);
+    const restarted = new CookieWorkerManager(h.options);
+    restarted.onChange({ changed: [x], deleted: [], time: Date.now() });
+    await tick();
+    expect(h.worker.send).toHaveBeenCalledExactlyOnceWith({ changed: [x], deleted: [], eventId: expect.any(String) });
+    await restarted.quitAll();
   });
 
   it("SW-08: different scope owners can run concurrently and their disk snapshots land in order", async () => {
@@ -224,13 +308,26 @@ describe("wake index and subscription ownership", () => {
   it("SW-12e: expired subscribe can resume after unsubscribe; restart retains the record and unpins it", async () => {
     const h = setup();
     const first = await h.manager.acquire(scope, subscribe, "slow frame");
+    const native = new Set<string>();
+    const resumeNative = deferred<void>();
+    const subscribing = resumeNative.promise.then(() => {
+      native.add("x");
+      return h.manager.complete(first.operationId, true);
+    });
     const queued = h.manager.acquire(scope, unsubscribe, 7);
-    await tick(10_000);
+    await tick(9_999);
+    expect(h.manager.hasOwner("slow frame")).toBe(true);
+    expect(h.disk()[0].pinned).toBeUndefined();
+    expect(h.logger.warn).not.toHaveBeenCalled();
+    await tick(1);
     const next = await queued;
     expect(h.disk()[0].pinned).toBe(true);
+    native.delete("x");
     await h.manager.complete(next.operationId, true);
-    // The old frame finally runs native subscribe. Its late completion has no authority.
-    await h.manager.complete(first.operationId, true);
+    expect([...native]).toEqual([]);
+    resumeNative.resolve();
+    await subscribing;
+    expect([...native]).toEqual(["x"]);
     expect(h.disk()).toEqual([{ ...seed(), since: 1_000, pinned: true }]);
     expect(h.logger.warn).toHaveBeenCalledExactlyOnceWith(
       { scope, operationId: first.operationId },
@@ -375,6 +472,21 @@ describe("registration changes during delivery", () => {
     expect(h.storage.write).not.toHaveBeenCalled();
   });
 
+  it("SW-12a: definitive absence on retry uses the revision after an operation during backoff", async () => {
+    const h = setup([seed()]);
+    h.startWorkerForScope.mockRejectedValueOnce(new Error("busy")).mockResolvedValueOnce(null);
+    h.change();
+    await tick(99);
+    const intervening = await h.manager.acquire(scope, unsubscribe, "frame");
+    await h.manager.complete(intervening.operationId, false);
+    expect(h.disk()).toEqual([seed()]);
+    await tick(1);
+    expect(h.startWorkerForScope).toHaveBeenCalledTimes(2);
+    expect(h.disk()).toEqual([]);
+    h.change();
+    expect(h.startWorkerForScope).toHaveBeenCalledTimes(2);
+  });
+
   it("SW-12a: deletion after wake starts advances the revision independently of its earlier grant", async () => {
     const h = setup([seed(), seed("y")]);
     const remove = await h.manager.acquire(scope, unsubscribe, "frame");
@@ -469,7 +581,7 @@ describe("active worker delivery and event lifetime", () => {
     await h.manager.quitAll();
   });
 
-  it("SW-12/13: events start in order with independent tasks; B can finish while A waits for B", async () => {
+  it("SW-12/13: ordered dispatch uses independent tasks and version-bound idempotent ACKs", async () => {
     const h = setup([seed()]);
     h.change("A");
     h.change("B");
@@ -491,6 +603,80 @@ describe("active worker delivery and event lifetime", () => {
     expect(h.worker.ends[0]).toHaveBeenCalledTimes(1);
     expect(h.worker.ends[1]).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("SW-13: B's cookiechange handler settles A's waitUntil and both native tasks end normally", async () => {
+    const h = setup([seed()]);
+    const serviceWorker = {};
+    class ChangeEvent extends Event {
+      declare waitUntil: (value: Promise<void>) => void;
+      readonly changed;
+      constructor(type: string, init: CookieChangeEventInit) {
+        super(type);
+        this.changed = init.changed;
+      }
+    }
+    // The installer captures the native ServiceWorkerRegistration.prototype.active getter.
+    class Registration {
+      readonly scope = scope;
+      readonly cookies = { getSubscriptions: async () => [{ name: "x" }] };
+      get active() {
+        return serviceWorker;
+      }
+    }
+    const worker = Object.assign(new EventTarget(), {
+      registration: new Registration(),
+      serviceWorker,
+      ExtendableCookieChangeEvent: ChangeEvent,
+    });
+    const untilB = deferred<void>();
+    const seen: string[] = [];
+    worker.addEventListener("cookiechange", (event) => {
+      if (!(event instanceof ChangeEvent)) throw new Error("Expected cookiechange");
+      const value = event.changed?.[0]?.value;
+      if (value === "A") event.waitUntil(untilB.promise);
+      if (value === "B") untilB.resolve();
+      seen.push(String(value));
+    });
+    const ref = (eventId: string) => ({ versionId: h.worker.versionId, eventId });
+    const bridge: WorkerEventBridge = {
+      listen(deliver) {
+        h.worker.send.mockImplementation(({ eventId, changed }) => {
+          const items = changed.map((item) => ({
+            ...item,
+            domain: null,
+            secure: true,
+            partitioned: false as const,
+            sameSite: "strict" as const,
+          }));
+          deliver({ eventId, changed: items, deleted: [] });
+        });
+      },
+      started: (id) => h.manager.started(ref(id)),
+      nack: (id) => h.manager.nack(ref(id)),
+      ack: (id) => h.manager.ack(ref(id)),
+    };
+    vi.stubGlobal("self", worker);
+    vi.stubGlobal("ServiceWorkerRegistration", Registration);
+    vi.stubGlobal("reportError", (error: unknown) => {
+      throw error;
+    });
+    try {
+      installWorkerEvents(bridge);
+      h.change("A");
+      await tick();
+      expect(seen).toEqual(["A"]);
+      expect(h.worker.ends[0]).not.toHaveBeenCalled();
+      h.change("B");
+      await tick();
+      expect(seen).toEqual(["A", "B"]);
+      expect(h.worker.ends.map((end) => end.mock.calls.length)).toEqual([1, 1]);
+      expect(h.worker.finish).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+      await h.manager.quitAll();
+    }
   });
 
   it("SW-12/12b: at five minutes sends finish to the same version and releases only the expired task", async () => {

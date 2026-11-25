@@ -148,6 +148,36 @@ it("uses the Electron script URL on scoped IPC, shares jar writes and rejects fo
   }
 });
 
+it("derives empty structured paths from the worker script URL for set and delete", async () => {
+  const h = setup();
+  try {
+    const input = {
+      name: "x",
+      value: "worker",
+      path: "",
+      domain: null,
+      secure: true,
+      sameSite: "strict",
+      partitioned: false,
+    };
+    for (const expires of [null, 0]) {
+      expect(await h.worker.ipc.invoke(channels.storeSet, {}, { ...input, expires })).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      expect(h.store.set).toHaveBeenLastCalledWith(
+        expect.objectContaining({ url: "https://jar.example/scripts/sw.js", path: "" }),
+      );
+      expect(await h.jar.cookieHeader({ path: "/scripts/page", headers: new Headers() })).toBe(
+        expires === null ? "x=worker" : undefined,
+      );
+      expect(await h.jar.cookieHeader({ path: "/area/page", headers: new Headers() })).toBeUndefined();
+    }
+  } finally {
+    await h.adapter.quitAll();
+  }
+});
+
 it("matches the serialized script URL prefix across registration paths before reading the jar", async () => {
   const h = setup();
   try {
@@ -253,6 +283,27 @@ it("retains a registration hint after Electron's ambiguous wake error and recove
     await vi.advanceTimersByTimeAsync(0);
     expect(h.worker.send).toHaveBeenCalledOnce();
   } finally {
+    await h.adapter.quitAll();
+  }
+});
+
+it("orders subscribe and the next change even when the performance clock stays on the same tick", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+  try {
+    const grant = await h.worker.ipc.invoke(channels.acquire, {}, scope, {
+      kind: "subscribe",
+      subscriptions: [{ name: "new" }],
+    });
+    expect.assert(grant && typeof grant === "object" && "operationId" in grant);
+    await h.worker.ipc.invoke(channels.complete, {}, grant.operationId, true);
+    h.change("inserted", { name: "new" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.worker.send).toHaveBeenCalledOnce();
+    expect(h.worker.send.mock.calls[0][1].changed).toMatchObject([{ name: "new" }]);
+  } finally {
+    clock.mockRestore();
     await h.adapter.quitAll();
   }
 });

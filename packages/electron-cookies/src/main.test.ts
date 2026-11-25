@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { publicChange } from "./ipc.ts";
 import { createCookieJar, MAX_SET_COOKIES_PER_RESPONSE } from "./main.ts";
 import { OMIT_COOKIES_HEADER } from "./shared.ts";
 import {
@@ -309,20 +310,23 @@ describe("server cookie writes", () => {
     expect(await jar.cookieHeader(req())).toBe("sid=host");
   });
 
-  it("uses the response Date only for Expires", async () => {
-    const store = fakeStore();
-    const { jar } = setup(store);
-    const headers = response("sid=1; Expires=28 Oct 2026 13:00:00 GMT", "other=2; Max-Age=70");
-    headers.set("date", "Wed, 28 Oct 2026 12:00:00 GMT");
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(Date.UTC(2026, 10, 3));
-      await jar.storeResponseCookies(headers, req());
-      expect(store.cookies.map((c) => c.expirationDate)).toEqual([Date.now() / 1000 + 3600, Date.now() / 1000 + 70]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+  it.each(["Wed, 28 Oct 2026 12:00:00 GMT", "Wednesday, 28-Oct-26 12:00:00 GMT", "Wed Oct 28 12:00:00 2026"])(
+    "uses the HTTP Date %s only for Expires",
+    async (date) => {
+      const store = fakeStore();
+      const { jar } = setup(store);
+      const headers = response("sid=1; Expires=28 Oct 2026 13:00:00 GMT", "other=2; Max-Age=70");
+      headers.set("date", date);
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(Date.UTC(2026, 10, 3));
+        await jar.storeResponseCookies(headers, req());
+        expect(store.cookies.map((c) => c.expirationDate)).toEqual([Date.now() / 1000 + 3600, Date.now() / 1000 + 70]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("deletes a 4096-byte HttpOnly name without growing its empty value past the limit", async () => {
     const { jar } = setup(fakeStore());
@@ -401,6 +405,13 @@ describe("server cookie writes", () => {
     expect(fromPartition).toHaveBeenCalledOnce();
     expect(fromPartition.mock.calls[0][0]).not.toMatch(/^persist:/);
     expect(installPermissionPolicy).toHaveBeenCalledWith({ cookies: probe });
+    const fields = expect.objectContaining({
+      sameSite: invalid.endsWith("SameSite=None") ? "no_restriction" : "unspecified",
+      secure: invalid.endsWith("; Secure"),
+      httpOnly: false,
+    });
+    expect(store.set).toHaveBeenCalledWith(fields);
+    expect(probe.set).toHaveBeenCalledWith(fields);
     expect(installPermissionPolicy.mock.invocationCallOrder[0]).toBeLessThan(probe.set.mock.invocationCallOrder[0]);
     expect(store.cookies).toEqual([expect.objectContaining({ value: "old", httpOnly: true })]);
     expect(store.set.mock.calls.slice(1).every(([c]) => !c.httpOnly && c.expirationDate === undefined)).toBe(true);
@@ -430,12 +441,166 @@ describe("server cookie writes", () => {
     installPermissionPolicy.mockImplementationOnce(() => {
       throw new Error("permission policy unavailable");
     });
-    await jar.storeResponseCookies(response("sid=no"), req());
+    await jar.storeResponseCookies(response("sid=earlier", "sid=no"), req());
     expect(probe.set).not.toHaveBeenCalled();
     expect(store.cookies).toEqual([expect.objectContaining({ value: "old", httpOnly: true })]);
     await jar.storeResponseCookies(response("sid=ok"), req());
     expect(fromPartition.mock.calls[0][0]).not.toBe(fromPartition.mock.calls[1][0]);
     expect(store.cookies).toEqual([expect.objectContaining({ value: "ok", httpOnly: false })]);
+  });
+
+  it("stops at an unknown verdict when the probe partition cannot be created", async () => {
+    const store = fakeStore();
+    const { jar, fromPartition } = setup(store);
+    await jar.storeResponseCookies(response("sid=old; HttpOnly"), req());
+    fromPartition.mockImplementationOnce(() => {
+      throw new Error("partition unavailable");
+    });
+    await jar.storeResponseCookies(response("sid=earlier", "sid=later"), req());
+    expect(store.cookies).toMatchObject([{ value: "old", httpOnly: true }]);
+    await jar.storeResponseCookies(response("sid=recovered"), req());
+    expect(await jar.cookieHeader(req())).toBe("sid=recovered");
+  });
+
+  it("logs an initially rejected write superseded by a successful sibling", async () => {
+    const store = fakeStore();
+    const { jar, log } = setup(store);
+    await jar.storeResponseCookies(response("sid=secret; SameSite=None; HttpOnly", "sid=ok"), req());
+    expect(await jar.cookieHeader(req())).toBe("sid=ok");
+    expect(log.debug).toHaveBeenCalledExactlyOnceWith({ name: "sid" }, expect.stringContaining("rejected"));
+    expect(JSON.stringify(log.debug.mock.calls)).not.toContain("secret");
+  });
+
+  it.each(["response", "native removal and script"])(
+    "replaces a visible cookie installed during the probe by %s without publishing a deletion",
+    async (writer) => {
+      const events: string[] = [];
+      const store = fakeStore((cookie, cause) => {
+        const event = publicChange(jar.script, cookie, cause);
+        if (event) events.push(event.changed.length ? "changed " + cookie.value : "deleted " + cookie.value);
+      });
+      const { jar, probe } = setup(store);
+      const entered = gate();
+      const release = gate();
+      probe.set.mockImplementationOnce(async () => {
+        entered.open();
+        await release.promise;
+      });
+      await jar.storeResponseCookies(response("sid=old; HttpOnly"), req());
+      const a = jar.storeResponseCookies(response("sid=a"), req());
+      try {
+        await entered.promise;
+        if (writer === "response") {
+          await jar.storeResponseCookies(response("sid=; HttpOnly; Max-Age=0", "sid=b"), req());
+        } else {
+          await store.set({ ...store.cookies[0], expirationDate: 1 });
+          await jar.script.writeText(origin + "/", "sid=b", new AbortController().signal);
+        }
+        expect(await jar.cookieHeader(req())).toBe("sid=b");
+        expect(events).toEqual(["changed b"]);
+      } finally {
+        release.open();
+        await a;
+      }
+      expect(await jar.cookieHeader(req())).toBe("sid=a");
+      expect(events).toEqual(["changed b", "changed a"]);
+    },
+  );
+
+  it("rechecks a same-identity response submitted while the post-probe retry is awaiting rejection", async () => {
+    const store = fakeStore();
+    const { jar, probe } = setup(store);
+    const realSet = store.set.getMockImplementation()!;
+    const entered = gate();
+    const release = gate();
+    probe.set.mockImplementationOnce(async () => {
+      store.set.mockImplementationOnce(async (details) => {
+        try {
+          await realSet(details);
+        } catch (err) {
+          entered.open();
+          await release.promise;
+          throw err;
+        }
+      });
+    });
+    await jar.storeResponseCookies(response("sid=old; HttpOnly"), req());
+    const pending = jar.storeResponseCookies(response("sid=a"), req());
+    try {
+      await entered.promise;
+      await jar.storeResponseCookies(response("sid=; HttpOnly; Max-Age=0", "sid=b"), req());
+      expect(await jar.cookieHeader(req())).toBe("sid=b");
+      store.set.mockClear();
+    } finally {
+      release.open();
+      await pending;
+    }
+    expect(store.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ value: "a", httpOnly: false }));
+    expect(await jar.cookieHeader(req())).toBe("sid=a");
+  });
+
+  it("reports an unknown downgrade when removal stalls and the replacement is rejected", async () => {
+    vi.useFakeTimers();
+    const store = fakeStore();
+    const { jar, probe, log } = setup(store);
+    try {
+      await jar.storeResponseCookies(response("sid=old; HttpOnly"), req());
+      const realSet = store.set.getMockImplementation()!;
+      probe.set.mockImplementationOnce(async () => {
+        store.set.mockImplementation(async (details) => {
+          if (details.httpOnly && details.expirationDate === 1) {
+            store.set.mockImplementation(realSet).mockRejectedValueOnce(new Error("replacement failed"));
+            return never();
+          }
+          return realSet(details);
+        });
+      });
+      const update = jar.storeResponseCookies(response("sid=earlier", "sid=later"), req());
+      await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
+      await update;
+      expect(log.warn).toHaveBeenCalledWith({ name: "sid", result: "unknown" }, expect.stringContaining("replacement"));
+      expect(log.debug).toHaveBeenCalledExactlyOnceWith({ name: "sid" }, "superseded cookie rejected by the store");
+      expect(store.flushStore).toHaveBeenCalledOnce();
+      await jar.storeResponseCookies(response("sid=recovered"), req());
+      expect(await jar.cookieHeader(req())).toBe("sid=recovered");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["/group;v=1", "/" + "a".repeat(1024)])(
+    "preserves the literal default directory at the store boundary (%#)",
+    async (dir) => {
+      const store = fakeStore();
+      const { jar } = setup(store);
+      const page = dir + "/page";
+      const signal = new AbortController().signal;
+      await jar.storeResponseCookies(response("server=one; HttpOnly"), req(page));
+      expect(store.cookies).toMatchObject([{ path: dir, value: "one", httpOnly: true }]);
+      await jar.storeResponseCookies(response("server=two"), req(page));
+      expect(await jar.script.writeText(origin + page, "text=three", signal)).toEqual({ status: "stored" });
+      expect(await jar.cookieHeader(req(dir + "/child"))).toBe("server=two; text=three");
+      expect(await jar.cookieHeader(req(dir + "-sibling/child"))).toBeUndefined();
+      expect(store.cookies.map((c) => c.path)).toEqual([dir, dir]);
+    },
+  );
+
+  it("ignores a response Date with a malformed numeric day when adjusting Expires", async () => {
+    const store = fakeStore();
+    const { jar } = setup(store);
+    const headers = response("sid=expired; Expires=02 Jan 2000 00:00:00 GMT");
+    headers.set("Date", "01x Jan 2000 00:00:00 GMT");
+    await jar.storeResponseCookies(headers, req());
+    expect(await jar.cookieHeader(req())).toBeUndefined();
+  });
+
+  it("retains Chromium's clock correction for a legacy date with a leading clock and punctuated fields", async () => {
+    const store = fakeStore();
+    const { jar } = setup(store);
+    const headers = response("sid=alive; Expires=02 Jan 2000 00:00:00 GMT");
+    headers.set("Date", "00:00:00! 01!!! january??? 2000???");
+    await jar.storeResponseCookies(headers, req());
+    expect(await jar.cookieHeader(req())).toBe("sid=alive");
   });
 
   it("retries normally when another response has already deleted the HttpOnly cookie", async () => {
@@ -452,6 +617,7 @@ describe("server cookie writes", () => {
   it("delivers B and allows reads while A is probing, then replaces without a visible gap", async () => {
     const store = fakeStore();
     const { jar, probe } = setup(store);
+    const realSet = store.set.getMockImplementation()!;
     const entered = gate();
     const release = gate();
     probe.set.mockImplementationOnce(async () => {
@@ -464,15 +630,16 @@ describe("server cookie writes", () => {
       await entered.promise;
       await jar.storeResponseCookies(response("sid=b; HttpOnly"), req());
       expect(await jar.cookieHeader(req())).toBe("sid=b");
-      await expect(store.set({ ...store.cookies[0], value: "script", httpOnly: false })).rejects.toThrow(
-        "EXCLUDE_OVERWRITE_HTTP_ONLY",
-      );
-      const realSet = store.set.getMockImplementation()!;
+      expect(await jar.script.writeText(origin + "/", "sid=script", new AbortController().signal)).toMatchObject({
+        status: "rejected",
+        reason: new Error("EXCLUDE_OVERWRITE_HTTP_ONLY"),
+      });
+      expect(await jar.cookieHeader(req())).toBe("sid=b");
       let between: Promise<string | undefined> | undefined;
-      store.set.mockImplementationOnce(async (c) => {
+      store.set.mockImplementation(async (c) => {
         const done = realSet(c);
         // A reader at the next microtask would see an empty jar if the two calls were separated by await.
-        between = Promise.resolve().then(() => jar.cookieHeader(req()));
+        if (c.httpOnly && c.expirationDate === 1) between = Promise.resolve().then(() => jar.cookieHeader(req()));
         return done;
       });
       release.open();
@@ -483,6 +650,7 @@ describe("server cookie writes", () => {
     } finally {
       release.open();
       await a;
+      store.set.mockImplementation(realSet);
     }
   });
 
@@ -522,13 +690,14 @@ describe("server cookie writes", () => {
         await jar.storeResponseCookies(response("sid=old; HttpOnly"), req());
         const realSet = store.set.getMockImplementation()!;
         probe.set.mockImplementationOnce(async () => {
-          store.set.mockImplementationOnce(realSet).mockImplementationOnce(
-            status === "unknown"
-              ? never
-              : async () => {
-                  throw new Error("rejected");
-                },
-          );
+          store.set.mockImplementation(async (details) => {
+            if (details.httpOnly && details.expirationDate === 1) {
+              store.set.mockImplementation(realSet);
+              if (status === "unknown") store.set.mockImplementationOnce(never);
+              else store.set.mockRejectedValueOnce(new Error("rejected"));
+            }
+            return realSet(details);
+          });
         });
         const update = jar.storeResponseCookies(response("sid=earlier", "sid=new"), req());
         await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);

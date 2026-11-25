@@ -23,6 +23,23 @@ if (process.type === "service-worker") {
   // Main records each live frame preload for the opaque-frame test.
   const appOrigin: unknown = ipcRenderer.sendSync("fixture:origin");
   if (typeof appOrigin !== "string") throw new Error("Missing fixture origin");
+  if (window.name === "registration-method-probe") {
+    contextBridge.executeInMainWorld({
+      func: () => {
+        // Compare identities before and after install, including wrappers with native-looking toString().
+        // oxlint-disable-next-line unicorn/consistent-function-scoping -- Serialized into the renderer.
+        const methods = () => [
+          // oxlint-disable-next-line typescript/unbound-method -- Snapshot the getter without invoking it.
+          Object.getOwnPropertyDescriptor(ServiceWorkerRegistration.prototype, "cookies")!.get,
+          Object.getOwnPropertyDescriptor(ServiceWorkerRegistration.prototype, "unregister")!.value,
+          Object.getOwnPropertyDescriptor(CookieStoreManager.prototype, "subscribe")!.value,
+          Object.getOwnPropertyDescriptor(CookieStoreManager.prototype, "unsubscribe")!.value,
+        ];
+        const originals = methods();
+        window.fixtureNativeRegistrationMethods = () => methods().map((method, i) => method === originals[i]);
+      },
+    });
+  }
   installWindowCookiePreload({
     appOrigin,
     appHost: "app",
@@ -51,4 +68,10 @@ async function probeOpaque(appOrigin: string) {
   ipcRenderer.send("fixture:opaque-step", { stage: "sync", text });
   const result: unknown = await ipcRenderer.invoke(channels.getAll, url);
   ipcRenderer.send("fixture:opaque-step", { stage: "invoke", result });
+}
+
+declare global {
+  interface Window {
+    fixtureNativeRegistrationMethods(): boolean[];
+  }
 }

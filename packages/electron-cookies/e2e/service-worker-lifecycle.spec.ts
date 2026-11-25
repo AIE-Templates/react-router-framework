@@ -1,5 +1,5 @@
 import type { WorkerGate } from "./app/worker-controls.ts";
-import { expect, type Fixture, test } from "./fixture.ts";
+import { compareNative, expect, type Fixture, test } from "./fixture.ts";
 import {
   command,
   index,
@@ -138,6 +138,75 @@ test("SW-09 | unregister drops A's queued events; B keeps its first subscription
   }
   expect(await waitForChanges(page, 1)).toMatchObject([{ version: "B", changed: [{ value: "first-B" }] }]);
   expect(await command(page, { kind: "events" })).toMatchObject([{ version: "B", changed: [{ value: "first-B" }] }]);
+});
+
+test("SW-09 | eligibility follows main's changed callback when a pre-subscription notification arrives late", async ({
+  fixture,
+}) => {
+  const { page } = fixture;
+  await compareNative(
+    fixture,
+    "/",
+    async (site) => {
+      await register(page);
+      await observe(page);
+      await windowSubscriptions(page, "subscribe", "fence");
+      if (site === "jar") await arm(fixture, "change-notification");
+      try {
+        await write(page, "late", "before");
+        if (site === "jar") {
+          await reached(fixture);
+        } else {
+          // Fence native processing of the earlier write before subscribing.
+          await write(page, "fence", "observed");
+          expect(await waitForChanges(page, 1)).toMatchObject([{ changed: [{ name: "fence" }] }]);
+        }
+        await windowSubscriptions(page, "subscribe", "late");
+      } finally {
+        if (site === "jar") await release(fixture);
+      }
+      await write(page, "late", "after");
+      await page.waitForFunction(() => window.swChanges.some((e) => e.changed.some((item) => item.value === "after")));
+      const values = await page.evaluate(() =>
+        window.swChanges.flatMap((e) => e.changed.filter((item) => item.name === "late").map((item) => item.value)),
+      );
+      if (site !== "jar") expect(values).toEqual(["after"]);
+      return values;
+    },
+    (native) => ["before", ...native],
+  );
+});
+
+test("SW-12e | losing a granted unregister frame leaves the live registration wake-only until resubscribe", async ({
+  fixture,
+}) => {
+  const { page } = fixture;
+  await register(page);
+  await observe(page);
+  const original = await windowSubscriptions(page, "subscribe", "survivor");
+  const peer = await fixture.peer("jar");
+  await arm(fixture, "unregister-granted");
+  try {
+    const unregister = peer
+      .evaluate(async (target) => (await navigator.serviceWorker.getRegistration(target))!.unregister(), scope)
+      .then(
+        () => "returned",
+        () => "frame closed",
+      );
+    await reached(fixture);
+    await peer.close();
+    expect(await unregister).toBe("frame closed");
+    await expect.poll(() => index(fixture)).toMatchObject([{ name: "survivor", eligible: false }]);
+  } finally {
+    await release(fixture);
+  }
+  expect(await windowSubscriptions(page, "list")).toEqual(original);
+  await write(page, "survivor", "wake-only");
+  await expect.poll(() => deliveryState(fixture)).toEqual({ wakes: 1, pending: 0 });
+  await windowSubscriptions(page, "subscribe", "survivor");
+  await write(page, "survivor", "restored");
+  expect(await waitForChanges(page, 1)).toMatchObject([{ changed: [{ value: "restored" }] }]);
+  expect(await command(page, { kind: "events" })).toMatchObject([{ changed: [{ value: "restored" }] }]);
 });
 
 test("SW-10 | during update only the active version handles cookiechange", async ({ fixture }) => {

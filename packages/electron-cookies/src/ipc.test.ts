@@ -10,6 +10,7 @@ import {
   SYNC_STORE_PROBE_TIMEOUT_MS,
   SYNC_STORE_TIMEOUT_MS,
 } from "./main.ts";
+import { deferred } from "./main/sw/deferred.ts";
 import { cookieIpcChannels, type CookieReply, type WindowCookie } from "./shared.ts";
 import { fakeCookieStore } from "./testing/fake-store.ts";
 
@@ -77,7 +78,12 @@ function setup() {
       ipc.emit(
         channel,
         {
-          ...event,
+          get sender() {
+            return event.sender;
+          },
+          get senderFrame() {
+            return event.senderFrame;
+          },
           set returnValue(reply: unknown) {
             resolve(reply);
           },
@@ -101,6 +107,22 @@ function setup() {
 afterEach(() => vi.useRealTimers());
 
 describe("window cookie IPC", () => {
+  it.each(["/group;v=1", "/" + "a".repeat(1024)])(
+    "derives an empty structured path from the document URL for set and delete (case %#)",
+    async (directory) => {
+      const { store, invoke, read } = setup();
+      const path = directory + "/page";
+      const target = origin + path + "?query#fragment";
+      const empty = { ...input, path: "" };
+      for (const expires of [null, 0]) {
+        expect(await invoke(channels.storeSet, target, { ...empty, expires })).toEqual({ ok: true, value: undefined });
+        expect(store.set).toHaveBeenLastCalledWith(expect.objectContaining({ url: storageOrigin + path, path: "" }));
+        expect(await read(target)).toBe(expires === null ? "id=new" : "");
+        expect(store.cookies.map((cookie) => cookie.path)).toEqual(expires === null ? [directory] : []);
+      }
+    },
+  );
+
   it("shares server, text and structured writes, preserving domain identity, visibility and path order", async () => {
     const { jar, store, read, write, invoke } = setup();
     await jar.storeResponseCookies(new Headers({ "set-cookie": "id=server; Domain=localhost; Path=/" }), {
@@ -317,10 +339,13 @@ describe("document.cookie outage handling", () => {
       expect(replied).toHaveBeenCalledWith(first === "read" ? "lang=zh" : "unknown");
 
       store.set.mockImplementationOnce(never);
+      store.get.mockImplementationOnce(never);
+      const probeRead = read();
       const probe = write("probe=1");
       expect(store.set).toHaveBeenLastCalledWith(expect.objectContaining({ name: "probe" }));
       await vi.advanceTimersByTimeAsync(SYNC_STORE_PROBE_TIMEOUT_MS);
       expect(await probe).toBe("unknown");
+      expect(await probeRead).toBe("lang=zh");
 
       await write("lang=en");
       store.get.mockImplementationOnce(never);
@@ -399,7 +424,6 @@ describe("document.cookie outage handling", () => {
       expect(await read()).toBe("lang=zh");
       await jar.storeResponseCookies(new Headers({ "set-cookie": header }), { path: "/", headers: new Headers() });
       change({ ...note, httpOnly: header.includes("HttpOnly") });
-      change(note, "inserted-no-change-overwrite");
       await vi.advanceTimersByTimeAsync(0);
       expect(store.get).toHaveBeenCalledTimes(2);
       store.get.mockImplementationOnce(never);
@@ -409,27 +433,116 @@ describe("document.cookie outage handling", () => {
     },
   );
 
-  it("keeps prior values during a stalled or failed refresh and coalesces changes received in flight", async () => {
+  it("includes senderFrame lookup in the sync deadline", async () => {
+    vi.useFakeTimers();
+    const { store, read, write, event, frame } = setup();
+    await write("lang=zh");
+    expect(await read()).toBe("lang=zh");
+    store.get.mockImplementationOnce(never);
+    Object.defineProperty(event, "senderFrame", {
+      configurable: true,
+      get() {
+        vi.advanceTimersByTime(600);
+        return frame;
+      },
+    });
+    try {
+      const replied = vi.fn<(reply: unknown) => void>();
+      const pending = read().then(replied);
+      await vi.advanceTimersByTimeAsync(SYNC_STORE_TIMEOUT_MS - 601);
+      expect(replied).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(replied).toHaveBeenCalledWith("lang=zh");
+      await pending;
+    } finally {
+      Object.defineProperty(event, "senderFrame", { configurable: true, value: frame });
+    }
+    expect(await read()).toBe("lang=zh");
+  });
+
+  it("keeps the snapshot through an identical rewrite, a stalled refresh and a failed refresh", async () => {
     vi.useFakeTimers();
     const { store, read, write, change } = setup();
     await write("lang=zh");
     expect(await read()).toBe("lang=zh");
-    store.get.mockImplementationOnce(never);
-    change();
+    const refresh = deferred<Cookie[]>();
+    store.get.mockReturnValueOnce(refresh.promise);
+    change(note, "inserted-no-change-overwrite");
     await vi.advanceTimersByTimeAsync(0);
-    change();
-    change();
-    store.get.mockRejectedValueOnce(new Error("store down"));
-    expect(await read()).toBe("lang=zh");
-    expect(store.get).toHaveBeenCalledTimes(3);
-    store.get.mockRejectedValueOnce(new Error("refresh failed"));
-    await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
-    expect(store.get).toHaveBeenCalledTimes(4);
-    store.get.mockRejectedValueOnce(new Error("still down"));
-    expect(await read()).toBe("lang=zh");
+    try {
+      store.get.mockImplementationOnce(never);
+      const during = read();
+      await vi.advanceTimersByTimeAsync(SYNC_STORE_TIMEOUT_MS);
+      expect(await during).toBe("lang=zh");
+      refresh.reject(new Error("refresh failed"));
+      await vi.advanceTimersByTimeAsync(0);
+      store.get.mockImplementationOnce(never);
+      const after = read();
+      await vi.advanceTimersByTimeAsync(SYNC_STORE_PROBE_TIMEOUT_MS);
+      expect(await after).toBe("lang=zh");
+    } finally {
+      refresh.resolve([]);
+    }
     await write("lang=en");
     change();
     await vi.advanceTimersByTimeAsync(0);
+    store.get.mockRejectedValueOnce(new Error("read failed"));
+    expect(await read()).toBe("lang=en");
+  });
+
+  it("discards a successful refresh superseded by another change before its follow-up settles", async () => {
+    vi.useFakeTimers();
+    const { store, read, write, change } = setup();
+    await write("lang=zh");
+    expect(await read()).toBe("lang=zh");
+    const older = deferred<Cookie[]>();
+    const newer = deferred<Cookie[]>();
+    store.get.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    try {
+      change();
+      await vi.advanceTimersByTimeAsync(0);
+      change();
+      change();
+      older.resolve([{ ...note, value: "stale" }]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(store.get).toHaveBeenCalledTimes(3);
+      store.get.mockImplementationOnce(never);
+      const during = read();
+      await vi.advanceTimersByTimeAsync(SYNC_STORE_TIMEOUT_MS);
+      expect(await during).toBe("lang=zh");
+      newer.resolve([{ ...note, value: "fresh" }]);
+      await vi.advanceTimersByTimeAsync(0);
+      store.get.mockRejectedValueOnce(new Error("read failed"));
+      expect(await read()).toBe("lang=fresh");
+    } finally {
+      older.resolve([]);
+      newer.resolve([]);
+    }
+  });
+
+  it("allows only one outstanding native refresh per URL across logical timeouts", async () => {
+    vi.useFakeTimers();
+    const { store, read, write, change } = setup();
+    await write("lang=zh");
+    expect(await read()).toBe("lang=zh");
+    const stuck = deferred<Cookie[]>();
+    store.get.mockReturnValueOnce(stuck.promise);
+    try {
+      change();
+      await vi.advanceTimersByTimeAsync(0);
+      await write("lang=en");
+      for (let i = 0; i < 3; i++) {
+        change();
+        await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
+        expect(store.get).toHaveBeenCalledTimes(2);
+      }
+      // A distinct URL and foreground reads still make progress.
+      expect(await read(url + "/other")).toBe("lang=en");
+    } finally {
+      stuck.resolve([{ ...note, value: "stale" }]);
+    }
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store.get).toHaveBeenCalledTimes(4);
     store.get.mockRejectedValueOnce(new Error("read failed"));
     expect(await read()).toBe("lang=en");
   });

@@ -1,3 +1,4 @@
+import type { Cookie } from "electron";
 import { vi } from "vitest";
 
 import type { CookieStore } from "../store.ts";
@@ -8,7 +9,7 @@ type Stored = Parameters<CookieStore["set"]>[0];
  * A fake of Electron's cookie store for tests: path matching, expiry and the HttpOnly overwrite rule
  * the way `session.cookies` behaves for the server entry points.
  */
-export function fakeCookieStore() {
+export function fakeCookieStore(changed?: (cookie: Cookie, cause: string) => void) {
   const cookies: Stored[] = [];
   /** The persistent cookies as of the last `flushStore()`: what a relaunch after a hard kill loads. */
   const disk: Stored[] = [];
@@ -31,7 +32,14 @@ export function fakeCookieStore() {
         }))
         .toSorted((a, b) => b.path.length - a.path.length);
     }),
-    set: vi.fn<CookieStore["set"]>(async (details) => {
+    set: vi.fn<CookieStore["set"]>(async (input) => {
+      const directory = new URL(input.url).pathname.replace(/\/[^/]*$/, "") || "/";
+      if (input.path.includes(";") || Buffer.byteLength(input.path) > 1024) throw new Error("invalid explicit path");
+      const details = {
+        ...input,
+        path: input.path || directory,
+        secure: input.secure ?? input.sameSite === "no_restriction",
+      };
       const at = cookies.findIndex(
         (c) => c.name === details.name && c.path === details.path && c.domain === details.domain,
       );
@@ -48,8 +56,17 @@ export function fakeCookieStore() {
         (details.sameSite === "no_restriction" && !details.secure)
       )
         throw new Error("excluded");
-      if (at >= 0) cookies.splice(at, 1);
-      if (details.expirationDate === undefined || details.expirationDate * 1000 > Date.now()) cookies.push(details);
+      const expired = details.expirationDate !== undefined && details.expirationDate * 1000 <= Date.now();
+      const [old] = at < 0 ? [] : cookies.splice(at, 1);
+      if (old)
+        changed?.(
+          { ...old, domain: old.domain ?? new URL(old.url).hostname },
+          expired ? "expired-overwrite" : "overwrite",
+        );
+      if (!expired) {
+        cookies.push(details);
+        changed?.({ ...details, domain: details.domain ?? new URL(details.url).hostname }, "inserted");
+      }
     }),
     flushStore: vi.fn<CookieStore["flushStore"]>(async () => {
       disk.splice(0, disk.length, ...cookies.filter((c) => c.expirationDate !== undefined));

@@ -43,7 +43,7 @@ export function toCookieWrite(
   storageHost: string,
   publicHost: string,
 ): CookieWrite {
-  const details: CookieWrite = { ...cookie, url: storageOrigin + cookie.path };
+  const details: CookieWrite = { ...cookie, url: storageOrigin + (cookie.defaultPathRequest ?? cookie.path) };
   if (details.domain === publicHost.toLowerCase()) details.domain = storageHost;
   return details;
 }
@@ -73,7 +73,7 @@ export async function writeCookie(
         url,
         name,
         value,
-        path,
+        path: details.defaultPathRequest === undefined ? path : "",
         secure,
         httpOnly,
         sameSite,
@@ -120,9 +120,12 @@ export function abandonOn<T>(operation: Promise<T>, signal: AbortSignal): Promis
 }
 
 /** A signal that aborts with `CookieStoreTimeoutError` after `timeoutMs`, until `clear()`. */
-export function storeDeadline(timeoutMs: number): { signal: AbortSignal; clear(): void } {
+export function storeDeadline(timeoutMs: number, startedAt?: number): { signal: AbortSignal; clear(): void } {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new CookieStoreTimeoutError(timeoutMs)), timeoutMs);
+  const remaining = startedAt === undefined ? timeoutMs : Math.ceil(timeoutMs - (performance.now() - startedAt));
+  const abort = () => controller.abort(new CookieStoreTimeoutError(timeoutMs));
+  const timer = remaining > 0 ? setTimeout(abort, remaining) : undefined;
+  if (remaining <= 0) abort();
   return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 

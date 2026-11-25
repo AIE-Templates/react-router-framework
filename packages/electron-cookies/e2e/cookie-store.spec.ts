@@ -312,6 +312,7 @@ test("CS-07 | set, delete and get report native validation errors for each overl
         ["set", [{ name: "a", value: "b", expires: Infinity }]],
         ["set", [{ name: "a", value: "b", expires: 123, maxAge: 2 }]],
         ["set", [{ name: "a", value: "b", sameSite: "INVALID" }]],
+        ["set", [{ name: "a", value: "b", sameSite: "bad\ud800" }]],
       ];
       for (const options of [
         { name: "__hTtP-one" },
@@ -343,7 +344,17 @@ test("CS-07 | set, delete and get report native validation errors for each overl
           rows.push({ method, input, error: null });
         } catch (e) {
           if (!(e instanceof Error)) throw e;
-          rows.push({ method, input, error: { typeError: e instanceof TypeError, name: e.name, message: e.message } });
+          rows.push({
+            method,
+            input,
+            error: {
+              typeError: e instanceof TypeError,
+              name: e.name,
+              message: e.message,
+              // Keep the UTF-16 evidence intact even if a transport replaces lone surrogates.
+              ...(input.includes("\\ud800") && { hasOriginalSurrogate: e.message.includes("\ud800") }),
+            },
+          });
         }
       }
       return rows;
@@ -353,6 +364,9 @@ test("CS-07 | set, delete and get report native validation errors for each overl
       expect
         .soft(row.error, site + " " + row.method + " " + row.input)
         .toMatchObject({ typeError: true, name: "TypeError" });
+    expect
+      .soft(errors.find((row) => row.input.includes("\\ud800"))?.error)
+      .toMatchObject({ hasOriginalSurrogate: true });
     expect.soft(records).toEqual([]);
     return { errors, records };
   });
@@ -596,4 +610,32 @@ test("CS-11 | crossing the 180-cookie domain quota evicts the native identities 
     },
     (native) => ({ ...native, events: syntheticChanges(native.events) }),
   );
+});
+
+test("CS-03 | explicit creation URL on a document loaded with a fragment", async ({ fixture }) => {
+  await compareNative(fixture, "/page#initial", async () => {
+    const result = await fixture.page.evaluate(async () => {
+      const href = location.href;
+      if (new URL(href).hash !== "#initial") throw new Error("Missing initial fragment");
+      await cookieStore.set("fragment", "present");
+      const explicit = [];
+      for (const method of ["get", "getAll"] as const) {
+        try {
+          explicit.push(await cookieStore[method]({ name: "fragment", url: href }));
+        } catch (error) {
+          if (!(error instanceof TypeError)) throw error;
+          explicit.push({ name: error.name, message: error.message });
+        }
+      }
+      return { implicit: (await cookieStore.get("fragment"))?.value, explicit };
+    });
+    expect.soft(result).toEqual({
+      implicit: "present",
+      explicit: ["get", "getAll"].map((method) => ({
+        name: "TypeError",
+        message: `Failed to execute '${method}' on 'CookieStore': URL must match the document URL`,
+      })),
+    });
+    return result;
+  });
 });
