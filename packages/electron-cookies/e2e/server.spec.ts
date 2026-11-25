@@ -1,4 +1,4 @@
-import { expect, requestCookie, test } from "./fixture.ts";
+import { compareNative, expect, requestCookie, test } from "./fixture.ts";
 
 test("SRV-04 | the last accepted Set-Cookie for an identity wins, including deletion", async ({ fixture }) => {
   for (const site of ["https", "jar"] as const) {
@@ -113,7 +113,7 @@ for (const upstream of ["127.0.0.1", "app.desktop"]) {
           ]),
         );
         snapshots.push(cookies);
-        expect((await requestCookie(fixture.page)).split("; ").toSorted()).toEqual(["sid=domain", "sid=host"]);
+        expect(await requestCookie(fixture.page)).toBe("sid=host; sid=domain");
         if (site === "jar" && upstream === "127.0.0.1") {
           const url = await fixture.app.evaluate(() => globalThis.cookieFixture.websocket);
           await fixture.page.evaluate(
@@ -156,8 +156,8 @@ test("SRV-08 | a hard kill preserves the latest persistent value and cannot resu
 }) => {
   await fixture.set(["keep=before; Path=/", "drop=before; Max-Age=3600; Path=/"]);
   const previous = await fixture.set(["keep=after; Max-Age=3600; Path=/", "drop=after; Path=/"]);
-  expect(previous.split("; ").toSorted()).toEqual(["drop=before", "keep=before"]);
-  expect((await requestCookie(fixture.page)).split("; ").toSorted()).toEqual(["drop=after", "keep=after"]);
+  expect(previous).toBe("keep=before; drop=before");
+  expect(await requestCookie(fixture.page)).toBe("keep=after; drop=after");
   const restarted = await restart("kill");
   expect(await requestCookie(restarted.page)).toBe("keep=after");
   expect((await restarted.stored("jar")).map(({ name, value, session }) => ({ name, value, session }))).toEqual([
@@ -191,4 +191,124 @@ test("SRV-08 | a stalled store lookup returns 503 and the same request recovers"
     await fault.dispose();
   }
   expect(await requestCookie(fixture.page, "/stall")).toBe("sid=ok");
+});
+
+for (const transition of [
+  "upgrade",
+  "downgrade",
+  "colliding downgrades",
+  "delete HttpOnly",
+  "server delete",
+  "document delete",
+]) {
+  test("SRV-04 | window change events on " + transition, async ({ fixture }) => {
+    await compareNative(fixture, "/", async () => {
+      const hidden = transition.includes("downgrade") || transition === "delete HttpOnly";
+      await fixture.set(["sid=seed; Path=/" + (hidden ? "; HttpOnly" : "")]);
+      const collector = await fixture.page.evaluateHandle(() => {
+        const events: { changed: readonly CookieListItem[]; deleted: readonly CookieListItem[] }[] = [];
+        const onChange = (event: CookieChangeEvent) => events.push({ changed: event.changed, deleted: event.deleted });
+        cookieStore.addEventListener("change", onChange);
+        return {
+          events,
+          stop() {
+            cookieStore.removeEventListener("change", onChange);
+          },
+        };
+      });
+      try {
+        // Fence both registration and delivery through the same listener and storage backend.
+        await fixture.set(["fence=start; Path=/"]);
+        const fence = (value: string) =>
+          collector.evaluate(
+            (log, v) => log.events.some((e) => e.changed.some((c) => c.name === "fence" && c.value === v)),
+            value,
+          );
+        await expect.poll(() => fence("start")).toBe(true);
+        await collector.evaluate((log) => {
+          log.events.length = 0;
+        });
+        if (transition === "colliding downgrades") {
+          const paths = await Promise.all(
+            ["one", "two"].map((v) => fixture.replyPath(["sid=" + v + "; Path=/"], "/colliding-downgrades")),
+          );
+          const pair = encodeURIComponent(paths[0]);
+          const sent = await Promise.all(paths.map((path) => requestCookie(fixture.page, path + "&pair=" + pair)));
+          expect(sent).toEqual(["sid=seed; fence=start", "sid=seed; fence=start"]);
+        } else if (transition === "document delete") {
+          await fixture.page.evaluate(() => {
+            document.cookie = "sid=; Path=/; Max-Age=0";
+          });
+        } else {
+          const change =
+            transition === "upgrade" ? "new; HttpOnly" : transition === "downgrade" ? "new" : "; Max-Age=0";
+          await fixture.set(["sid=" + change + "; Path=/"]);
+        }
+        const final = await fixture.page.evaluate(() => cookieStore.get("sid"));
+        await fixture.set(["fence=end; Path=/"]);
+        await expect.poll(() => fence("end")).toBe(true);
+        const events = await collector.evaluate((log) =>
+          log.events.filter((e) => [...e.changed, ...e.deleted].some((c) => c.name === "sid")),
+        );
+        if (transition === "colliding downgrades") {
+          // The two network responses may complete in either order. Match each observed write and its final state.
+          expect(["one", "two"]).toContain(final?.value);
+          const first = final!.value === "one" ? "two" : "one";
+          expect(events.map((e) => [e.changed.map((c) => c.value), e.deleted])).toEqual([
+            [[first], []],
+            [[final!.value], []],
+          ]);
+          return events.map((e) => ({
+            ...e,
+            changed: e.changed.map((c) => ({ ...c, value: c.value === first ? "first" : "last" })),
+          }));
+        }
+        expect(final?.value).toBe(transition === "downgrade" ? "new" : undefined);
+        if (transition === "server delete" || transition === "document delete") {
+          expect(events).toStrictEqual([
+            {
+              changed: [],
+              deleted: [{ name: "sid", domain: null, path: "/", secure: false, partitioned: false }],
+            },
+          ]);
+        }
+        return events;
+      } finally {
+        await collector.evaluate((log) => log.stop());
+        await collector.dispose();
+      }
+    });
+  });
+}
+
+test("SRV-08 | overwrite and HttpOnly downgrade order on the wire and in document.cookie", async ({ fixture }) => {
+  for (const site of ["localhost", "https", "jar"] as const) {
+    await fixture.visit(site);
+    const read = async () => [await requestCookie(fixture.page), await fixture.page.evaluate(() => document.cookie)];
+    for (const [initial, replacement, expected] of [
+      ["1", "2", "B=1; A=2"],
+      ["1; HttpOnly", "2", "B=1; A=2"],
+      ["1; HttpOnly", "1", site === "jar" ? "B=1; A=1" : "A=1; B=1"],
+    ]) {
+      await fixture.set(["A=; Max-Age=0; Path=/", "B=; Max-Age=0; Path=/"]);
+      await fixture.set(["A=" + initial + "; Path=/"]);
+      await fixture.set(["B=1; Path=/"]);
+      await fixture.set(["A=" + replacement + "; Path=/"]);
+      expect(await read(), site + " " + initial + " -> " + replacement).toEqual([expected, expected]);
+    }
+  }
+});
+
+test("SRV | one response with 60 Set-Cookie fields", async ({ fixture }) => {
+  const pairs = Array.from({ length: 60 }, (_, index) => "field" + index + "=yes");
+  for (const site of ["localhost", "https", "jar"] as const) {
+    await fixture.visit(site);
+    await fixture.set(pairs.map((pair) => pair + "; Path=/"));
+    // The jar bounds concurrent Electron calls, including retries and isolated validation of rejected downgrades.
+    const expected = site === "jar" ? pairs.slice(0, 50) : pairs;
+    const sent = (await requestCookie(fixture.page)).split("; ");
+    expect(sent, site).toHaveLength(expected.length);
+    expect(new Set(sent), site).toEqual(new Set(expected));
+    expect(await fixture.stored(site)).toHaveLength(expected.length);
+  }
 });

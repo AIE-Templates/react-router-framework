@@ -217,3 +217,62 @@ test("SW-13 | A waits for B in the same registration and both native tasks end",
   await expect.poll(() => deliveryState(fixture)).toEqual({ wakes: 2, pending: 0 });
   expect(await command(page, { kind: "late" })).toBe("InvalidStateError");
 });
+
+test("SW-07/08 | overlapping registrations wake independently and an unmatched stopped worker stays asleep", async ({
+  fixture,
+}) => {
+  const { page } = fixture;
+  for (const site of ["https", "jar"] as const) {
+    await fixture.visit(site);
+    await observe(page);
+    await register(page, "root", "active", "/");
+    const area = await register(page, "area");
+    await command(page, { kind: "subscribe", entries: [{}] }, "active", "/");
+    await command(page, { kind: "subscribe", name: "both" });
+    const cdp = await page.context().newCDPSession(page);
+    let versionId = "";
+    let status = "";
+    const starts: string[] = [];
+    try {
+      cdp.on("ServiceWorker.workerVersionUpdated", ({ versions }) => {
+        for (const v of versions) {
+          if (v.scriptURL !== area.script || v.status !== "activated") continue;
+          versionId = v.versionId;
+          if (status !== v.runningStatus) starts.push(v.runningStatus);
+          status = v.runningStatus;
+        }
+      });
+      await cdp.send("ServiceWorker.enable");
+      await expect.poll(() => status).toBe("running");
+      await cdp.send("ServiceWorker.stopWorker", { versionId });
+      await expect.poll(() => status).toBe("stopped");
+      starts.length = 0;
+      await write(page, "root-only", "one");
+      // The root registration acknowledges this very write, fencing the negative
+      // assertion without waking the area worker to poll its own event log.
+      const [first] = await waitForChanges(page, 1);
+      expect([first.version, first.changed[0].name]).toEqual(["root", "root-only"]);
+      expect((await running(fixture)).map((w) => w.scope)).not.toContain(area.scope);
+      expect(starts).toEqual([]);
+      if (site === "jar") {
+        expect(await fixture.app.evaluate(() => globalThis.cookieFixture.workers.wakeAttempts)).toEqual([
+          fixture.origins.jar + "/",
+        ]);
+      }
+      await write(page, "both", "two");
+      const changes = await waitForChanges(page, 3);
+      expect(
+        changes
+          .slice(1)
+          .map((e) => [e.version, e.changed[0].name] as const)
+          .toSorted(([a], [b]) => a.localeCompare(b)),
+      ).toEqual([
+        ["area", "both"],
+        ["root", "both"],
+      ]);
+      await expect.poll(() => status).toBe("running");
+    } finally {
+      await cdp.detach();
+    }
+  }
+});

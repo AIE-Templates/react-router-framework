@@ -39,7 +39,7 @@ export function installServiceWorkerCookiePreload({
       appHost,
       markerHeader: OMIT_COOKIES_HEADER,
     },
-    getAll: (_url, name) => ipcRenderer.invoke(channels.getAll, name),
+    getAll: (url, name) => ipcRenderer.invoke(channels.getAll, name, url),
     set: (_url, cookie) => ipcRenderer.invoke(channels.storeSet, cookie),
   };
   const subscriptions: SubscriptionBridge = {

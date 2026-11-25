@@ -209,6 +209,47 @@ describe("window cookie IPC", () => {
     );
   });
 
+  it.each([
+    ["unspecified", {}],
+    ["lax", { sameSite: "lax" }],
+    ["strict", { sameSite: "strict" }],
+    ["no_restriction", { sameSite: "none" }],
+  ] as const)("reports the stored SameSite %s on deletion", (sameSite, attribute) => {
+    const { frame, register, change } = setup();
+    register();
+    change({ ...note, sameSite }, "expired-overwrite");
+    expect(frame.send.mock.calls).toStrictEqual([
+      [
+        channels.changed,
+        {
+          documentId: "doc",
+          changed: [],
+          deleted: [{ name: note.name, domain: null, path: "/", secure: false, partitioned: false, ...attribute }],
+        },
+      ],
+    ]);
+  });
+
+  it("omits unspecified SameSite only from deletion dictionaries", () => {
+    const { frame, register, change } = setup();
+    register();
+    const cookie = { ...note, sameSite: "unspecified" } as const;
+    change(cookie, "inserted");
+    expect(frame.send).toHaveBeenLastCalledWith(channels.changed, {
+      documentId: "doc",
+      changed: [expect.objectContaining({ sameSite: "lax" })],
+      deleted: [],
+    });
+    for (const cause of ["explicit", "expired-overwrite", "expired", "evicted"]) {
+      change(cookie, cause);
+      expect(frame.send).toHaveBeenLastCalledWith(channels.changed, {
+        documentId: "doc",
+        changed: [],
+        deleted: [{ name: "lang", domain: null, path: "/", secure: false, partitioned: false }],
+      });
+    }
+  });
+
   it("filters pushes per registered document and path, maps causes, and prunes dead registrations", () => {
     const { event, frame, register, change } = setup();
     change();

@@ -324,6 +324,15 @@ describe("server cookie writes", () => {
     }
   });
 
+  it("deletes a 4096-byte HttpOnly name without growing its empty value past the limit", async () => {
+    const { jar } = setup(fakeStore());
+    const name = "n".repeat(4096);
+    await jar.storeResponseCookies(response(name + "=; HttpOnly"), req());
+    expect(await jar.cookieHeader(req())).toBe(name + "=");
+    await jar.storeResponseCookies(response(name + "=; Max-Age=0"), req());
+    expect(await jar.cookieHeader(req())).toBeUndefined();
+  });
+
   it("round trips UTF-8 and nameless cookies and skips just the header with invalid bytes", async () => {
     const store = fakeStore();
     const { jar, log } = setup(store);
@@ -336,7 +345,8 @@ describe("server cookie writes", () => {
     await jar.storeResponseCookies(response("=other"), req());
     expect(await jar.cookieHeader(req())).toBe("k=" + text + "; other");
     await jar.storeResponseCookies(response("=; Max-Age=0"), req());
-    expect(store.set.mock.lastCall?.[0].value).not.toBe("");
+    expect(await jar.cookieHeader(req())).toBe("k=" + text + "; other");
+    await jar.storeResponseCookies(response("=delete; Max-Age=0"), req());
     expect(await jar.cookieHeader(req())).toBe("k=" + text);
   });
 

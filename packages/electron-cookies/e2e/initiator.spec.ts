@@ -14,41 +14,55 @@ test("SRV-07/09 | cookies follow Chromium's initiator for main loads, the app an
   expect(initial.cookie).toBe("sid=trusted");
   await fixture.visit("jar");
   const echo = await requestCookie(page);
-  expect(echo.split("; ").toSorted()).toEqual(["main=ok", "sid=trusted"]);
-  for (const kind of ["dedicated", "shared"]) {
-    for (const omit of [false, true]) {
-      const workerEcho = await fixture.replyPath(["sid=trusted; Secure; SameSite=None; Path=/"]);
-      const result = await page.evaluate(
-        ({ workerType, script }) =>
-          new Promise<unknown>((resolve, reject) => {
-            const worker =
-              workerType === "shared"
-                ? new SharedWorker(script, { type: "module" })
-                : new Worker(script, { type: "module" });
-            const received = (event: MessageEvent<unknown>) => {
-              if (worker instanceof SharedWorker) worker.port.close();
-              else worker.terminate();
-              resolve(event.data);
-            };
-            if (worker instanceof SharedWorker) {
-              worker.port.addEventListener("message", received, { once: true });
-              worker.port.start();
-            } else {
-              worker.addEventListener("message", received, { once: true });
-            }
-            worker.addEventListener("error", () => reject(new Error("Failed to load " + workerType + " worker")), {
-              once: true,
-            });
-          }),
-        { workerType: kind, script: "/worker.js?echo=" + encodeURIComponent(workerEcho) + (omit ? "&omit" : "") },
-      );
-      expect(result, kind).toEqual([200, echo]);
-      expect(await app.evaluate((_module, p) => globalThis.cookieFixture.observation(p), workerEcho)).toEqual({
-        reached: true,
-        initiator: fixture.origins.jar,
-        cookie: echo,
-      });
-      expect(await app.evaluate((_module, p) => globalThis.cookieFixture.network(p).marker, workerEcho)).toBeNull();
+  expect(echo).toBe("sid=trusted; main=ok");
+  for (const site of ["localhost", "https", "jar"] as const) {
+    await fixture.visit(site);
+    await fixture.set(["sid=trusted; Path=/; Secure; SameSite=None"]);
+    for (const kind of ["dedicated", "shared"]) {
+      for (const omit of [false, true]) {
+        const before = await requestCookie(page);
+        const value = kind + (omit ? "omit" : "default");
+        const workerEcho = await fixture.replyPath(["worker=" + value + "; Path=/"]);
+        const result = await page.evaluate(
+          ({ workerType, script }) =>
+            new Promise<unknown>((resolve, reject) => {
+              const worker =
+                workerType === "shared"
+                  ? new SharedWorker(script, { type: "module" })
+                  : new Worker(script, { type: "module" });
+              const received = (event: MessageEvent<unknown>) => {
+                if (worker instanceof SharedWorker) worker.port.close();
+                else worker.terminate();
+                resolve(event.data);
+              };
+              if (worker instanceof SharedWorker) {
+                worker.port.addEventListener("message", received, { once: true });
+                worker.port.start();
+              } else {
+                worker.addEventListener("message", received, { once: true });
+              }
+              worker.addEventListener("error", () => reject(new Error("Failed to load " + workerType + " worker")), {
+                once: true,
+              });
+            }),
+          { workerType: kind, script: "/worker.js?echo=" + encodeURIComponent(workerEcho) + (omit ? "&omit" : "") },
+        );
+        // Dedicated and shared workers lack the preload marker. Their omit is a documented difference.
+        const accepts = site === "jar" || !omit;
+        const sent = accepts ? before : "";
+        expect(result, site + " " + kind).toEqual([200, sent]);
+        const after = await requestCookie(page);
+        if (accepts) expect(after.split("; ")).toContain("worker=" + value);
+        else expect(after).toBe(before);
+        if (site === "jar") {
+          expect(await app.evaluate((_module, p) => globalThis.cookieFixture.observation(p), workerEcho)).toEqual({
+            reached: true,
+            initiator: fixture.origins.jar,
+            cookie: sent,
+          });
+          expect(await app.evaluate((_module, p) => globalThis.cookieFixture.network(p).marker, workerEcho)).toBeNull();
+        }
+      }
     }
   }
 });

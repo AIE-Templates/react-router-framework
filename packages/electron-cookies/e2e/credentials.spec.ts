@@ -87,3 +87,13 @@ test("DC-25 | fetch returns rejected promises, evaluates getters once and uses R
     return results;
   });
 });
+
+test("SRV-07 | window fetch defaults to same-origin credentials", async ({ fixture }) => {
+  await compareNative(fixture, "/", async () => {
+    await fixture.set(["sid=before; Path=/"]);
+    const path = await fixture.replyPath(["sid=after; Path=/"]);
+    const result = [await requestCookie(fixture.page, path), await requestCookie(fixture.page)];
+    expect(result).toEqual(["sid=before", "sid=after"]);
+    return result;
+  });
+});

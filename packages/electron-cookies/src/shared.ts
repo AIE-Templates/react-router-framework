@@ -37,16 +37,17 @@ export interface WindowCookie {
   partitioned: false;
 }
 
+type DeletedCookie = Omit<WindowCookie, "value" | "expires" | "sameSite"> & Partial<Pick<WindowCookie, "sameSite">>;
+
 export interface CookiePush {
   documentId: string;
   changed: WindowCookie[];
-  deleted: Omit<WindowCookie, "value" | "expires">[];
+  deleted: DeletedCookie[];
 }
 
 export type CookieReply<T> = { ok: true; value: T } | { ok: false; error: CookieIpcError };
 
-export type WorkerCookieItem = Omit<WindowCookie, "value" | "expires"> &
-  Partial<Pick<WindowCookie, "value" | "expires">>;
+export type WorkerCookieItem = DeletedCookie & Partial<Pick<WindowCookie, "value" | "expires">>;
 
 export interface WorkerCookieEvent {
   eventId: string;

@@ -148,6 +148,26 @@ it("uses the Electron script URL on scoped IPC, shares jar writes and rejects fo
   }
 });
 
+it("matches the serialized script URL prefix across registration paths before reading the jar", async () => {
+  const h = setup();
+  try {
+    const read = (url: unknown) => h.worker.ipc.invoke(channels.getAll, {}, "x", url);
+    for (const url of [scope + "page", scriptURL + "/../other", "https://other.example/", "/area/", {}]) {
+      expect(await read(url)).toEqual({
+        ok: false,
+        error: { name: "TypeError", message: "URL must be within Service Worker scope" },
+      });
+    }
+    expect(h.store.get).not.toHaveBeenCalled();
+    expect(await read(scriptURL + "/deeper#fragment")).toEqual({ ok: true, value: [] });
+    expect(h.store.get).toHaveBeenCalledWith({ url: "https://jar.example/scripts/sw.js/deeper", httpOnly: false });
+    expect(await read(scriptURL + "-suffix")).toEqual({ ok: true, value: [] });
+    expect(h.store.get).toHaveBeenCalledWith({ url: "https://jar.example/scripts/sw.js-suffix", httpOnly: false });
+  } finally {
+    await h.adapter.quitAll();
+  }
+});
+
 it("maps cookie causes and drives separate keep-alives by started, ack, stop and quit", async () => {
   const h = setup();
   try {

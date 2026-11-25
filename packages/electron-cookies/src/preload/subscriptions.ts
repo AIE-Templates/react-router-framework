@@ -61,12 +61,15 @@ export function installSubscriptionShims(bridge: SubscriptionBridge): void {
         const rawName = entry?.name;
         const name = rawName === undefined ? undefined : usv(rawName);
         const rawUrl = entry?.url;
-        const url =
-          rawUrl === undefined
-            ? undefined
-            : new NativeURL(usv(rawUrl), globalThis.document?.baseURI ?? globalThis.location.href).href;
-        if (url !== undefined && !url.startsWith(target))
-          throw new TypeError("Subscription URL must be within registration scope");
+        let url: string | undefined;
+        if (rawUrl !== undefined) {
+          const text = usv(rawUrl);
+          if (NativeURL.canParse(text, target)) url = new NativeURL(text, target).href;
+          if (!url?.startsWith(target))
+            throw new TypeError(
+              `Failed to execute '${kind}' on 'CookieStoreManager': URL must be within ServiceWorker scope`,
+            );
+        }
         subscriptions.push({ name, url });
       }
       await run(target, { kind, subscriptions }, () => apply(native, this, [subscriptions]));

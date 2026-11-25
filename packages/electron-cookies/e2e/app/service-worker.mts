@@ -2,16 +2,31 @@
 
 declare const self: ServiceWorkerGlobalScope;
 
-export type WorkerCommand =
-  | { kind: "startup" | "events" | "append" | "release-first" | "release-last" | "late" }
-  | { kind: "subscriptions" | "subscribe" | "unsubscribe"; name?: string }
+export type WorkerCommand = { record?: boolean } & (
+  | {
+      kind:
+        | "startup"
+        | "events"
+        | "append"
+        | "release-first"
+        | "release-last"
+        | "late"
+        | "identity"
+        | "property-events";
+    }
+  | { kind: "subscriptions" | "subscribe" | "unsubscribe"; name?: string; entries?: CookieStoreGetOptions[] }
   | { kind: "get"; name: string }
   | { kind: "set"; name: string; value: string }
-  | { kind: "fetch"; url: string; credentials: RequestCredentials };
+  | { kind: "read-url"; method: "get" | "getAll"; url: string }
+  | { kind: "write-url"; method: "set" | "delete"; name: string; path?: string; url: string }
+  | { kind: "fetch"; url: string; credentials: RequestCredentials }
+);
+
+export type ObservedCookie = CookieListItem & { domain?: string | null; expires?: number | null };
 
 export interface WorkerChange {
-  changed: CookieListItem[];
-  deleted: CookieListItem[];
+  changed: ObservedCookie[];
+  deleted: ObservedCookie[];
   version: string;
   boot: string;
   instance: boolean;
@@ -27,6 +42,11 @@ const startup = self.cookieStore.getAll("visibility").then(
 );
 const channel = new BroadcastChannel("fixture-cookie-changes");
 const events: WorkerChange[] = [];
+const propertyEvents: CookieListItem["name"][] = [];
+// oxlint-disable-next-line unicorn/prefer-add-event-listener -- Exercise the global event-handler attribute.
+self.oncookiechange = (event) => {
+  propertyEvents.push(...event.changed.map((cookie) => cookie.name), ...event.deleted.map((cookie) => cookie.name));
+};
 let held: ExtendableCookieChangeEvent | undefined;
 let releaseFirst: (() => void) | undefined;
 let releaseLast: (() => void) | undefined;
@@ -54,6 +74,19 @@ self.addEventListener("cookiechange", (event) => {
   channel.postMessage(change);
 });
 
+function descriptor(target: object) {
+  const d = Object.getOwnPropertyDescriptor(target, "cookieStore");
+  return (
+    d && {
+      enumerable: d.enumerable,
+      configurable: d.configurable,
+      get: d.get?.name,
+      set: d.set?.name,
+      writable: d.writable,
+    }
+  );
+}
+
 async function run(command: WorkerCommand) {
   const { cookies } = self.registration;
   switch (command.kind) {
@@ -61,6 +94,28 @@ async function run(command: WorkerCommand) {
       return startup;
     case "events":
       return events;
+    case "property-events":
+      return propertyEvents;
+    case "identity": {
+      return {
+        type: typeof CookieStore,
+        constructor: self.cookieStore.constructor.name,
+        sameConstructor: self.cookieStore.constructor === CookieStore,
+        instance: self.cookieStore instanceof CookieStore,
+        prototype: Object.getPrototypeOf(self.cookieStore) === CookieStore.prototype,
+        tag: Object.prototype.toString.call(self.cookieStore),
+        global: descriptor(self),
+        inherited: descriptor(ServiceWorkerGlobalScope.prototype),
+        read: await CookieStore.prototype.get.call(self.cookieStore, { name: "identity" }),
+      };
+    }
+    case "read-url":
+      return self.cookieStore[command.method]({ name: "visibility", url: command.url });
+    case "write-url": {
+      // url is an unknown dictionary member on writes. Send it unchanged to both engines.
+      const options = { name: command.name, value: "written", path: command.path, url: command.url };
+      return self.cookieStore[command.method](options);
+    }
     case "get":
       return self.cookieStore.get(command.name);
     case "set":
@@ -71,7 +126,7 @@ async function run(command: WorkerCommand) {
     }
     case "subscribe":
     case "unsubscribe":
-      await cookies[command.kind]([{ name: command.name }]);
+      await cookies[command.kind](command.entries ?? [{ name: command.name }]);
       return cookies.getSubscriptions();
     case "subscriptions":
       return cookies.getSubscriptions();
@@ -106,7 +161,13 @@ self.addEventListener("message", (event: ExtendableMessageEvent & { data: Worker
   event.waitUntil(
     run(event.data).then(
       (value) => port.postMessage({ value }),
-      (error: unknown) => port.postMessage({ error: String(error) }),
+      (error: unknown) => {
+        if (event.data.record && error instanceof Error) {
+          port.postMessage({ value: { error: { name: error.name, message: error.message } } });
+        } else {
+          port.postMessage({ error: String(error) });
+        }
+      },
     ),
   );
 });

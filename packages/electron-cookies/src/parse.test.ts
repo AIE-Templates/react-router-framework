@@ -40,6 +40,12 @@ describe("parseSetCookie", () => {
     expect(set("a=").value).toBe("");
   });
 
+  it("rejects isolated UTF-16 surrogates in the cookie pair but accepts scalar values", () => {
+    expect(rejected("high=\ud800")).toBe("invalid Unicode cookie pair");
+    expect(rejected("bad\udfff=value")).toBe("invalid Unicode cookie pair");
+    expect(set("valid🍪=�; Unknown=\ud800")).toMatchObject({ name: "valid🍪", value: "�" });
+  });
+
   it.each(["bare", "=bare"])("accepts a nameless cookie: %s", (header) => {
     expect(set(header)).toMatchObject({ name: "", value: "bare" });
   });
@@ -50,6 +56,17 @@ describe("parseSetCookie", () => {
       expect(rejected(header)).toBe("control character");
     },
   );
+
+  it("rejects an empty name and value even on an expired cookie", () => {
+    expect(rejected("=; Max-Age=0")).toBe("empty cookie");
+  });
+
+  it("normalizes only the final Domain and rejects empty labels before the host", () => {
+    expect(set("a=1; Domain=..bad; Domain=.ExAmPle.TeSt").domain).toBe("example.test");
+    expect(set("a=1; Domain=")).not.toHaveProperty("domain");
+    expect(rejected("a=1; Domain=.")).toBe("invalid Domain");
+    expect(rejected("a=1; Domain=..example.test")).toBe("invalid Domain");
+  });
 
   it("discards separator whitespace before checking controls", () => {
     expect(set("a\t=\tb\t;\tPath\t=\t/x\t")).toMatchObject({ name: "a", value: "b", path: "/x" });
@@ -99,6 +116,10 @@ describe("parseSetCookie", () => {
       expect(set("a=1; Max-Age=60; Expires=Wed, 28 Oct 2026 13:00:00 GMT").expirationDate).toBe(now / 1000 + 60);
       expect(set("a=1; Expires=Wed, 28 Oct 2026 13:00:00 GMT; Max-Age=60").expirationDate).toBe(now / 1000 + 60);
       expect(set("a=1; Expires=Wed, 28 Oct 2026 13:00:00 GMT").expirationDate).toBe(now / 1000 + 3600);
+    });
+
+    it("keeps the full Max-Age lifetime for a write near the end of a second", () => {
+      expect(set("a=1; Max-Age=1", { now: now + 999 }).expirationDate).toBe((now + 1999) / 1000);
     });
 
     it("caps the lifetime at 400 days", () => {

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +84,7 @@ async function launch(profile: string, upstreamHost: string, taskTimeoutMs: numb
     }
     base.info().annotations.push({ type: "runtime", description: label });
     await base.info().attach("process.versions", { body: JSON.stringify(versions), contentType: "application/json" });
+    let previousSite: Site = "jar";
     return {
       app,
       close,
@@ -91,7 +92,24 @@ async function launch(profile: string, upstreamHost: string, taskTimeoutMs: numb
       origins,
       storageOrigin,
       async visit(site: Site, path = "/") {
+        if (previousSite !== "jar" && previousSite !== site) {
+          // Unload the previous client (including its pagehide writes) before clearing its registration.
+          await page.goto("about:blank");
+          await app.evaluate(async ({ session }, origin) => {
+            await session.defaultSession.clearData({
+              origins: [origin],
+              dataTypes: ["cookies", "serviceWorkers"],
+              originMatchingMode: "origin-in-all-contexts",
+            });
+          }, origins[previousSite]);
+        }
         await page.goto(origins[site] + path);
+        previousSite = site;
+      },
+      async attachObservation(site: Site, observed: unknown) {
+        const path = join(profile, "observed-" + site + ".json");
+        writeFileSync(path, JSON.stringify(observed, null, 2) ?? "null");
+        await base.info().attach("observed-" + site, { path, contentType: "application/json" });
       },
       async peer(site: Site, path = "/") {
         const url = origins[site] + path;
@@ -116,21 +134,26 @@ async function launch(profile: string, upstreamHost: string, taskTimeoutMs: numb
         const host = new URL(site === "jar" ? storageOrigin : origins[site]).hostname;
         // Filtering by URL here would hide path-scoped records. Preserve the leading dot and
         // every other Electron field, replacing only this site's exact hostname.
-        return app.evaluate(
-          async ({ session }, hostname) =>
-            (await session.defaultSession.cookies.get({ domain: hostname }))
-              .map((cookie) => ({
-                ...cookie,
-                domain:
-                  cookie.domain === hostname ? "HOST" : cookie.domain === "." + hostname ? ".HOST" : cookie.domain,
-              }))
-              .toSorted((a, b) =>
-                [a.name, a.domain, a.path, a.value]
-                  .join("\n")
-                  .localeCompare([b.name, b.domain, b.path, b.value].join("\n")),
-              ),
-          host,
+        const cookies = await app.evaluate(
+          async ({ session }, filter) => session.defaultSession.cookies.get(filter),
+          site === "jar" ? {} : { domain: host },
         );
+        if (site === "jar") {
+          expect(
+            cookies.filter((c) => c.domain !== host && c.domain !== "." + host),
+            "unexpected session cookie domains",
+          ).toEqual([]);
+        }
+        return cookies
+          .map((cookie) => ({
+            ...cookie,
+            domain: cookie.domain === host ? "HOST" : cookie.domain === "." + host ? ".HOST" : cookie.domain,
+          }))
+          .toSorted((a, b) =>
+            [a.name, a.domain, a.path, a.value]
+              .join("\n")
+              .localeCompare([b.name, b.domain, b.path, b.value].join("\n")),
+          );
       },
       async kill() {
         const exited = once(child, "exit");
@@ -199,14 +222,27 @@ export const test = base.extend<{
 export { expect };
 
 /** Run the same page operations in three isolated cookie namespaces in the same Chromium build. */
-export async function compareNative(fixture: Fixture, path: string, observe: (site: Site) => Promise<unknown>) {
-  const results = new Map<Site, unknown>();
+export async function compareNative<T>(
+  fixture: Fixture,
+  path: string,
+  observe: (site: Site) => Promise<T>,
+  expectedJar: (native: T) => T = (native) => native,
+) {
+  const results = new Map<Site, T>();
   for (const site of ["localhost", "https", "jar"] as const) {
     await test.step(site, async () => {
       await fixture.visit(site, path);
-      results.set(site, await observe(site));
+      expect(
+        await fixture.app.evaluate(({ session }) => session.defaultSession.cookies.get({})),
+        "comparison starts empty",
+      ).toEqual([]);
+      const observed = await observe(site);
+      results.set(site, observed);
+      await fixture.attachObservation(site, observed);
+      if (site === "jar") await fixture.stored(site);
     });
   }
-  expect(results.get("jar"), "https ordinary domain").toEqual(results.get("https"));
-  expect(results.get("jar"), "http localhost").toEqual(results.get("localhost"));
+  const jar: unknown = results.get("jar");
+  expect(jar, "https ordinary domain").toEqual(expectedJar(results.get("https")!));
+  expect(jar, "http localhost").toEqual(expectedJar(results.get("localhost")!));
 }

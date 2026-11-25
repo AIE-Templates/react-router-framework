@@ -37,6 +37,7 @@ export function workerControls(session: Session, profile: string) {
     if (gate?.point === "wake" && cause === "inserted") observedWrites.push(cookie.value);
   });
 
+  const wakeAttempts: string[] = [];
   let wakeCount = 0;
   function running() {
     // Electron 45 supplies the version ID as the record key.
@@ -66,6 +67,7 @@ export function workerControls(session: Session, profile: string) {
       getAllRunning: () => serviceWorkers.getAllRunning(),
       getWorkerFromVersionID: (id) => serviceWorkers.getWorkerFromVersionID(id),
       async startWorkerForScope(scope) {
+        wakeAttempts.push(scope);
         await cross("wake");
         const worker = await serviceWorkers.startWorkerForScope(scope);
         wakeCount++;
@@ -88,6 +90,7 @@ export function workerControls(session: Session, profile: string) {
         const pending: number = Reflect.apply(count, worker, []);
         return { wakes: wakeCount, pending };
       },
+      wakeAttempts,
       observedWrites,
       running,
       arm(point: WorkerGate) {

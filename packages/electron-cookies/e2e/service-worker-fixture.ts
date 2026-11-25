@@ -20,11 +20,16 @@ export async function observe(page: Page) {
   });
 }
 
-export function register(page: Page, versionName = "A", registrationSlot: "active" | "waiting" = "active") {
+export function register(
+  page: Page,
+  versionName = "A",
+  registrationSlot: "active" | "waiting" = "active",
+  registrationScope = scope,
+) {
   return page.evaluate(
     async ({ scriptUrl, target, slot, version }) => {
       const url = new URL(scriptUrl, location.href);
-      url.searchParams.set("version", version);
+      if (version) url.searchParams.set("version", version);
       const reg = await navigator.serviceWorker.register(url, {
         scope: target,
         type: "module",
@@ -45,11 +50,16 @@ export function register(page: Page, versionName = "A", registrationSlot: "activ
       });
       return { scope: reg.scope, script: worker.scriptURL, state: worker.state };
     },
-    { scriptUrl: script, target: scope, slot: registrationSlot, version: versionName },
+    { scriptUrl: script, target: registrationScope, slot: registrationSlot, version: versionName },
   );
 }
 
-export function command(page: Page, request: WorkerCommand, registrationSlot: "active" | "waiting" = "active") {
+export function command(
+  page: Page,
+  request: WorkerCommand,
+  registrationSlot: "active" | "waiting" = "active",
+  registrationScope = scope,
+) {
   return page.evaluate(
     async ({ input, slot, target }) => {
       const reg = await navigator.serviceWorker.getRegistration(target);
@@ -74,7 +84,7 @@ export function command(page: Page, request: WorkerCommand, registrationSlot: "a
         port1.close();
       }
     },
-    { input: request, slot: registrationSlot, target: scope },
+    { input: request, slot: registrationSlot, target: registrationScope },
   );
 }
 

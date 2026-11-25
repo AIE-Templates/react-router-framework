@@ -45,8 +45,6 @@ export function toCookieWrite(
 ): CookieWrite {
   const details: CookieWrite = { ...cookie, url: storageOrigin + cookie.path };
   if (details.domain === publicHost.toLowerCase()) details.domain = storageHost;
-  if (details.expirationDate !== undefined && details.expirationDate * 1000 <= Date.now() && !details.value)
-    details.value = "1";
   return details;
 }
 

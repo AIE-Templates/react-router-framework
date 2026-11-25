@@ -47,6 +47,30 @@ function install(installation: CookieInstallation = { cookieApi: true, fetch: tr
     ? Request
     : Object.getPrototypeOf(Request);
   Object.assign(page, { Request: nativeRequest, Headers, fetch, CookieChangeEvent: ChangeEvent });
+  // jsdom has no CookieStore binding. Supply a stable native-shaped singleton
+  // and exercise the original getter, its prototype, and the serialized patches.
+  class NativeStore extends page.EventTarget {
+    #handler: EventListener | null = null;
+    get onchange() {
+      return this.#handler;
+    }
+    set onchange(value: EventListener | null) {
+      if (this.#handler) this.removeEventListener("change", this.#handler);
+      this.#handler = value;
+      if (value) this.addEventListener("change", value);
+    }
+    get() {
+      throw new TypeError("Illegal invocation");
+    }
+  }
+  const native = NativeStore.prototype.get;
+  Object.assign(NativeStore.prototype, { getAll: native, set: native, delete: native });
+  const singleton = new NativeStore();
+  const accessor = () => singleton;
+  if (installation.cookieApi) {
+    Object.defineProperty(page, "cookieStore", { configurable: true, get: accessor });
+    Object.defineProperty(page, "CookieStore", { value: NativeStore });
+  }
   const getAll = vi.fn<CookieShimBridge["getAll"]>().mockResolvedValue({ ok: true, value: [] });
   const set = vi.fn<CookieShimBridge["set"]>().mockResolvedValue({ ok: true, value: undefined });
   const bridge = {
@@ -61,10 +85,21 @@ function install(installation: CookieInstallation = { cookieApi: true, fetch: tr
   const run: typeof installCookieShims = page.eval(`(${source})`);
   const originalCookie = Object.getOwnPropertyDescriptor(page.Document.prototype, "cookie")!;
   run(bridge);
-  return { page, bridge, fetch, originalCookie, store: page.cookieStore };
+  return { page, bridge, fetch, originalCookie, accessor, store: page.cookieStore };
 }
 
 describe("serialized main-world cookie installer", () => {
+  it("preserves the global accessor and routes branded prototype reads through the jar", async () => {
+    const { page, bridge, accessor, store } = install();
+    expect(Object.getOwnPropertyDescriptor(page, "cookieStore")?.get).toBe(accessor);
+    expect(store).toBeInstanceOf(page.CookieStore);
+    expect(store.constructor).toBe(page.CookieStore);
+    bridge.getAll.mockResolvedValue({ ok: true, value: [sample] });
+    expect(await page.CookieStore.prototype.get.call(store, { name: "a" })).toEqual(sample);
+    expect(() => Reflect.apply(page.CookieStore.prototype.get, {}, ["a"])).toThrow("Illegal invocation");
+    expect(bridge.getAll).toHaveBeenCalledExactlyOnceWith(creationUrl, "a");
+  });
+
   it("DC-08/12/15/16 passes sync replies and DOMString assignments with the creation URL", () => {
     const { page, bridge } = install();
     const convert = vi.fn<(hint: string) => string>((hint: string) => hint + "=中文");
@@ -229,6 +264,20 @@ describe("serialized main-world cookie installer", () => {
     }
     await expect(store.delete({ name: "a", domain: ".example" })).rejects.toBeInstanceOf(page.TypeError);
     expect(bridge.set).toHaveBeenCalledTimes(1);
+  });
+
+  it("CS-07 distinguishes a null set argument from an empty CookieInit dictionary", async () => {
+    const { store, bridge } = install();
+    for (const [input, reason] of [
+      [null, "The provided value is not of type 'CookieInit'."],
+      [{}, "Failed to read the 'name' property from 'CookieInit': Required member is undefined."],
+    ] as const) {
+      await expect(Reflect.apply(store.set, store, [input])).rejects.toMatchObject({
+        name: "TypeError",
+        message: "Failed to execute 'set' on 'CookieStore': " + reason,
+      });
+    }
+    expect(bridge.set).not.toHaveBeenCalled();
   });
 
   it("CS-09/14 rebuilds structured errors in the page realm and recovers", async () => {

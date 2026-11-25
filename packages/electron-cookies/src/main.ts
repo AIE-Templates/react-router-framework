@@ -98,7 +98,11 @@ export function createCookieJar<S extends { cookies: CookieStore }>(options: Coo
     if (valid.status !== "stored") return valid;
 
     // Submit both operations before yielding so other reads cannot land between them.
-    const clear = writeCookie(store, { ...details, httpOnly: true, value: "1", expirationDate: 1 }, deadline);
+    const clear = writeCookie(
+      store,
+      { ...details, httpOnly: true, value: details.name ? "" : "1", expirationDate: 1 },
+      deadline,
+    );
     if (details.expirationDate !== undefined && details.expirationDate * 1000 <= Date.now()) return clear;
     const [removed, replacement] = await Promise.all([clear, writeCookie(store, details, deadline)]);
     if (replacement.status === "stored") return replacement;

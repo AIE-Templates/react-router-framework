@@ -1,3 +1,4 @@
+import type { ObservedCookie } from "./app/service-worker.mts";
 import { expect, test } from "./fixture.ts";
 import {
   command,
@@ -12,6 +13,7 @@ import {
 
 test("SW-01/03/04/14 | a top-level read uses the script path; worker and window share writes", async ({ fixture }) => {
   const reads = [];
+  const startups = [];
   for (const site of ["https", "jar"] as const) {
     await fixture.visit(site, scope + "page");
     await fixture.set(["visibility=script; Path=/scripts", "visibility=scope; Path=/area"]);
@@ -22,7 +24,22 @@ test("SW-01/03/04/14 | a top-level read uses the script path; worker and window 
       state: "activated",
     });
     const startup = await command(fixture.page, { kind: "startup" });
-    expect(startup).toMatchObject({ visible: [{ name: "visibility", value: "script", path: "/scripts" }] });
+    startups.push(startup);
+    expect(startup).toEqual({
+      nativeStore: true,
+      visible: [
+        {
+          name: "visibility",
+          value: "script",
+          path: "/scripts",
+          domain: null,
+          expires: null,
+          secure: false,
+          sameSite: "lax",
+          partitioned: false,
+        },
+      ],
+    });
     expect(await fixture.page.evaluate(async () => (await cookieStore.get("visibility"))?.value)).toBe("scope");
     reads.push(await command(fixture.page, { kind: "get", name: "visibility" }));
     await write(fixture.page, "shared", "window");
@@ -30,6 +47,7 @@ test("SW-01/03/04/14 | a top-level read uses the script path; worker and window 
     await command(fixture.page, { kind: "set", name: "shared", value: "worker" });
     expect(await fixture.page.evaluate(async () => (await cookieStore.get("shared"))?.value)).toBe("worker");
   }
+  expect(startups[1]).toStrictEqual(startups[0]);
   expect(reads[1]).toEqual(reads[0]);
 });
 
@@ -100,7 +118,7 @@ test("SW-07 | native and jar cookiechange dictionaries agree for matching writes
     expect(changes.every((e) => e.instance)).toBe(true);
     results.push(changes.map(({ changed, deleted }) => ({ changed, deleted })));
   }
-  expect(results[1]).toEqual(results[0]);
+  expect(results[1]).toStrictEqual(results[0]);
 });
 
 test("SW-02, SRV-07/09 | worker credentials, initiator and a controlled fetch reissued with include", async ({
@@ -149,4 +167,214 @@ test("SW-02, SRV-07/09 | worker credentials, initiator and a controlled fetch re
     wire: [{ method: "GET", marker: null }],
   });
   expect(await page.evaluate(async () => (await cookieStore.get("via"))?.value)).toBe("worker");
+});
+
+for (const registrationScope of [scope, "/"]) {
+  test(
+    "SW-03 | read URL resolution, filtering and errors with registration " + registrationScope,
+    async ({ fixture }) => {
+      const results = [];
+      for (const site of ["https", "jar"] as const) {
+        await fixture.visit(site);
+        const { page } = fixture;
+        await register(page, "", "active", registrationScope);
+        await fixture.set([
+          "visibility=scope; Path=/area",
+          "visibility=script; Path=/scripts",
+          "visibility=nested; Path=" + script + "/nested",
+        ]);
+        const urls = [
+          script,
+          "#fragment",
+          "./service-worker.js",
+          "child",
+          "child/../service-worker.js",
+          "./service-worker.js-suffix",
+          "./service-worker.js/nested/page#part",
+          "/area/",
+          "/area/sub/page",
+          "../area/page",
+          "/outside/",
+          "https://foreign.test/",
+          "https://[",
+        ];
+        const rows = [];
+        for (const method of ["get", "getAll"] as const) {
+          for (const url of urls) {
+            rows.push({
+              method,
+              url,
+              result: await command(page, { kind: "read-url", method, url, record: true }, "active", registrationScope),
+            });
+          }
+        }
+        await test.info().attach(site + " worker URL results", {
+          body: JSON.stringify(rows, null, 2),
+          contentType: "application/json",
+        });
+        results.push(rows);
+      }
+      expect(results[1]).toStrictEqual(results[0]);
+      const [native] = results;
+      expect(native.find((r) => r.method === "get" && r.url === "./service-worker.js")?.result).toMatchObject({
+        value: "script",
+      });
+      expect(
+        native.find((r) => r.method === "getAll" && r.url === "./service-worker.js/nested/page#part")?.result,
+      ).toMatchObject([{ value: "nested" }, { value: "script" }]);
+    },
+  );
+}
+
+test("SW-03 | a script-prefix URL outside the registration returns the same path cookie on both sites", async ({
+  fixture,
+}) => {
+  const results = [];
+  for (const site of ["https", "jar"] as const) {
+    await fixture.visit(site);
+    await register(fixture.page, "");
+    await fixture.set(["visibility=outside-area; Path=" + script + "/nested"]);
+    const reply = await command(fixture.page, {
+      kind: "read-url",
+      method: "get",
+      url: script + "/nested/page",
+      record: true,
+    });
+    results.push(reply);
+  }
+  expect(results[0]).toMatchObject({ value: "outside-area", path: script + "/nested" });
+  expect(results[1]).toStrictEqual(results[0]);
+});
+
+test("SW-03 | set and delete ignore url and preserve default and empty paths", async ({ fixture }) => {
+  const results = [];
+  for (const site of ["https", "jar"] as const) {
+    await fixture.visit(site);
+    await register(fixture.page);
+    const rows = [];
+    for (const [name, path] of [
+      ["default", undefined],
+      ["empty", ""],
+    ] as const) {
+      for (const method of ["set", "delete"] as const) {
+        const outcome = await command(fixture.page, {
+          kind: "write-url",
+          method,
+          url: "https://foreign.test/ignored",
+          name,
+          path,
+          record: true,
+        });
+        const cookie = await command(fixture.page, { kind: "get", name });
+        if (method === "set")
+          expect(cookie).toMatchObject({ value: "written", path: path === undefined ? "/" : "/scripts" });
+        else expect(cookie).toBeNull();
+        rows.push({ method, name, outcome, cookie });
+      }
+    }
+    results.push(rows);
+  }
+  expect(results[1]).toStrictEqual(results[0]);
+});
+
+test("SW-06 | wildcard and URL subscriptions resolve against the registration from either context", async ({
+  fixture,
+}) => {
+  const results = [];
+  for (const site of ["https", "jar"] as const) {
+    await fixture.visit(site, "/client/page");
+    const { page } = fixture;
+    await register(page);
+    const rows = [];
+    for (const context of ["worker", "window"] as const) {
+      for (const entry of [
+        {},
+        { url: "/area/deep/page" },
+        { name: "watch", url: "relative/page" },
+        { url: "../outside" },
+      ]) {
+        for (const kind of ["subscribe", "unsubscribe"] as const) {
+          const result =
+            context === "worker"
+              ? await command(page, { kind, entries: [entry], record: true })
+              : await page.evaluate(
+                  async ({ scopeUrl, operation, subscription }) => {
+                    const registration = await navigator.serviceWorker.getRegistration(scopeUrl);
+                    if (!registration) throw new Error("Missing registration");
+                    try {
+                      await registration.cookies[operation]([subscription]);
+                      return await registration.cookies.getSubscriptions();
+                    } catch (error) {
+                      if (!(error instanceof Error)) throw error;
+                      return { error: { name: error.name, message: error.message } };
+                    }
+                  },
+                  { scopeUrl: scope, operation: kind, subscription: entry },
+                );
+          // Only this registration's origin varies. Preserve subscription order and missing fields.
+          const subscriptions = await windowSubscriptions(page, "list");
+          const normalize = (value: unknown) =>
+            Array.isArray(value)
+              ? value.map((subscription: CookieStoreGetOptions) => {
+                  const origin = fixture.origins[site];
+                  return subscription.url?.startsWith(origin + "/")
+                    ? { ...subscription, url: subscription.url.slice(origin.length) }
+                    : subscription;
+                })
+              : value;
+          rows.push({ context, kind, entry, result: normalize(result), subscriptions: normalize(subscriptions) });
+        }
+      }
+    }
+    results.push(rows);
+  }
+  expect(results[1]).toStrictEqual(results[0]);
+});
+
+test("SW-07 | wildcard, parent path, domain, HttpOnly and expiry changes reach oncookiechange", async ({ fixture }) => {
+  const expires = Math.floor(Date.now() / 1000) * 1000 + 3600_000;
+  const results = [];
+  for (const site of ["https", "jar"] as const) {
+    const { page } = fixture;
+    await fixture.visit(site);
+    await observe(page);
+    await register(page);
+    await command(page, { kind: "subscribe", entries: [{}] });
+    await write(page, "wildcard-only", "visible");
+    await waitForChanges(page, 1);
+    await command(page, { kind: "unsubscribe", entries: [{}] });
+    await command(page, { kind: "subscribe", entries: [{ url: "/area/deep/page" }] });
+    await fixture.set(["hidden=yes; Path=/; HttpOnly", "sibling=no; Path=/area/deeper"]);
+    expect(await fixture.stored(site)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "hidden", httpOnly: true })]),
+    );
+    await page.evaluate(() =>
+      cookieStore.set({ name: "parent", value: "visible", domain: location.hostname, path: "/" }),
+    );
+    await waitForChanges(page, 2);
+    await page.evaluate(async (expiry) => {
+      const initial = { name: "parent", value: "visible", domain: location.hostname, path: "/" };
+      await cookieStore.set(initial);
+      await cookieStore.set({ ...initial, expires: expiry });
+    }, expires);
+    await write(page, "fence", "end");
+    await page.waitForFunction(() => window.swChanges.some((event) => event.changed.some((c) => c.name === "fence")));
+    const changes = await page.evaluate(() => window.swChanges);
+    const hostname = new URL(fixture.origins[site]).hostname;
+    const normalize = (c: ObservedCookie) => (c.domain === hostname ? { ...c, domain: "HOST" } : c);
+    results.push({
+      events: changes.map(({ changed, deleted }) => ({
+        changed: changed.map(normalize),
+        deleted: deleted.map(normalize),
+      })),
+      propertyEvents: await command(page, { kind: "property-events" }),
+    });
+  }
+  expect(results[1]).toStrictEqual(results[0]);
+  const [{ events, propertyEvents }] = results;
+  const names = events.flatMap((event) => event.changed.map((c) => c.name));
+  expect(names).toEqual(["wildcard-only", "parent", "parent", "fence"]);
+  expect(propertyEvents).toEqual(names);
+  expect(events[1].changed[0].domain).toBe("HOST");
+  expect(events[2].changed[0].expires).toBe(expires);
 });

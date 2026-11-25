@@ -167,7 +167,11 @@ export function publicChange(
   if (cookie.domain?.replace(/^\./, "") !== script.storageHost) return undefined;
   if (cookie.httpOnly || cause === "overwrite" || cause === "inserted-no-change-overwrite") return undefined;
   const row = script.publicCookie(cookie);
-  const { value: _value, expires: _expires, ...deleted } = row;
-  const inserted = cause === "inserted" || cause === "inserted-no-value-change-overwrite";
-  return { changed: inserted ? [row] : [], deleted: inserted ? [] : [deleted] };
+  if (cause === "inserted" || cause === "inserted-no-value-change-overwrite") return { changed: [row], deleted: [] };
+  const { value: _value, expires: _expires, sameSite, ...deleted } = row;
+  // Deleted items expose the stored SameSite attribute; no effective default is supplied.
+  return {
+    changed: [],
+    deleted: [cookie.sameSite && cookie.sameSite !== "unspecified" ? { ...deleted, sameSite } : deleted],
+  };
 }

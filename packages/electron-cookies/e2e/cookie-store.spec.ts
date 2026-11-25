@@ -1,7 +1,9 @@
+import type { Page } from "@playwright/test";
+
 import { compareNative, expect, requestCookie, test } from "./fixture.ts";
 
 test("CS-01..08, CS-10 | native cookie dictionaries, order, URL validation and mutations", async ({ fixture }) => {
-  const expiresAt = Math.floor(Date.now() / 1000) * 1000 + 3600_000;
+  const expiresAt = new Date().setMilliseconds(375) + 3600_000;
   await compareNative(fixture, "/account/page", async () => {
     await fixture.set(["sid=root; Path=/", "sid=scoped; Path=/account", "hidden=h; HttpOnly; Path=/"]);
     const serverReply = await fixture.replyPath(["fromServer=read; Path=/"]);
@@ -174,8 +176,20 @@ test("CS-07/09 | invalid inputs reject with Chromium's exact TypeError and prese
   });
 });
 
-type ObservedEvent = { changed: CookieListItem[]; deleted: CookieListItem[]; native: boolean; type: string };
+type ObservedEvent = {
+  changed: CookieListItem[];
+  deleted: CookieListItem[];
+  native: boolean;
+  type: string;
+  isTrusted: boolean;
+};
 declare global {
+  // Electron exposes the complete CookieListItem dictionary; lib.dom currently types name/value only.
+  interface CookieListItem {
+    expires?: number | null;
+    partitioned?: boolean;
+    domain?: string | null;
+  }
   interface Window {
     cookieEvents: { listener: ObservedEvent[]; property: ObservedEvent[] };
   }
@@ -184,88 +198,402 @@ declare global {
 test("CS-11..13, DC-13 | events from all writers, path and HttpOnly filtering, cross-window visibility", async ({
   fixture,
 }) => {
-  const expiry = Math.floor(Date.now() / 1000) * 1000 + 3600_000;
-  await compareNative(fixture, "/", async (site) => {
-    const { page } = fixture;
-    const peer = await fixture.peer(site, "/?peer");
-    try {
-      await page.evaluate(() => {
-        window.cookieEvents = { listener: [], property: [] };
-        // oxlint-disable-next-line unicorn/consistent-function-scoping -- Serialized into the renderer.
-        const shape = (e: CookieChangeEvent) => ({
-          changed: e.changed.map((c) => ({ ...c })),
-          deleted: e.deleted.map((c) => ({ ...c })),
-          native: e instanceof CookieChangeEvent,
-          type: e.type,
+  const expiry = new Date().setMilliseconds(375) + 3600_000;
+  await compareNative(
+    fixture,
+    "/",
+    async (site) => {
+      const { page } = fixture;
+      const peer = await fixture.peer(site, "/?peer");
+      try {
+        await page.evaluate(() => {
+          window.cookieEvents = { listener: [], property: [] };
+          // oxlint-disable-next-line unicorn/consistent-function-scoping -- Serialized into the renderer.
+          const shape = (e: CookieChangeEvent) => ({
+            changed: e.changed.map((c) => ({ ...c })),
+            deleted: e.deleted.map((c) => ({ ...c })),
+            native: e instanceof CookieChangeEvent,
+            isTrusted: e.isTrusted,
+            type: e.type,
+          });
+          cookieStore.addEventListener("change", (e) => window.cookieEvents.listener.push(shape(e)));
+          // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Exercise the event handler property itself.
+          cookieStore.onchange = (e) => window.cookieEvents.property.push(shape(e));
         });
-        cookieStore.addEventListener("change", (e) => window.cookieEvents.listener.push(shape(e)));
-        // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Exercise the event handler property itself.
-        cookieStore.onchange = (e) => window.cookieEvents.property.push(shape(e));
-      });
-      // Each visible change is acknowledged before starting the next mutation. The final sentinel
-      // fences off invisible and identical writes without sleeping or assuming an IPC latency.
-      const waitFor = async (cookieName: string, cookieValue?: string) =>
-        page.waitForFunction(
-          ({ name, value }) =>
-            window.cookieEvents.property.some((e) =>
-              (value === undefined ? e.deleted : e.changed).some((c) => c.name === name && c.value === value),
-            ),
-          { name: cookieName, value: cookieValue },
+        // Each visible change is acknowledged before starting the next mutation. The final sentinel
+        // fences off invisible and identical writes without sleeping or assuming an IPC latency.
+        const waitFor = async (cookieName: string, cookieValue?: string) =>
+          page.waitForFunction(
+            ({ name, value }) =>
+              window.cookieEvents.property.some((e) =>
+                (value === undefined ? e.deleted : e.changed).some((c) => c.name === name && c.value === value),
+              ),
+            { name: cookieName, value: cookieValue },
+          );
+        await page.evaluate(() => {
+          document.cookie = "doc=one; Path=/";
+        });
+        expect(await peer.evaluate(() => document.cookie)).toBe("doc=one");
+        await waitFor("doc", "one");
+        await page.evaluate(() => cookieStore.set("api", "one"));
+        await waitFor("api", "one");
+        await page.evaluate(() => cookieStore.set("api", "one"));
+        await page.evaluate((expires) => cookieStore.set({ name: "api", value: "one", expires }), expiry);
+        await page.waitForFunction(() =>
+          window.cookieEvents.property.some((e) => e.changed.some((c) => c.name === "api" && c.expires != null)),
         );
-      await page.evaluate(() => {
-        document.cookie = "doc=one; Path=/";
-      });
-      expect(await peer.evaluate(() => document.cookie)).toBe("doc=one");
-      await waitFor("doc", "one");
-      await page.evaluate(() => cookieStore.set("api", "one"));
-      await waitFor("api", "one");
-      await page.evaluate(() => cookieStore.set("api", "one"));
-      await page.evaluate((expires) => cookieStore.set({ name: "api", value: "one", expires }), expiry);
-      await page.waitForFunction(
-        (expires) =>
-          window.cookieEvents.property.some((e) => e.changed.some((c) => "expires" in c && c.expires === expires)),
-        expiry,
-      );
-      await page.evaluate(() => cookieStore.set("api", "two"));
-      await waitFor("api", "two");
-      await fixture.set(["server=three; Path=/"]);
-      await waitFor("server", "three");
-      await peer.evaluate(() => {
-        document.cookie = "peer=four; Path=/";
-      });
-      await waitFor("peer", "four");
-      await page.evaluate(() => cookieStore.delete("api"));
-      await waitFor("api");
-      await fixture.set(["hidden=1; HttpOnly; Path=/", "scoped=1; Path=/other"]);
-      await page.evaluate(() => cookieStore.delete("absent"));
-      await page.evaluate(() => cookieStore.set("fence", "end"));
-      await waitFor("fence", "end");
-      const { listener, property } = await page.evaluate(() => window.cookieEvents);
-      expect(property).toEqual(listener);
-      expect(listener.every((e) => e.native && e.type === "change")).toBe(true);
-      expect(listener.flatMap((e) => e.changed.map((c) => [c.name, c.value]))).toEqual([
-        ["doc", "one"],
-        ["api", "one"],
-        ["api", "one"],
-        ["api", "two"],
-        ["server", "three"],
-        ["peer", "four"],
-        ["fence", "end"],
-      ]);
-      expect(listener.flatMap((e) => e.deleted.map((c) => c.name))).toEqual(["api"]);
-      if (site === "jar") {
-        const id = await fixture.app.evaluate(
-          ({ BrowserWindow }) =>
-            BrowserWindow.getAllWindows().find(
-              (w) => w.webContents.getURL() === globalThis.cookieFixture.origins.jar + "/",
-            )?.webContents.id,
-        );
-        const pushed = await fixture.app.evaluate(() => globalThis.cookieFixture.pushes);
-        expect([...new Set(pushed)]).toEqual([id]);
+        await page.evaluate(() => cookieStore.set("api", "two"));
+        await waitFor("api", "two");
+        await fixture.set(["server=three; Path=/"]);
+        await waitFor("server", "three");
+        await peer.evaluate(() => {
+          document.cookie = "peer=four; Path=/";
+        });
+        await waitFor("peer", "four");
+        await page.evaluate(() => cookieStore.delete("api"));
+        await waitFor("api");
+        await fixture.set(["hidden=1; HttpOnly; Path=/", "scoped=1; Path=/other"]);
+        await page.evaluate(() => cookieStore.delete("absent"));
+        await page.evaluate(() => cookieStore.set("fence", "end"));
+        await waitFor("fence", "end");
+        const { listener, property } = await page.evaluate(() => window.cookieEvents);
+        expect(property).toEqual(listener);
+        expect(listener.every((e) => e.native && e.type === "change")).toBe(true);
+        expect(listener.flatMap((e) => e.changed.map((c) => [c.name, c.value]))).toEqual([
+          ["doc", "one"],
+          ["api", "one"],
+          ["api", "one"],
+          ["api", "two"],
+          ["server", "three"],
+          ["peer", "four"],
+          ["fence", "end"],
+        ]);
+        expect(listener.flatMap((e) => e.deleted.map((c) => c.name))).toEqual(["api"]);
+        if (site === "jar") {
+          const id = await fixture.app.evaluate(
+            ({ BrowserWindow }) =>
+              BrowserWindow.getAllWindows().find(
+                (w) => w.webContents.getURL() === globalThis.cookieFixture.origins.jar + "/",
+              )?.webContents.id,
+          );
+          const pushed = await fixture.app.evaluate(() => globalThis.cookieFixture.pushes);
+          expect([...new Set(pushed)]).toEqual([id]);
+        }
+        for (const event of property) expect(event.isTrusted).toBe(site !== "jar");
+        return property;
+      } finally {
+        await peer.close();
       }
-      return property;
-    } finally {
-      await peer.close();
-    }
+    },
+    (native) => native.map((event) => ({ ...event, isTrusted: false })),
+  );
+});
+
+test("CS-07 | set, delete and get report native validation errors for each overload", async ({ fixture }) => {
+  await compareNative(fixture, "/account/page", async (site) => {
+    const errors = await fixture.page.evaluate(async () => {
+      const cases: [keyof Pick<CookieStore, "get" | "set" | "delete">, unknown[]][] = [
+        ["get", []],
+        ["get", [{}]],
+        ["get", [{ url: "http://[" }]],
+        ["get", [{ url: "/other" }]],
+        ["set", []],
+        ["set", ["single"]],
+        ["set", [null]],
+        ["set", [undefined]],
+        ["set", [{ value: "v" }]],
+        ["set", [{ name: "a" }]],
+        ["delete", []],
+        ["delete", [{}]],
+        ["set", ["", "a=b"]],
+        ["set", ["", "__Secure-x"]],
+        ["set", ["", "__hOsT-x"]],
+        ["set", ["", "__Http-x"]],
+        ["set", [{ name: "a", value: "b", expires: Infinity }]],
+        ["set", [{ name: "a", value: "b", expires: 123, maxAge: 2 }]],
+        ["set", [{ name: "a", value: "b", sameSite: "INVALID" }]],
+      ];
+      for (const options of [
+        { name: "__hTtP-one" },
+        { name: "__Host-Http-one" },
+        { name: "__Host-one", domain: location.hostname },
+        { name: "__Host-one", path: "" },
+        { name: "__Host-one", path: "/nested" },
+        { name: "a", path: "relative" },
+        { name: "a", path: "/" + "x".repeat(1023) },
+        { name: "a", path: "/x;y" },
+        { name: "a", domain: ".bad" },
+        { name: "a", domain: "foreign.test" },
+      ]) {
+        cases.push(["set", [{ ...options, value: "v" }]], ["delete", [options]]);
+      }
+      const rows = [];
+      for (const [method, args] of cases) {
+        const input = JSON.stringify(args, (_key, value: unknown) =>
+          value === location.hostname
+            ? "HOST"
+            : value === Infinity
+              ? "Infinity"
+              : value === undefined
+                ? "undefined"
+                : value,
+        );
+        try {
+          await Reflect.apply(cookieStore[method], cookieStore, args);
+          rows.push({ method, input, error: null });
+        } catch (e) {
+          if (!(e instanceof Error)) throw e;
+          rows.push({ method, input, error: { typeError: e instanceof TypeError, name: e.name, message: e.message } });
+        }
+      }
+      return rows;
+    });
+    const records = await fixture.stored(site);
+    for (const row of errors)
+      expect
+        .soft(row.error, site + " " + row.method + " " + row.input)
+        .toMatchObject({ typeError: true, name: "TypeError" });
+    expect.soft(records).toEqual([]);
+    return { errors, records };
   });
+});
+
+test("CS-02/06 | paths, empty names, whitespace filters, SameSite and relative lifetimes", async ({ fixture }) => {
+  await compareNative(fixture, "/account/page", async (site) => {
+    const result = await fixture.page.evaluate(async () => {
+      await cookieStore.set({ name: "name", value: "v", sameSite: "none", path: "" });
+      await cookieStore.set("", "bare");
+      const rows = await cookieStore.getAll();
+      const whitespace = [await cookieStore.get(" name "), await cookieStore.getAll({ name: "\tname\t" })];
+      const nameless = await cookieStore.get("");
+      await cookieStore.delete("");
+      await cookieStore.set("past", "seed");
+      await cookieStore.set({ name: "past", value: "gone", expires: 1000 });
+      const before = Date.now();
+      const duration = { name: "lifetime", value: "v", maxAge: 60 };
+      await cookieStore.set(duration);
+      const lifetime = await cookieStore.get("lifetime");
+      const after = Date.now();
+      const zero = { ...duration, maxAge: 0 };
+      await cookieStore.set(zero);
+      const paths = [
+        "/a?b",
+        "/a#b",
+        "/a|b",
+        "/a\\b",
+        "/a\tb",
+        "/目录",
+        "//double",
+        "/old/../new",
+        "/%2f",
+        "/" + "p".repeat(1022),
+      ];
+      const outcomes = [];
+      for (const [i, path] of paths.entries()) {
+        try {
+          await cookieStore.set({ name: "path" + i, value: "ok", path });
+          outcomes.push(null);
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
+          outcomes.push([error.name, error.message]);
+        }
+      }
+      return {
+        rows,
+        whitespace,
+        nameless,
+        deleted: await cookieStore.get(""),
+        past: await cookieStore.get("past"),
+        before,
+        after,
+        lifetime,
+        expired: await cookieStore.get("lifetime"),
+        outcomes,
+      };
+    });
+    expect(result.nameless).toMatchObject({ name: "", value: "bare" });
+    expect(result.deleted).toBeNull();
+    expect(result.past).toBeNull();
+    expect(result.expired).toBeNull();
+    const { before, after, lifetime, ...rest } = result;
+    expect(lifetime?.expires).toBeGreaterThanOrEqual(before + 60_000 - 1);
+    expect(lifetime?.expires).toBeLessThanOrEqual(after + 60_000 + 1);
+    return { ...rest, lifetime: { ...lifetime, expires: 60 }, records: await fixture.stored(site) };
+  });
+});
+
+test("CS-15 | partition collisions and unqualified delete through cookieStore", async ({ fixture }) => {
+  for (const site of ["localhost", "https", "jar"] as const) {
+    await fixture.visit(site);
+    const result = await fixture.page.evaluate(async () => {
+      // oxlint-disable-next-line unicorn/consistent-function-scoping -- Serialized into the renderer.
+      const read = async () => (await cookieStore.getAll("id")).map((c) => [c.value, c.partitioned]);
+      await cookieStore.set({ name: "id", value: "partition", partitioned: true });
+      await cookieStore.delete("id");
+      const unqualified = await read();
+      await cookieStore.set({ name: "id", value: "partition", partitioned: true });
+      await cookieStore.set({ name: "id", value: "plain" });
+      const both = await read();
+      await cookieStore.delete("id");
+      const after = await read();
+      await cookieStore.delete({ name: "id", partitioned: true });
+      return { unqualified, both, after, end: await read() };
+    });
+    expect(result.unqualified).toEqual(site === "jar" ? [] : [["partition", true]]);
+    expect(result.both).toEqual(
+      site === "jar"
+        ? [["plain", false]]
+        : [
+            ["partition", true],
+            ["plain", false],
+          ],
+    );
+    expect(result.after).toEqual(site === "jar" ? [] : [["partition", true]]);
+    expect(result.end).toEqual([]);
+  }
+});
+
+type Change = Pick<CookieChangeEvent, "changed" | "deleted" | "isTrusted">;
+
+declare global {
+  interface Window {
+    changes: Change[];
+  }
+}
+
+async function recordChanges(page: Page) {
+  await page.evaluate(() => {
+    window.changes = [];
+    cookieStore.addEventListener("change", ({ changed, deleted, isTrusted }) => {
+      window.changes.push({ changed, deleted, isTrusted });
+    });
+  });
+}
+
+async function finishChanges(page: Page, isJar: boolean) {
+  await page.evaluate(() => cookieStore.set("fence", "done"));
+  await page.waitForFunction(() => window.changes.some((event) => event.changed.some((item) => item.name === "fence")));
+  const changes = await page.evaluate(() => window.changes);
+  for (const event of changes) expect(event.isTrusted).toBe(!isJar);
+  return changes;
+}
+
+function syntheticChanges(events: Change[]) {
+  return events.map((event) => ({ ...event, isTrusted: false }));
+}
+
+test("CS-11/12 | server and script deletions, path boundary and same-task event order", async ({ fixture }) => {
+  const { page } = fixture;
+  await compareNative(
+    fixture,
+    "/account/page",
+    async (site) => {
+      await recordChanges(page);
+      await fixture.set(["server=1; Path=/account", "sibling=hidden; Path=/account2", "batch=2; Path=/account"]);
+      await page.evaluate(() => {
+        document.cookie = "burstA=1";
+        document.cookie = "burstB=2";
+        document.cookie = "burstA=3";
+        document.cookie = "burstB=; Max-Age=0";
+      });
+      await fixture.set(["server=; Path=/account; Max-Age=0", "tail=3; Path=/account"]);
+      const events = await finishChanges(page, site === "jar");
+      expect(events.flatMap((e) => e.changed.map((c) => c.name))).toEqual([
+        "server",
+        "batch",
+        "burstA",
+        "burstB",
+        "burstA",
+        "tail",
+        "fence",
+      ]);
+      expect(events.flatMap((e) => e.deleted.map((c) => c.name))).toEqual(["burstB", "server"]);
+      return events;
+    },
+    syntheticChanges,
+  );
+});
+
+test("CS-11/12 | domain-cookie change dictionaries preserve domain and deletion identity", async ({ fixture }) => {
+  const { page } = fixture;
+  const native = [];
+  for (const site of ["localhost", "https", "jar"] as const) {
+    await fixture.visit(site, "/account/page");
+    await recordChanges(page);
+    await page.evaluate(async () => {
+      const options = { name: "domain", domain: location.hostname };
+      await cookieStore.set({ ...options, value: "visible" });
+      await cookieStore.delete(options);
+    });
+    const events = await finishChanges(page, site === "jar");
+    const host = new URL(fixture.origins[site]).hostname;
+    const canonical = (item: CookieListItem) => ({ ...item, domain: item.domain === host ? "HOST" : item.domain });
+    const observed = events.map((e) => ({
+      ...e,
+      changed: e.changed.map(canonical),
+      deleted: e.deleted.map(canonical),
+    }));
+    expect(observed.flatMap((e) => e.changed.map((c) => c.name))).toEqual(["domain", "fence"]);
+    expect(observed.flatMap((e) => e.deleted.map((c) => c.name))).toEqual(["domain"]);
+    for (const row of observed.flatMap((e) => [...e.changed, ...e.deleted]).filter((c) => c.name === "domain"))
+      expect(row.domain).toBe(site === "localhost" ? null : "HOST");
+    if (site === "https") native.push(...observed);
+    if (site === "jar") expect(observed).toEqual(syntheticChanges(native));
+  }
+});
+
+test("DC-01, CS-11 | natural Max-Age expiry removes the wire cookie and reports its deletion", async ({ fixture }) => {
+  const { page } = fixture;
+  await compareNative(
+    fixture,
+    "/",
+    async (site) => {
+      await recordChanges(page);
+      const timing = await page.evaluate(() => {
+        const before = Date.now();
+        document.cookie = "ephemeral=yes; Max-Age=1";
+        return { before, text: document.cookie, after: Date.now() };
+      });
+      expect(timing.text).toBe("ephemeral=yes");
+      await expect.poll(() => requestCookie(page)).toBe("");
+      expect(await page.evaluate(() => document.cookie)).toBe("");
+      const events = await finishChanges(page, site === "jar");
+      expect(events.flatMap((e) => e.changed.map((c) => c.name))).toEqual(["ephemeral", "fence"]);
+      const expires = events.flatMap((e) => e.changed).find((c) => c.name === "ephemeral")?.expires;
+      expect(expires).toBeGreaterThanOrEqual(timing.before + 1000 - 1);
+      expect(expires).toBeLessThanOrEqual(timing.after + 1000 + 1);
+      // Relative expiration timestamps depend on when each site's write started.
+      return events.map((e) => ({
+        ...e,
+        changed: e.changed.map((c) =>
+          c.name === "ephemeral" ? { ...c, expires: typeof c.expires === "number" ? 1000 : c.expires } : c,
+        ),
+      }));
+    },
+    syntheticChanges,
+  );
+});
+
+test("CS-11 | crossing the 180-cookie domain quota evicts the native identities and emits their deletions", async ({
+  fixture,
+}) => {
+  const { page } = fixture;
+  await compareNative(
+    fixture,
+    "/",
+    async (site) => {
+      await recordChanges(page);
+      await page.evaluate(() => {
+        for (let i = 0; i <= 180; i++) document.cookie = "quota" + i + "=v; Path=/";
+      });
+      const events = await finishChanges(page, site === "jar");
+      const survivors = await page.evaluate(() => cookieStore.getAll());
+      const removed = events.flatMap((e) => e.deleted.map((c) => c.name));
+      expect(survivors.length).toBeLessThan(181);
+      expect(removed.length).toBe(182 - survivors.length);
+      expect(events.flatMap((e) => e.changed)).toHaveLength(182);
+      return { survivors, events, wire: await requestCookie(page) };
+    },
+    (native) => ({ ...native, events: syntheticChanges(native.events) }),
+  );
 });

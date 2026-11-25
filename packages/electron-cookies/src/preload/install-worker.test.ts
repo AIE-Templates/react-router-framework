@@ -65,7 +65,17 @@ function setup(target = scope) {
   const nativeRequest: typeof Request = Object.hasOwn(Request.prototype, "url")
     ? Request
     : Object.getPrototypeOf(Request);
+  class NativeStore extends EventTarget {}
+  const originalGetAll = vi.fn<() => void>();
+  Object.assign(NativeStore.prototype, {
+    get: originalGetAll,
+    getAll: originalGetAll,
+    set: originalGetAll,
+    delete: originalGetAll,
+  });
   const realm = createContext({
+    CookieStore: NativeStore,
+    cookieStore: new NativeStore(),
     self,
     location: self.location,
     EventTarget,
@@ -102,6 +112,7 @@ function setup(target = scope) {
     ipc,
     send,
     realm,
+    originalGetAll,
     self,
     ChangeEvent,
     fetch,
@@ -119,7 +130,7 @@ describe("serialized service-worker preload", () => {
   it("reads scope in the main world and passes through a foreign worker", () => {
     const h = setup("https://foreign.example/area/");
     expect(h.executeInMainWorld).toHaveBeenCalledTimes(1);
-    expect(h.realm.cookieStore).toBeUndefined();
+    expect(h.realm.cookieStore.getAll).toBe(h.originalGetAll);
     expect(h.realm.fetch).toBe(h.fetch);
     expect(h.ipc.eventNames()).toEqual([]);
   });
@@ -128,7 +139,9 @@ describe("serialized service-worker preload", () => {
     const h = setup();
     const store: CookieStore = h.realm.cookieStore;
     await store.getAll({ url: "./sw.js#x" });
-    expect(h.invoke).toHaveBeenCalledWith(channels.getAll, undefined);
+    expect(h.invoke).toHaveBeenCalledWith(channels.getAll, undefined, scriptUrl);
+    await store.getAll({ name: "x", url: "sw.js/deeper#x" });
+    expect(h.invoke).toHaveBeenCalledWith(channels.getAll, "x", scriptUrl + "/deeper");
     await store.set({ name: "x", value: "v", path: "" });
     expect(h.invoke).toHaveBeenCalledWith(channels.storeSet, expect.objectContaining({ path: "/scripts" }));
     await expect(store.set("__Http-x", "v")).rejects.toThrow("__Http-");
@@ -147,7 +160,7 @@ describe("serialized service-worker preload", () => {
     const native = deferred<void>();
     h.invoke.mockImplementation((channel) => (channel === channels.acquire ? grant.promise : completed.promise));
     h.subscribe.mockImplementationOnce(() => native.promise);
-    const entry = { name: "initial", url: "../area/page" };
+    const entry = { name: "initial", url: "page" };
     const promise = h.registration.cookies.subscribe([entry]);
     entry.name = "mutated";
     expect(h.invoke).toHaveBeenCalledWith(channels.acquire, scope, {
@@ -179,6 +192,19 @@ describe("serialized service-worker preload", () => {
     expect(finished).not.toHaveBeenCalled();
     cleanup.resolve();
     await expect(unregister).resolves.toBe(true);
+  });
+
+  it("rejects invalid subscription URLs before changing the wake index", async () => {
+    const h = setup();
+    for (const kind of ["subscribe", "unsubscribe"] as const) {
+      for (const url of ["../outside", "https://elsewhere.test/area/", "https://["]) {
+        await expect(h.registration.cookies[kind]([{ url }])).rejects.toMatchObject({
+          name: "TypeError",
+          message: `Failed to execute '${kind}' on 'CookieStoreManager': URL must be within ServiceWorker scope`,
+        });
+      }
+    }
+    expect(h.invoke).not.toHaveBeenCalled();
   });
 
   it("SW-10/13 rechecks active after getSubscriptions, filters by name/path, and NACKs stale versions", async () => {

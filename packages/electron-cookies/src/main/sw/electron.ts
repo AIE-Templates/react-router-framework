@@ -93,11 +93,25 @@ export function installCookieWorkerIpc({
     running.set(versionId, worker);
     if (installed.has(worker)) return;
     installed.add(worker);
-    const current = () => running.get(versionId) === worker && !worker.isDestroyed() && isAppUrl(worker.scope);
-    worker.ipc.handle(channels.getAll, (_event, name: unknown) =>
+    const current = () =>
+      running.get(versionId) === worker &&
+      !worker.isDestroyed() &&
+      isAppUrl(worker.scope) &&
+      isAppUrl(worker.scriptURL);
+    worker.ipc.handle(channels.getAll, (_event, name: unknown, requested: unknown) =>
       invokeCookieStore(current() ? worker.scriptURL : undefined, (url, signal) => {
         if (name !== undefined && typeof name !== "string") throw new TypeError("Invalid cookie name");
-        return script.readAll(url, name, signal);
+        // An omitted URL always reads the browser-owned script URL, even if the
+        // registration controls a different directory via Service-Worker-Allowed.
+        if (requested === undefined || requested === url) return script.readAll(url, name, signal);
+        // Blink compares the fragmentless target with the serialized script URL prefix.
+        if (typeof requested !== "string" || !URL.canParse(requested))
+          throw new TypeError("URL must be within Service Worker scope");
+        const target = new URL(requested);
+        target.hash = "";
+        if (!isAppUrl(target.href) || !target.href.startsWith(url))
+          throw new TypeError("URL must be within Service Worker scope");
+        return script.readAll(target.href, name, signal);
       }),
     );
     worker.ipc.handle(channels.storeSet, (_event, input: unknown) =>

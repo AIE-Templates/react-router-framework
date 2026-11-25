@@ -46,7 +46,7 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
   const { getAll, set } = bridge;
   const windowBridge = "getCookie" in bridge ? bridge : undefined;
   const { document: ownDocument, Document, EventTarget: NativeEventTarget, CookieChangeEvent: ChangeEvent } = realm;
-  const { addEventListener: add, removeEventListener: remove, dispatchEvent: dispatch } = NativeEventTarget.prototype;
+  const { addEventListener: add, dispatchEvent: dispatch } = NativeEventTarget.prototype;
   const getAborted = getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
   const getHref = getOwnPropertyDescriptor(NativeURL.prototype, "href")!.get!;
   const getPath = getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
@@ -159,18 +159,21 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
     }
     if (name === undefined && url === undefined && method === "get")
       fail(method, "CookieStoreGetOptions must not be empty");
+    let readUrl = creationUrl;
     if (url !== undefined) {
-      let href: string;
       try {
         // Blink strips the resolved input fragment, then compares to the original cookie URL verbatim.
-        href = withoutFragment(new NativeURL(url, creationHref));
+        readUrl = withoutFragment(new NativeURL(url, creationHref));
       } catch {
-        return fail(method, "URL must match the document URL");
+        return fail(
+          method,
+          windowBridge ? "URL must match the document URL" : "URL must be within Service Worker scope",
+        );
       }
-      if (href !== creationHref) fail(method, "URL must match the document URL");
+      if (windowBridge && readUrl !== creationHref) fail(method, "URL must match the document URL");
     }
     const filter = name === undefined ? undefined : trimCookieText(name);
-    const rows = await result(method, () => getAll(creationUrl, filter));
+    const rows = await result(method, () => getAll(readUrl, filter));
     // Values crossing contextBridge can be frozen. Return fresh, page-owned dictionaries.
     const cookies: WindowCookie[] = [];
     for (let i = 0; i < rows.length; i++) cookies[i] = { ...rows[i], partitioned: false };
@@ -283,7 +286,8 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
   }
 
   let registered = false;
-  let handler: EventListener | null = null;
+  const store = realm.cookieStore;
+  const prototype = realm.CookieStore.prototype;
 
   function listen() {
     if (registered) return;
@@ -300,67 +304,75 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
     }
   }
 
-  function onChange(event: Event) {
-    if (handler) apply(handler, store, [event]);
-  }
-
-  class ScriptCookieStore extends NativeEventTarget {
+  const methods = {
     async get(input?: unknown) {
       return (await read("get", input))[0] ?? null;
-    }
+    },
     getAll(input?: unknown) {
       return read("getAll", input);
-    }
+    },
     async set(input?: unknown, value?: unknown) {
       let options: Record<string, unknown>;
       if (arguments.length >= 2) options = { __proto__: null, name: usv(input), value: usv(value) };
       else if (isDictionary(input)) options = input;
       else if (!arguments.length) fail("set", "1 argument required, but only 0 present.");
-      else if (input == null) options = { __proto__: null };
       else fail("set", "The provided value is not of type 'CookieInit'.");
       const write = checkedWrite("set", options);
       await result("set", () => set(creationUrl, write));
-    }
+    },
     async delete(input?: unknown) {
       if (!arguments.length) fail("delete", "1 argument required, but only 0 present.");
       const options = isDictionary(input) ? input : { __proto__: null, name: input == null ? undefined : usv(input) };
       const write = checkedWrite("delete", options);
       await result("delete", () => set(creationUrl, write));
-    }
+    },
+  };
+  // Keep the native singleton, constructor, global accessor and Web IDL receiver checks.
+  for (const method of ["get", "getAll", "set", "delete"] as const) {
+    const native = prototype[method];
+    const invoke = methods[method];
+    defineProperty(prototype, method, {
+      ...getOwnPropertyDescriptor(prototype, method),
+      value: new Proxy(native, {
+        apply(original, receiver, args) {
+          return apply(receiver === store ? invoke : original, receiver, args);
+        },
+      }),
+    });
   }
-
-  class WindowCookieStore extends ScriptCookieStore {
-    override addEventListener(
-      type: string,
-      listener: EventListenerOrEventListenerObject | null,
-      options?: boolean | AddEventListenerOptions,
-    ) {
-      const eventType = domString(type);
-      if (eventType !== "change" || listener == null || registered) {
-        apply(add, this, [eventType, listener, options]);
-        return;
-      }
-      // Snapshot the dictionary once: an already-aborted signal installs no listener.
-      if (typeof options === "object" && options !== null) {
-        const { capture, once, passive, signal } = options;
-        apply(add, this, [eventType, listener, { capture, once, passive, signal }]);
-        if (signal && apply(getAborted, signal, [])) return;
-      } else {
-        apply(add, this, [eventType, listener, options]);
-      }
-      listen();
-    }
-    get onchange() {
-      return handler;
-    }
-    set onchange(listener: EventListener | null) {
-      const next = typeof listener === "function" ? listener : null;
-      if (next && !handler) apply(add, this, ["change", onChange]);
-      if (!next && handler) apply(remove, this, ["change", onChange]);
-      handler = next;
-      if (next) listen();
-    }
+  if (windowBridge) {
+    const onchange = getOwnPropertyDescriptor(prototype, "onchange")!;
+    defineProperty(prototype, "onchange", {
+      ...onchange,
+      set(this: CookieStore, value: unknown) {
+        apply(onchange.set!, this, [value]);
+        if (this === store && apply(onchange.get!, this, [])) listen();
+      },
+    });
+    defineProperty(prototype, "addEventListener", {
+      configurable: true,
+      writable: true,
+      value: function addEventListener(
+        this: EventTarget,
+        type: string,
+        listener: EventListenerOrEventListenerObject | null,
+        options?: boolean | AddEventListenerOptions,
+      ) {
+        const eventType = domString(type);
+        if (this !== store || eventType !== "change" || listener == null || registered) {
+          apply(add, this, [eventType, listener, options]);
+          return;
+        }
+        // Snapshot the dictionary once: an already-aborted signal installs no listener.
+        if (typeof options === "object" && options !== null) {
+          const { capture, once, passive, signal } = options;
+          apply(add, this, [eventType, listener, { capture, once, passive, signal }]);
+          if (signal && apply(getAborted, signal, [])) return;
+        } else {
+          apply(add, this, [eventType, listener, options]);
+        }
+        listen();
+      },
+    });
   }
-  const store = windowBridge ? new WindowCookieStore() : new ScriptCookieStore();
-  defineProperty(realm, "cookieStore", { configurable: true, enumerable: true, get: () => store });
 }

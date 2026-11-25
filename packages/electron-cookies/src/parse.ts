@@ -1,3 +1,4 @@
+/// <reference lib="es2024.string" />
 /** Longer attribute values are ignored (RFC 6265bis 5.6, step 7). */
 export const MAX_ATTRIBUTE_VALUE_BYTES = 1024;
 /** `Expires` and `Max-Age` are capped at 400 days (RFC 6265bis 5.6.1, 5.6.2). */
@@ -40,7 +41,10 @@ function splitPair(segment: string): [string, string] {
 /** Parse the information that Electron's structured cookie API cannot recover from its fields. */
 export function parseSetCookie(header: string, { requestPath, now, serverDate }: ParseContext): ParsedSetCookie {
   const [pair, ...attributes] = header.split(";");
+  // Electron's structured store cannot retain the ill-formed bytes of a DOMString cookie pair.
+  if (!pair.isWellFormed()) return { ok: false, reason: "invalid Unicode cookie pair" };
   const [name, value] = pair.includes("=") ? splitPair(pair) : ["", trimWsp(pair)];
+  if (!name && !value) return { ok: false, reason: "empty cookie" };
   if (CONTROL.test(name) || CONTROL.test(value)) return { ok: false, reason: "control character" };
   let expiresAt: number | undefined;
   let maxAge: number | undefined;
@@ -63,7 +67,7 @@ export function parseSetCookie(header: string, { requestPath, now, serverDate }:
         maxAge = /^-?\d+$/.test(raw) ? Number(raw) : undefined;
         break;
       case "domain":
-        domain = raw ? raw.replace(/^\./, "").toLowerCase() : undefined;
+        domain = raw || undefined;
         break;
       case "path":
         path = raw.startsWith("/") ? raw : undefined;
@@ -93,10 +97,13 @@ export function parseSetCookie(header: string, { requestPath, now, serverDate }:
     return { ok: false, reason: "noncanonical Path" };
   }
   const cookie: JarCookie = { name, value, path: cookiePath, secure, httpOnly, sameSite };
-  if (domain !== undefined) cookie.domain = domain;
+  if (domain !== undefined) {
+    if (domain === "." || domain.startsWith("..")) return { ok: false, reason: "invalid Domain" };
+    cookie.domain = domain.replace(/^\./, "").toLowerCase();
+  }
   const lifetime = maxAge ?? (expiresAt === undefined ? undefined : (expiresAt - (serverDate ?? now)) / 1000);
   if (lifetime !== undefined) {
-    cookie.expirationDate = lifetime <= 0 ? 1 : Math.floor(now / 1000 + Math.min(lifetime, MAX_AGE_S));
+    cookie.expirationDate = lifetime <= 0 ? 1 : (now + Math.min(lifetime, MAX_AGE_S) * 1000) / 1000;
   }
   return { ok: true, cookie };
 }
