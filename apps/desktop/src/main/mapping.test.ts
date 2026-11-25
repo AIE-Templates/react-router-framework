@@ -2,6 +2,7 @@ import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError
 import { describe, expect, it } from "vitest";
 
 import { APP_ORIGIN } from "./app-url.ts";
+import { CookieStoreTimeoutError } from "./cookie-jar.ts";
 import {
   failureStatus,
   INTERNAL_ORIGIN,
@@ -138,6 +139,7 @@ describe("failureStatus", () => {
     ["the local request budget", new PortBusyError(256), 503],
     ["the local unread budget", new PortBusyError(256, "unread", 8), 503],
     ["the server's request budget", new RemoteFetchError("busy", { code: "busy" }), 503],
+    ["the cookie store not answering a lookup", new CookieStoreTimeoutError(5000), 503],
     ["a timeout", new PortFetchTimeoutError(1000, "headers"), 504],
     ["the app failing", new RemoteFetchError("boom", { code: "fetch-failed" }), 500],
     ["anything else", new Error("x"), 500],
