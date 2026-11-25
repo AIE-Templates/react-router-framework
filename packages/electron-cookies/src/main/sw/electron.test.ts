@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createCookieJar, installCookieWorkerIpc, type CookieWorkerIpcOptions, type WakeRecord } from "../../main.ts";
 import { cookieIpcChannels, type WorkerCookieEvent } from "../../shared.ts";
 import { fakeCookieStore } from "../../testing/fake-store.ts";
+import { deferred } from "./deferred.ts";
 
 const origin = "test-app://site";
 const scope = origin + "/area/";
@@ -28,7 +29,7 @@ function ipcPort() {
     },
   });
 }
-function setup(taskTimeoutMs?: number) {
+function setup(timeouts: Pick<CookieWorkerIpcOptions, "wakeTimeoutMs" | "taskTimeoutMs"> = {}) {
   const ipc = ipcPort();
   const end = vi.fn<() => void>();
   const worker = {
@@ -75,7 +76,7 @@ function setup(taskTimeoutMs?: number) {
     ipcMain: ipc,
     changes,
     serviceWorkers: workers,
-    taskTimeoutMs,
+    ...timeouts,
     jar,
     storage,
     log,
@@ -308,9 +309,42 @@ it("orders subscribe and the next change even when the performance clock stays o
   }
 });
 
+it("retries stalled wakes at the configured timeout and delivers the next change after exhaustion", async () => {
+  vi.useFakeTimers();
+  const wakeTimeoutMs = 250;
+  const h = setup({ wakeTimeoutMs });
+  try {
+    h.workers.startWorkerForScope.mockImplementation(() => deferred<typeof h.worker>().promise);
+    h.change("inserted", { value: "first" });
+    h.change("inserted", { value: "queued" });
+    for (const [i, delay] of [100, 400, 1_600].entries()) {
+      await vi.advanceTimersByTimeAsync(wakeTimeoutMs + delay - 1);
+      expect(h.workers.startWorkerForScope).toHaveBeenCalledTimes(i + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.workers.startWorkerForScope).toHaveBeenCalledTimes(i + 2);
+    }
+    await vi.advanceTimersByTimeAsync(wakeTimeoutMs);
+    expect(h.log.warn).toHaveBeenCalledOnce();
+    expect(h.worker.startTask).not.toHaveBeenCalled();
+    expect(h.storage.write).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+
+    h.workers.startWorkerForScope.mockResolvedValue(h.worker);
+    h.change("inserted", { value: "after recovery" });
+    await vi.advanceTimersByTimeAsync(0);
+    const { eventId } = h.worker.send.mock.calls[0][1];
+    h.worker.ipc.emit(channels.ack, {}, eventId);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.worker.send.mock.calls.map(([, event]) => event.changed[0].value)).toEqual(["after recovery"]);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    await h.adapter.quitAll();
+  }
+});
+
 it("uses the configured event timeout and ignores a later ACK for the expired task", async () => {
   vi.useFakeTimers();
-  const h = setup(250);
+  const h = setup({ taskTimeoutMs: 250 });
   try {
     h.change("inserted");
     await vi.advanceTimersByTimeAsync(0);

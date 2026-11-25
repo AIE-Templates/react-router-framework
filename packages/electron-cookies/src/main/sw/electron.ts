@@ -7,6 +7,8 @@ import { CookieWorkerManager, type WakeStorage } from "./cookie-worker-manager.t
 export interface CookieWorkerIpcOptions extends CookieIpcOptions {
   serviceWorkers: Pick<ServiceWorkers, "on" | "getAllRunning" | "getWorkerFromVersionID" | "startWorkerForScope">;
   storage: WakeStorage;
+  /** Maximum wait for each worker start. Defaults to 60 seconds. */
+  wakeTimeoutMs?: number;
   /** Maximum lifetime of an outstanding cookie event. Defaults to five minutes. */
   taskTimeoutMs?: number;
 }
@@ -38,6 +40,7 @@ function validateOperation(scope: string, input: unknown): SubscriptionOperation
 export function installCookieWorkerIpc({
   serviceWorkers,
   storage,
+  wakeTimeoutMs,
   taskTimeoutMs,
   changes,
   jar: { script },
@@ -55,6 +58,7 @@ export function installCookieWorkerIpc({
   const installed = new WeakSet<ServiceWorkerMain>();
   const manager = new CookieWorkerManager<WorkerCookieItem>({
     storage,
+    wakeTimeoutMs,
     taskTimeoutMs,
     logger: {
       warn({ scope, ...fields }, message) {

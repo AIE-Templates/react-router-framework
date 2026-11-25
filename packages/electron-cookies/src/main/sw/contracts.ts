@@ -64,6 +64,8 @@ export interface NativePort<Item extends CookieItem> {
 export interface CookieWorkerOptions<Item extends CookieItem> {
   storage: WakeStorage;
   scheduler: Scheduler;
+  /** Maximum wait for each worker start. Defaults to 60 seconds. */
+  wakeTimeoutMs?: number;
   taskTimeoutMs?: number;
   logger: WakeLogger;
   native: NativePort<Item>;

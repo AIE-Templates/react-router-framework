@@ -14,13 +14,14 @@ import { WakeIndex } from "./wake-index.ts";
 export type * from "./contracts.ts";
 
 const RETRY_MS = [100, 400, 1_600];
+const WAKE_TIMEOUT_MS = 60_000; // Chromium's startup timeout for an installed service worker.
 const TASK_TIMEOUT_MS = 5 * 60_000;
 const MAX_QUEUED_CHANGES = 128;
 
 interface Lane<Item extends CookieItem> {
   readonly queue: CookieChange<Item>[];
   overflowWarned: boolean;
-  cancelRetry?: () => void;
+  cancelWait?: () => void;
 }
 
 interface Delivery {
@@ -90,7 +91,7 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
     if (!lane) return;
     this.#lanes.delete(scope);
     lane.queue.length = 0;
-    lane.cancelRetry?.();
+    lane.cancelWait?.();
   }
 
   async #drain(scope: string, lane: Lane<Item>): Promise<void> {
@@ -104,15 +105,28 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
     if (this.#lanes.get(scope) === lane) this.#lanes.delete(scope);
   }
 
+  async #obtainWorker(scope: string, lane: Lane<Item>): Promise<WorkerPort<Item> | null | undefined> {
+    // Each native call can settle only its own attempt, even after expiry or cancellation.
+    const attempt = deferred<WorkerPort<Item> | null | undefined>();
+    const expire = () => attempt.resolve(undefined);
+    const cancelTimeout = this.#options.scheduler.after(this.#options.wakeTimeoutMs ?? WAKE_TIMEOUT_MS, expire);
+    lane.cancelWait = expire;
+    try {
+      void this.#options.native.startWorkerForScope(scope).then(attempt.resolve, attempt.reject);
+      return await attempt.promise;
+    } catch {
+      // Only an explicit missing registration authorizes cleanup.
+      return undefined;
+    } finally {
+      cancelTimeout();
+      lane.cancelWait = undefined;
+    }
+  }
+
   async #wake(scope: string, lane: Lane<Item>): Promise<void> {
     for (let attempt = 0; this.#lanes.get(scope) === lane; attempt++) {
       const revision = this.#index.revision(scope);
-      let worker: WorkerPort<Item> | null | undefined;
-      try {
-        worker = await this.#options.native.startWorkerForScope(scope);
-      } catch {
-        // Only an explicit missing registration authorizes cleanup.
-      }
+      const worker = await this.#obtainWorker(scope, lane);
       if (this.#lanes.get(scope) !== lane) return;
       if (worker === null) {
         lane.queue.shift();
@@ -140,12 +154,12 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
       }
       await new Promise<void>((resolve) => {
         const cancel = this.#options.scheduler.after(RETRY_MS[attempt], resolve);
-        lane.cancelRetry = () => {
+        lane.cancelWait = () => {
           cancel();
           resolve();
         };
       });
-      lane.cancelRetry = undefined;
+      lane.cancelWait = undefined;
     }
   }
 
