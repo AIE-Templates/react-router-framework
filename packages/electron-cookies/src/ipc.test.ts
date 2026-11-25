@@ -44,7 +44,8 @@ function makeFrame() {
 function setup() {
   const store = fakeCookieStore();
   const session = {};
-  const sender = { session };
+  const sender = Object.assign(new EventEmitter(), { session });
+  const otherWindow = Object.assign(new EventEmitter(), { session });
   const frame = makeFrame();
   const event = { sender, senderFrame: frame as ReturnType<typeof makeFrame> | null };
   const ipc = new EventEmitter();
@@ -69,7 +70,8 @@ function setup() {
     log,
     changes,
     ipcMain: Object.assign(ipc, { handle: (key: string, fn: Invoke) => invokes.set(key, fn) }),
-    ownsSender: (contents) => Object.is(contents, sender) && contents.session === session,
+    ownsSender: (contents) =>
+      (Object.is(contents, sender) || Object.is(contents, otherWindow)) && contents.session === session,
     isAppUrl: (value) =>
       URL.canParse(value) && new URL(value).protocol === "xxx-app:" && new URL(value).host === "site",
   });
@@ -101,7 +103,7 @@ function setup() {
   const write = (text: string, target = url) => sync(channels.set, target, text);
   const register = (target = url, documentId = "doc") => ipc.emit(channels.register, event, target, documentId);
   const change = (cookie: Cookie = note, cause = "inserted") => changes.emit("changed", {}, cookie, cause, false);
-  return { event, store, frame, read, write, register, change, invoke, jar };
+  return { event, store, frame, otherWindow, read, write, register, change, invoke, jar };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -178,7 +180,7 @@ describe("window cookie IPC", () => {
       [null, sender, url],
       [{ ...frame, origin: "null" }, sender, url],
       [{ ...frame, origin: "https://site" }, sender, url],
-      [frame, { session: {} }, url],
+      [frame, Object.assign(new EventEmitter(), { session: {} }), url],
       [frame, sender, "https://site/dir"],
       [frame, sender, "xxx-app://other/dir"],
       [frame, sender, "not a URL"],
@@ -270,6 +272,49 @@ describe("window cookie IPC", () => {
         deleted: [{ name: "lang", domain: null, path: "/", secure: false, partitioned: false }],
       });
     }
+  });
+
+  it("releases every registered frame on window destruction with one listener per window", () => {
+    const { event, frame, otherWindow, register, change } = setup();
+    const closing = event.sender;
+    register();
+    const child = makeFrame();
+    event.senderFrame = child;
+    register();
+    register(url, "replacement");
+    const survivor = makeFrame();
+    event.sender = otherWindow;
+    event.senderFrame = survivor;
+    register();
+    expect(closing.listenerCount("destroyed")).toBe(1);
+    expect(otherWindow.listenerCount("destroyed")).toBe(1);
+    closing.emit("destroyed");
+    expect(closing.listenerCount("destroyed")).toBe(0);
+
+    // Even the first change after close must never inspect the retired frames.
+    const mainProbe = vi.spyOn(frame, "isDestroyed");
+    const childProbe = vi.spyOn(child, "isDestroyed");
+    change();
+    expect(mainProbe).not.toHaveBeenCalled();
+    expect(childProbe).not.toHaveBeenCalled();
+    expect(survivor.send).toHaveBeenCalledOnce();
+  });
+
+  it("prunes detached subframes when the next document registers", () => {
+    const { event, frame, register, change } = setup();
+    register();
+    const oldChild = makeFrame();
+    event.senderFrame = oldChild;
+    register();
+    oldChild.detached = true;
+    const newChild = makeFrame();
+    event.senderFrame = newChild;
+    register();
+    const probe = vi.spyOn(oldChild, "isDestroyed");
+    change();
+    expect(probe).not.toHaveBeenCalled();
+    expect(frame.send).toHaveBeenCalledOnce();
+    expect(newChild.send).toHaveBeenCalledOnce();
   });
 
   it("filters pushes per registered document and path, maps causes, and prunes dead registrations", () => {

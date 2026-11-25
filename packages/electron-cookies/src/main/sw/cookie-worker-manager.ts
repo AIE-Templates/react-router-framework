@@ -15,9 +15,11 @@ export type * from "./contracts.ts";
 
 const RETRY_MS = [100, 400, 1_600];
 const TASK_TIMEOUT_MS = 5 * 60_000;
+const MAX_QUEUED_CHANGES = 128;
 
 interface Lane<Item extends CookieItem> {
   readonly queue: CookieChange<Item>[];
+  overflowWarned: boolean;
   cancelRetry?: () => void;
 }
 
@@ -63,13 +65,24 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
     if (this.#closed) return;
     for (const scope of this.#index.scopes(event)) {
       const lane = this.#lanes.get(scope);
-      if (lane) lane.queue.push(event);
-      else {
-        const next = { queue: [event] };
+      if (lane) {
+        if (lane.queue.length === MAX_QUEUED_CHANGES) {
+          lane.queue.shift();
+          this.#warnOverflow(scope, lane);
+        }
+        lane.queue.push(event);
+      } else {
+        const next = { queue: [event], overflowWarned: false };
         this.#lanes.set(scope, next);
         void this.#drain(scope, next);
       }
     }
+  }
+
+  #warnOverflow(scope: string, lane: Lane<Item>): void {
+    if (lane.overflowWarned) return;
+    lane.overflowWarned = true;
+    this.#options.logger.warn({ scope }, "Cookie change queue full; dropping oldest changes");
   }
 
   #cancelScope(scope: string): void {
@@ -82,9 +95,8 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
 
   async #drain(scope: string, lane: Lane<Item>): Promise<void> {
     while (this.#lanes.get(scope) === lane && lane.queue.length) {
-      const event = lane.queue.shift()!;
       try {
-        await this.#wake(scope, lane, event);
+        await this.#wake(scope, lane);
       } catch {
         this.#options.logger.warn({ scope }, "Cookie change delivery failed");
       }
@@ -92,7 +104,7 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
     if (this.#lanes.get(scope) === lane) this.#lanes.delete(scope);
   }
 
-  async #wake(scope: string, lane: Lane<Item>, event: CookieChange<Item>): Promise<void> {
+  async #wake(scope: string, lane: Lane<Item>): Promise<void> {
     for (let attempt = 0; this.#lanes.get(scope) === lane; attempt++) {
       const revision = this.#index.revision(scope);
       let worker: WorkerPort<Item> | null | undefined;
@@ -103,17 +115,27 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
       }
       if (this.#lanes.get(scope) !== lane) return;
       if (worker === null) {
+        lane.queue.shift();
         await this.#operations.missingRegistration(scope, revision);
         return;
       }
       if (worker?.scope === scope) {
+        // Select the oldest retained change after the wake, including after a retry.
+        const event = lane.queue.shift()!;
         const items = this.#index.eligibleItems(scope, event);
         if (!items.changed.length && !items.deleted.length) return;
         const outcome = await this.#send(worker, items);
         if (outcome !== "retry" || this.#lanes.get(scope) !== lane) return;
+        // An inactive worker did not dispatch this event. It is still the oldest.
+        if (lane.queue.length < MAX_QUEUED_CHANGES) lane.queue.unshift(event);
+        else this.#warnOverflow(scope, lane);
       }
       if (attempt === RETRY_MS.length) {
-        this.#options.logger.warn({ scope }, "Cookie change worker unavailable after three retries");
+        this.#cancelScope(scope);
+        this.#options.logger.warn(
+          { scope },
+          "Cookie change worker unavailable after three retries; dropping queued changes",
+        );
         return;
       }
       await new Promise<void>((resolve) => {

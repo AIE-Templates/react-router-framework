@@ -25,14 +25,18 @@ function isWakeRecord(value: unknown): value is WakeRecord {
 
 export function cookieWakeStorage(directory: string, log: CookieLogger): WakeStorage {
   const file = join(directory, "cookie-wake-index.json");
+  let persistenceDisabled = false;
   return {
     read() {
+      if (persistenceDisabled) return [];
       let data: Buffer;
       try {
         data = readFileSync(file);
-      } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
-        throw error;
+      } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") return [];
+        persistenceDisabled = true;
+        log.warn({ err }, "Could not read cookie wake index; using in-memory wake hints for this launch");
+        return [];
       }
       let parsed: unknown;
       try {
@@ -55,6 +59,6 @@ export function cookieWakeStorage(directory: string, log: CookieLogger): WakeSto
       }
       return records;
     },
-    write: (records) => writeAtomicFile(file, JSON.stringify(records)),
+    write: (records) => (persistenceDisabled ? Promise.resolve() : writeAtomicFile(file, JSON.stringify(records))),
   };
 }

@@ -6,6 +6,44 @@ import { expect, it, vi } from "vitest";
 
 import { cookieWakeStorage } from "./cookie-wake-storage.ts";
 
+vi.mock(import("node:fs"), async (importOriginal) => {
+  const fs = { ...(await importOriginal()) };
+  vi.spyOn(fs, "readFileSync");
+  return fs;
+});
+
+it.each(["EACCES", "EIO", "EISDIR"])("preserves the wake index for the rest of the launch after %s", async (code) => {
+  const dir = mkdtempSync(join(tmpdir(), "cookie-wake-"));
+  const file = join(dir, "cookie-wake-index.json");
+  const saved = { scope: "app://app/", name: "saved", eligible: true, since: 1 };
+  const original = JSON.stringify([saved]) + "\n";
+  const error = Object.assign(new Error(code), { code });
+  const log = { warn: vi.fn<() => void>(), debug: vi.fn<() => void>() };
+  try {
+    writeFileSync(file, original);
+    const storage = cookieWakeStorage(dir, log);
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw error;
+    });
+    expect(storage.read()).toEqual([]);
+    await storage.write([]);
+    expect(storage.read()).toEqual([]);
+    await storage.write([{ ...saved, name: "new" }]);
+    expect(log.warn).toHaveBeenCalledOnce();
+    expect(log.warn).toHaveBeenCalledWith({ err: error }, expect.stringMatching(/wake index/i));
+    expect(readFileSync(file, "utf8")).toBe(original);
+    expect(readdirSync(dir)).toEqual(["cookie-wake-index.json"]);
+
+    const nextLaunch = cookieWakeStorage(dir, log);
+    expect(nextLaunch.read()).toEqual([saved]);
+    await nextLaunch.write([]);
+    expect(readFileSync(file, "utf8")).toBe("[]");
+  } finally {
+    vi.mocked(readFileSync).mockReset();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 it("reopens a durably replaced index, preserves valid records and rejects foreign or malformed hints", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cookie-wake-"));
   const log = { warn: vi.fn<() => void>(), debug: vi.fn<() => void>() };

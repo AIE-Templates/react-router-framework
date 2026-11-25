@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { globSync, readFileSync, writeFileSync } from "node:fs";
+import { globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ElectronApplication, Page } from "@playwright/test";
@@ -323,6 +323,17 @@ test("packaged persistent cookie is readable after relaunch and absent as plaint
   expect(bytes.includes(Buffer.from(value))).toBe(false);
   const second = await launchApp();
   expect(await serverCookies(second.page)).toEqual({ [name]: value });
+});
+
+test("an unreadable wake index lets the window open and cookies round-trip", async ({ launchApp, userDataDir }) => {
+  mkdirSync(join(userDataDir, "cookie-wake-index.json"));
+  const { page } = await launchApp();
+  await page.evaluate(() => {
+    document.cookie = "e2e-script=from-page; Path=/";
+  });
+  expect(await serverCookies(page)).toEqual({ "e2e-script": "from-page" });
+  await postCookie(page, { name: "e2e-server", value: "from-server", httpOnly: false });
+  expect((await observe(page)).script).toEqual({ "e2e-script": "from-page", "e2e-server": "from-server" });
 });
 
 test("a damaged wake index is backed up while native subscriptions survive and new subscriptions succeed", async ({

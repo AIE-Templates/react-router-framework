@@ -16,13 +16,11 @@ import { useAppEnvironment } from "~/managers/environment/hooks";
 export type { PreferenceValue };
 
 /**
- * Small user preferences that client code writes and server rendering reads (theme, locale, sidebar
- * width), the same in both shells. The web shell keeps them in application-prefixed cookies; the desktop
- * shell has no cookies under `app://`, so its main process keeps them and sends them with every
- * request as `x-desktop-prefs`. Read them in loaders and actions with `getPreference()`, write them
- * from components with `useSetPreference()`; never through `document.cookie` directly, which the
- * desktop shell drops. Keys and values follow `PREFERENCE_LIMITS` from `@repo/shared`. Reading is
- * server-side only: SPA builds and `clientLoader`s have no read path (HOST-08).
+ * Read display preferences in loaders and actions with `getPreference()` and write them from
+ * components with `useSetPreference()`. Web uses application-prefixed cookies. Desktop sends values
+ * from `prefs.json` in `x-desktop-prefs` from the first server render. Ordinary `app://` cookies
+ * work through the existing cookie shim. Keys and values follow `PREFERENCE_LIMITS` from
+ * `@repo/shared`. SPA builds and `clientLoader`s have no preference read path (HOST-08).
  */
 export type Preferences = Readonly<Record<string, PreferenceValue>>;
 
