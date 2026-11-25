@@ -1,9 +1,9 @@
 /// <reference lib="es2024.string" />
 /* oxlint-disable typescript/unbound-method -- Primordials are captured deliberately and invoked with Reflect.apply. */
-import type { CookieReply, CookieShimBridge, WindowCookie } from "./types.ts";
+import type { CookieReply, CookieShimBridge, WindowCookie, WorkerStoreBridge } from "./types.ts";
 
 /** Electron serializes this function; keep every runtime dependency inside it. */
-export function installCookieShims(bridge: CookieShimBridge): void {
+export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge): void {
   const realm = globalThis;
   const { apply } = Reflect;
   const { defineProperty, getOwnPropertyDescriptor } = Object;
@@ -43,11 +43,11 @@ export function installCookieShims(bridge: CookieShimBridge): void {
   if (!installation.cookieApi) return;
 
   const { creationUrl, appHost, documentId } = installation;
-  const { getCookie, setCookie, getAll, set, registerChanges } = bridge;
+  const { getAll, set } = bridge;
+  const windowBridge = "getCookie" in bridge ? bridge : undefined;
   const { document: ownDocument, Document, EventTarget: NativeEventTarget, CookieChangeEvent: ChangeEvent } = realm;
   const { addEventListener: add, removeEventListener: remove, dispatchEvent: dispatch } = NativeEventTarget.prototype;
   const getAborted = getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
-  const cookie = getOwnPropertyDescriptor(Document.prototype, "cookie")!;
   const getHref = getOwnPropertyDescriptor(NativeURL.prototype, "href")!.get!;
   const getPath = getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
   const setPath = getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.set!;
@@ -70,22 +70,26 @@ export function installCookieShims(bridge: CookieShimBridge): void {
   const nonAscii = /[^\u0020-\u007e]/;
   const malformed = "Cookie was malformed and could not be stored, due to problem(s) while parsing.";
 
-  defineProperty(Document.prototype, "cookie", {
-    configurable: cookie.configurable,
-    enumerable: cookie.enumerable,
-    get(this: Document) {
-      if (this !== ownDocument) return apply(cookie.get!, this, []);
-      const reply = getCookie(creationUrl);
-      return typeof reply === "string" ? reply : "";
-    },
-    set(this: Document, value: unknown) {
-      if (this !== ownDocument) {
-        apply(cookie.set!, this, [value]);
-        return;
-      }
-      setCookie(creationUrl, domString(value));
-    },
-  });
+  if (windowBridge) {
+    const { getCookie, setCookie } = windowBridge;
+    const cookie = getOwnPropertyDescriptor(Document.prototype, "cookie")!;
+    defineProperty(Document.prototype, "cookie", {
+      configurable: cookie.configurable,
+      enumerable: cookie.enumerable,
+      get(this: Document) {
+        if (this !== ownDocument) return apply(cookie.get!, this, []);
+        const reply = getCookie(creationUrl);
+        return typeof reply === "string" ? reply : "";
+      },
+      set(this: Document, value: unknown) {
+        if (this !== ownDocument) {
+          apply(cookie.set!, this, [value]);
+          return;
+        }
+        setCookie(creationUrl, domString(value));
+      },
+    });
+  }
 
   function withoutFragment(url: URL): string {
     const href: string = apply(getHref, url, []);
@@ -285,7 +289,7 @@ export function installCookieShims(bridge: CookieShimBridge): void {
     if (registered) return;
     registered = true;
     try {
-      registerChanges(creationUrl, documentId, (push) => {
+      windowBridge!.registerChanges(creationUrl, documentId, (push) => {
         if (push.documentId !== documentId) return;
         const event = new ChangeEvent("change", { changed: push.changed, deleted: push.deleted });
         apply(dispatch, store, [event]);
@@ -300,7 +304,7 @@ export function installCookieShims(bridge: CookieShimBridge): void {
     if (handler) apply(handler, store, [event]);
   }
 
-  class WindowCookieStore extends NativeEventTarget {
+  class ScriptCookieStore extends NativeEventTarget {
     async get(input?: unknown) {
       return (await read("get", input))[0] ?? null;
     }
@@ -323,6 +327,9 @@ export function installCookieShims(bridge: CookieShimBridge): void {
       const write = checkedWrite("delete", options);
       await result("delete", () => set(creationUrl, write));
     }
+  }
+
+  class WindowCookieStore extends ScriptCookieStore {
     override addEventListener(
       type: string,
       listener: EventListenerOrEventListenerObject | null,
@@ -354,6 +361,6 @@ export function installCookieShims(bridge: CookieShimBridge): void {
       if (next) listen();
     }
   }
-  const store = new WindowCookieStore();
+  const store = windowBridge ? new WindowCookieStore() : new ScriptCookieStore();
   defineProperty(realm, "cookieStore", { configurable: true, enumerable: true, get: () => store });
 }

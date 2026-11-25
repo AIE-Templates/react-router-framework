@@ -3,6 +3,7 @@ import type { ContextBridge, IpcRenderer } from "electron";
 import { cookieIpcChannels, OMIT_COOKIES_HEADER, type CookiePush } from "../shared.ts";
 import { prepareCookieFrame } from "./frame.ts";
 import { installCookieShims } from "./install-cookie-shims.ts";
+import { installSubscriptionShims, type SubscriptionBridge } from "./subscriptions.ts";
 import type { CookieShimBridge } from "./types.ts";
 
 export interface WindowCookiePreloadOptions {
@@ -61,5 +62,10 @@ export function installWindowCookiePreload({
       }
     },
   };
+  const subscriptions: SubscriptionBridge = {
+    acquire: (scope, operation) => ipcRenderer.invoke(channels.acquire, documentId, scope, operation),
+    complete: (id, success) => ipcRenderer.invoke(channels.complete, documentId, id, success),
+  };
+  contextBridge.executeInMainWorld({ func: installSubscriptionShims, args: [subscriptions] });
   contextBridge.executeInMainWorld({ func: installCookieShims, args: [bridge] });
 }

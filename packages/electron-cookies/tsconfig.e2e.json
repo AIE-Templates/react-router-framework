@@ -6,5 +6,5 @@
     "rootDir": ".",
     "outDir": "dist/e2e/fixture"
   },
-  "include": ["e2e/app/main.ts", "e2e/app/worker.mts"]
+  "include": ["e2e/app/main.ts", "e2e/app/worker.mts", "e2e/app/service-worker.mts"]
 }

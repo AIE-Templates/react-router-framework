@@ -31,3 +31,6 @@ export interface CookieShimBridge {
   /** Attach the isolated-world receiver before sending the registration IPC. */
   registerChanges(creationUrl: string, documentId: string, receive: (push: CookiePush) => void): void;
 }
+
+/** Worker globals share the structured API and fetch conversion with windows. */
+export type WorkerStoreBridge = Pick<CookieShimBridge, "options" | "getAll" | "set">;

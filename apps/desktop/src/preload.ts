@@ -1,4 +1,4 @@
-import { installWindowCookiePreload } from "@repo/electron-cookies/preload";
+import { installServiceWorkerCookiePreload, installWindowCookiePreload } from "@repo/electron-cookies/preload";
 import {
   applyPreference,
   DESKTOP_CHROME_IPC,
@@ -20,16 +20,13 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import { APP_HOST, APP_ORIGIN } from "~/main/app-url.ts";
 
-if (process.isMainFrame) installDesktopBridge();
-installWindowCookiePreload({
-  appOrigin: APP_ORIGIN,
-  appHost: APP_HOST,
-  prefix: "desktop",
-  frame: window,
-  isMainFrame: process.isMainFrame,
-  ipcRenderer,
-  contextBridge,
-});
+const cookiePreload = { appOrigin: APP_ORIGIN, appHost: APP_HOST, prefix: "desktop", ipcRenderer, contextBridge };
+if (process.type === "service-worker") {
+  installServiceWorkerCookiePreload(cookiePreload);
+} else {
+  if (process.isMainFrame) installDesktopBridge();
+  installWindowCookiePreload({ ...cookiePreload, frame: window, isMainFrame: process.isMainFrame });
+}
 
 function installDesktopBridge() {
   // Sandboxed: bundled as one CommonJS file, with only Electron required at runtime.

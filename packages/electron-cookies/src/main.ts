@@ -212,3 +212,6 @@ export function createCookieJar<S extends { cookies: CookieStore }>(options: Coo
     },
   };
 }
+
+export { installCookieWorkerIpc, type CookieWorkerIpcOptions } from "./main/sw/electron.ts";
+export type { WakeRecord, WakeStorage } from "./main/sw/contracts.ts";

@@ -9,6 +9,13 @@ export function cookieIpcChannels(prefix: string) {
     getAll: prefix + ":cookie-store:get-all",
     storeSet: prefix + ":cookie-store:set",
     register: prefix + ":cookie-store:register",
+    acquire: prefix + ":cookie-worker:acquire",
+    complete: prefix + ":cookie-worker:complete",
+    deliver: prefix + ":cookie-worker:deliver",
+    finish: prefix + ":cookie-worker:finish",
+    started: prefix + ":cookie-worker:started",
+    ack: prefix + ":cookie-worker:ack",
+    nack: prefix + ":cookie-worker:nack",
     changed: prefix + ":cookie-store:changed",
   } as const;
 }
@@ -37,3 +44,21 @@ export interface CookiePush {
 }
 
 export type CookieReply<T> = { ok: true; value: T } | { ok: false; error: CookieIpcError };
+
+export type WorkerCookieItem = Omit<WindowCookie, "value" | "expires"> &
+  Partial<Pick<WindowCookie, "value" | "expires">>;
+
+export interface WorkerCookieEvent {
+  eventId: string;
+  changed: readonly WorkerCookieItem[];
+  deleted: readonly WorkerCookieItem[];
+}
+
+export interface Subscription {
+  readonly name?: string;
+  readonly url?: string;
+}
+
+export type SubscriptionOperation =
+  | { kind: "subscribe" | "unsubscribe"; subscriptions: readonly Subscription[] }
+  | { kind: "unregister" };

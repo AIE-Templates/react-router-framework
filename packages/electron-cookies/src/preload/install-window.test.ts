@@ -1,9 +1,10 @@
-import type { IpcRenderer } from "electron";
+import type { ExecutionScript, IpcRenderer } from "electron";
 import { expect, it, vi } from "vitest";
 
 import { cookieIpcChannels, OMIT_COOKIES_HEADER } from "../shared.ts";
 import { installCookieShims } from "./install-cookie-shims.ts";
 import { installWindowCookiePreload, type WindowCookiePreloadOptions } from "./install-window.ts";
+import { installSubscriptionShims, type SubscriptionBridge } from "./subscriptions.ts";
 import type { CookieShimBridge } from "./types.ts";
 
 const appOrigin = "fixture://site";
@@ -24,7 +25,7 @@ function setup() {
     on: vi.fn<(channel: string, cb: (event: unknown, push: unknown) => void) => void>(),
     off: vi.fn<() => void>(),
   };
-  const executeInMainWorld = vi.fn<(script: { func: typeof installCookieShims; args: [CookieShimBridge] }) => void>();
+  const executeInMainWorld = vi.fn<(script: ExecutionScript) => void>();
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Stand in for the native renderer transport at the injection boundary.
   const ipcRenderer = wire as unknown as IpcRenderer;
   const options: WindowCookiePreloadOptions = {
@@ -36,9 +37,9 @@ function setup() {
     ipcRenderer,
     contextBridge: { executeInMainWorld },
   };
-  function install() {
+  function install(): CookieShimBridge {
     installWindowCookiePreload(options);
-    return executeInMainWorld.mock.lastCall![0].args[0];
+    return executeInMainWorld.mock.lastCall![0].args![0];
   }
   return { frame, wire, options, install, executeInMainWorld };
 }
@@ -46,7 +47,7 @@ function setup() {
 it("binds each operation to the captured document and registers the filtered receiver before sending", async () => {
   const { wire, frame, executeInMainWorld, install } = setup();
   const bridge = install();
-  expect(executeInMainWorld.mock.calls[0][0].func).toBe(installCookieShims);
+  expect(executeInMainWorld.mock.lastCall![0].func).toBe(installCookieShims);
   expect(bridge.options).toMatchObject({
     creationUrl: href,
     markerHeader: OMIT_COOKIES_HEADER,
@@ -113,4 +114,22 @@ it("selects opaque, blob and srcdoc installations without registering unused coo
   expect(install().options).toMatchObject({ cookieApi: false, fetch: true, creationUrl: null });
   expect(wire.on).not.toHaveBeenCalled();
   expect(wire.sendSync).not.toHaveBeenCalled();
+});
+
+it("binds registration operations from a window to the same isolated document for grant and completion", async () => {
+  const { install, wire, executeInMainWorld } = setup();
+  const {
+    options: { documentId },
+  } = install();
+  const script = executeInMainWorld.mock.calls.find(([entry]) => entry.func === installSubscriptionShims)![0];
+  const subscriptions: SubscriptionBridge = script.args![0];
+  const scope = appOrigin + "/";
+  const operation = { kind: "unregister" } as const;
+  wire.invoke.mockResolvedValueOnce({ operationId: "op" }).mockResolvedValueOnce(undefined);
+  const { operationId } = await subscriptions.acquire(scope, operation);
+  await subscriptions.complete(operationId, true);
+  expect(wire.invoke.mock.calls).toEqual([
+    [channels.acquire, documentId, scope, operation],
+    [channels.complete, documentId, "op", true],
+  ]);
 });

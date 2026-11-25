@@ -42,7 +42,7 @@ function certificateHash(profile: string) {
 }
 
 const reported = new Set<string>();
-async function launch(profile: string, upstreamHost: string) {
+async function launch(profile: string, upstreamHost: string, taskTimeoutMs: number | undefined) {
   const executablePath: unknown = createRequire(import.meta.url)("electron");
   if (typeof executablePath !== "string") throw new Error("Missing Electron executable");
   const app = await electron.launch({
@@ -55,7 +55,11 @@ async function launch(profile: string, upstreamHost: string) {
       "--password-store=basic",
       "--ignore-certificate-errors-spki-list=" + certificateHash(profile),
     ],
-    env: { ...process.env, COOKIE_FIXTURE_UPSTREAM_HOST: upstreamHost },
+    env: {
+      ...process.env,
+      COOKIE_FIXTURE_UPSTREAM_HOST: upstreamHost,
+      COOKIE_FIXTURE_TASK_TIMEOUT_MS: taskTimeoutMs?.toString() ?? "",
+    },
   });
   // Playwright releases its process lookup on exit. Keep this launch's handle for teardown.
   const child = app.process();
@@ -159,13 +163,15 @@ export const test = base.extend<{
   fixture: Fixture;
   restart: (mode: "quit" | "kill") => Promise<Fixture>;
   upstreamHost: string;
+  taskTimeoutMs: number | undefined;
 }>({
+  taskTimeoutMs: [undefined, { option: true }],
   upstreamHost: ["127.0.0.1", { option: true }],
-  fixture: async ({ upstreamHost }, provide) => {
+  fixture: async ({ upstreamHost, taskTimeoutMs }, provide) => {
     const profile = mkdtempSync(join(tmpdir(), "electron-cookies-"));
     try {
       certificate(profile);
-      const fixture = await launch(profile, upstreamHost);
+      const fixture = await launch(profile, upstreamHost, taskTimeoutMs);
       try {
         await provide(fixture);
       } finally {
@@ -175,14 +181,14 @@ export const test = base.extend<{
       rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
     }
   },
-  restart: async ({ fixture, upstreamHost }, provide) => {
+  restart: async ({ fixture, upstreamHost, taskTimeoutMs }, provide) => {
     const profile = await fixture.app.evaluate(({ app }) => app.getPath("userData"));
     let second: Fixture | undefined;
     try {
       await provide(async (mode) => {
         if (mode === "quit") await fixture.close();
         else await fixture.kill();
-        second = await launch(profile, upstreamHost);
+        second = await launch(profile, upstreamHost, taskTimeoutMs);
         return second;
       });
     } finally {

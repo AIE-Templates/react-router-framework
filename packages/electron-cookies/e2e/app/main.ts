@@ -1,13 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer, get, type RequestListener, type Server } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { join } from "node:path";
 
 import { app, BrowserWindow, ipcMain, protocol, session, type Session } from "electron";
 
-import { CookieStoreTimeoutError, createCookieJar, flushForQuit, installCookieIpc } from "../../src/main.ts";
+import {
+  CookieStoreTimeoutError,
+  createCookieJar,
+  flushForQuit,
+  installCookieIpc,
+  installCookieWorkerIpc,
+  type CookieIpcOptions,
+} from "../../src/main.ts";
 import { OMIT_COOKIES_HEADER } from "../../src/shared.ts";
+import { workerControls } from "./worker-controls.ts";
 
 const scheme = process.env.COOKIE_FIXTURE_SCHEME ?? "fixture";
 const otherScheme = scheme + "-other";
@@ -16,7 +24,13 @@ const origin = scheme + "://" + host;
 const storageOrigin = "https://app.desktop";
 const upstreamHost = process.env.COOKIE_FIXTURE_UPSTREAM_HOST ?? "127.0.0.1";
 const nativeHost = "cookie.test";
-const privileges = { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true };
+const privileges = {
+  standard: true,
+  secure: true,
+  allowServiceWorkers: true,
+  supportFetchAPI: true,
+  corsEnabled: true,
+};
 protocol.registerSchemesAsPrivileged([scheme, otherScheme].map((name) => ({ scheme: name, privileges })));
 app.commandLine.appendSwitch("host-resolver-rules", "MAP " + nativeHost + " 127.0.0.1, MAP localhost 127.0.0.1");
 
@@ -33,6 +47,8 @@ const wire = new Map<string, { method: string; marker: string | null }[]>();
 const initiators = new Map<string, string | undefined>();
 const pageHtml = "<!doctype html><title>Cookie fixture</title>";
 const workerScript = readFileSync(new URL("./worker.mjs", import.meta.url));
+
+const serviceWorkerScript = readFileSync(new URL("./service-worker.mjs", import.meta.url));
 
 // These fixed fields cannot be emitted with Node's validated setHeader(). Chromium may
 // reject the entire HTTP response before its cookie parser sees them.
@@ -78,6 +94,10 @@ const serve: RequestListener = (req, res) => {
   } else if ((url.pathname === "/" || /\/page\/?$/.test(url.pathname)) && !key) {
     res.setHeader("Content-Type", "text/html");
     res.end(pageHtml);
+  } else if (url.pathname === "/scripts/service-worker.js") {
+    res.setHeader("Content-Type", "application/javascript");
+    res.setHeader("Service-Worker-Allowed", "/");
+    res.end(serviceWorkerScript);
   } else if (url.pathname === "/worker.js") {
     res.setHeader("Content-Type", "application/javascript");
     res.end(workerScript);
@@ -195,7 +215,7 @@ async function start() {
     }
   });
   const windows = new Map<Electron.WebContents, BrowserWindow>();
-  installCookieIpc({
+  const cookieOptions: CookieIpcOptions = {
     prefix: "fixture",
     jar,
     ipcMain,
@@ -206,7 +226,21 @@ async function start() {
       const target = URL.parse(url);
       return target?.protocol === scheme + ":" && target.host === host;
     },
-  });
+  };
+  installCookieIpc(cookieOptions);
+  const workers = workerControls(ses, tls);
+  const manager = installCookieWorkerIpc({ ...cookieOptions, ...workers.options });
+  // Give the shared sandbox preload the configured app origin before worker evaluation.
+  // A starting worker must not need a synchronous main-process handshake to install the shim.
+  const preload = join(tls, "fixture-preload.cjs");
+  writeFileSync(
+    preload,
+    '"use strict";\nconst fixtureAppOrigin = ' +
+      JSON.stringify(origin) +
+      ";\n" +
+      readFileSync(join(import.meta.dirname, "preload.cjs"), "utf8"),
+  );
+  ses.registerPreloadScript({ type: "service-worker", filePath: preload });
   const startedPreloads = new Set<string>();
   ipcMain.on("fixture:origin", (event) => {
     if (event.senderFrame) startedPreloads.add(event.senderFrame.frameToken);
@@ -221,7 +255,7 @@ async function start() {
         sandbox: true,
         contextIsolation: true,
         nodeIntegrationInSubFrames: true,
-        preload: join(import.meta.dirname, "preload.cjs"),
+        preload,
       },
     });
     const contents = win.webContents;
@@ -234,6 +268,7 @@ async function start() {
   const pushes: number[] = [];
   ipcMain.on("fixture:push-observed", (event) => pushes.push(event.sender.id));
   globalThis.cookieFixture = {
+    workers: workers.controls,
     openWindow,
     opaqueSteps,
     preloadErrors,
@@ -272,13 +307,14 @@ async function start() {
   };
   app.once("will-quit", (event) => {
     event.preventDefault();
-    void flushForQuit(ses.cookies, log).finally(() => app.quit());
+    void Promise.all([manager.quitAll(), flushForQuit(ses.cookies, log)]).finally(() => app.quit());
   });
   await openWindow(origin + "/");
 }
 
 declare global {
   var cookieFixture: {
+    workers: ReturnType<typeof workerControls>["controls"];
     openWindow(url: string): Promise<void>;
     opaqueSteps: unknown[];
     preloadErrors: string[];

@@ -1,7 +1,13 @@
 import { writeSync } from "node:fs";
 import { join } from "node:path";
 
-import { createCookieJar, flushForQuit, installCookieIpc } from "@repo/electron-cookies/main";
+import {
+  createCookieJar,
+  flushForQuit,
+  installCookieIpc,
+  installCookieWorkerIpc,
+  type CookieIpcOptions,
+} from "@repo/electron-cookies/main";
 import type { PortFetch } from "@repo/port-fetch";
 import {
   DESKTOP_PREFS_IPC,
@@ -29,6 +35,7 @@ import {
   cookieKeyWriterCrashHandler,
   storeCookieKeyFirst,
 } from "./main/cookie-key.ts";
+import { cookieWakeStorage } from "./main/cookie-wake-storage.ts";
 import { createLogger, type Logger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
@@ -172,6 +179,7 @@ function start(): void {
       privileges: {
         standard: true,
         secure: true,
+        allowServiceWorkers: true,
         supportFetchAPI: true,
         stream: true,
         corsEnabled: true,
@@ -301,10 +309,11 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
   const chromePolicy = currentChromePolicy();
   const bootstrap: DesktopBootstrap = { protocolVersion: 1, shell, mode: chromePolicy.resolvedMode };
   if (chromePolicy.fallbackReason) log.info({ reason: chromePolicy.fallbackReason }, "using system window decoration");
+  const preloadPath = join(__dirname, "preload.cjs");
   const registry = createWindowRegistry({
     session: appSession,
     chrome: { bootstrap, currentPolicy: currentChromePolicy, visualThemeStore },
-    preloadPath: join(__dirname, "preload.cjs"),
+    preloadPath,
     appVersion: app.getVersion(),
     log,
     profile,
@@ -382,7 +391,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     installPermissionPolicy: (probe) => installPermissionPolicy(probe, log),
     log,
   });
-  installCookieIpc({
+  const cookieIpc: CookieIpcOptions = {
     jar: cookies,
     prefix: "desktop",
     ipcMain,
@@ -390,7 +399,14 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     ownsSender: (sender) => registry.byContentsId(sender.id)?.webContents === sender && sender.session === appSession,
     isAppUrl,
     log,
+  };
+  installCookieIpc(cookieIpc);
+  const cookieWorkers = installCookieWorkerIpc({
+    ...cookieIpc,
+    serviceWorkers: appSession.serviceWorkers,
+    storage: cookieWakeStorage(app.getPath("userData"), log),
   });
+  appSession.registerPreloadScript({ type: "service-worker", filePath: preloadPath });
   registerAppProtocol(appSession, {
     upstream,
     internalOrigin,
@@ -432,7 +448,11 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     event.preventDefault();
     if (quitting) return;
     quitting = true;
-    void Promise.allSettled([server?.shutdown(), flushForQuit(appSession.cookies, log)]).finally(() => {
+    void Promise.allSettled([
+      cookieWorkers.quitAll(),
+      server?.shutdown(),
+      flushForQuit(appSession.cookies, log),
+    ]).finally(() => {
       app.off("will-quit", finishQuit);
       app.quit();
     });

@@ -1,4 +1,4 @@
-import type { Cookies, IpcMain, IpcMainEvent, IpcMainInvokeEvent, WebContents, WebFrameMain } from "electron";
+import type { Cookie, Cookies, IpcMain, IpcMainEvent, IpcMainInvokeEvent, WebContents, WebFrameMain } from "electron";
 
 import type { ScriptCookies } from "./script-cookies.ts";
 import { cookieIpcChannels, type CookiePush, type CookieReply } from "./shared.ts";
@@ -86,43 +86,19 @@ export function installCookieIpc({
   ipcMain.on(channels.get, (event, url: unknown) => void sync(event, url, "get"));
   ipcMain.on(channels.set, (event, url: unknown, text: unknown) => void sync(event, url, "set", text));
 
-  async function invoke<T>(
-    event: IpcMainInvokeEvent,
-    url: unknown,
-    operation: (url: string, signal: AbortSignal) => Promise<T>,
-  ): Promise<CookieReply<T>> {
+  function trustedUrl(event: IpcMainInvokeEvent, url: unknown) {
     const frame = event.senderFrame;
-    if (!trusted(frame, event.sender, url))
-      return {
-        ok: false,
-        error: { name: "SecurityError", message: "Access to the CookieStore API is denied in this context." },
-      };
-    const deadline = storeDeadline(STORE_TIMEOUT_MS);
-    try {
-      const value = await operation(url, deadline.signal);
-      return { ok: true, value };
-    } catch (err) {
-      if (err instanceof TypeError) return { ok: false, error: { name: "TypeError", message: err.message } };
-      return {
-        ok: false,
-        error: {
-          name: err instanceof CookieStoreTimeoutError ? "TimeoutError" : "InvalidStateError",
-          message: err instanceof CookieStoreTimeoutError ? "Cookie store timed out" : "CookieStore backend went away",
-        },
-      };
-    } finally {
-      deadline.clear();
-    }
+    return trusted(frame, event.sender, url) ? url : undefined;
   }
 
   ipcMain.handle(channels.getAll, (event, url: unknown, name: unknown) =>
-    invoke(event, url, (creationUrl, signal) => {
+    invokeCookieStore(trustedUrl(event, url), (creationUrl, signal) => {
       if (name !== undefined && typeof name !== "string") throw new TypeError("Invalid cookie name");
       return script.readAll(creationUrl, name, signal);
     }),
   );
   ipcMain.handle(channels.storeSet, (event, url: unknown, input: unknown) =>
-    invoke(event, url, (_url, signal) => script.writeStructured(input, signal)),
+    invokeCookieStore(trustedUrl(event, url), (_url, signal) => script.writeStructured(input, signal)),
   );
   ipcMain.on(channels.register, (event, url: unknown, documentId: unknown) => {
     const frame = event.senderFrame;
@@ -133,10 +109,9 @@ export function installCookieIpc({
   changes.on("changed", (_event, cookie, cause) => {
     if (cookie.domain?.replace(/^\./, "") !== script.storageHost) return;
     snapshots.storageChanged();
-    if (cookie.httpOnly || cause === "overwrite" || cause === "inserted-no-change-overwrite") return;
-    const row = script.publicCookie(cookie);
-    const { value: _value, expires: _expires, ...deleted } = row;
-    const inserted = cause === "inserted" || cause === "inserted-no-value-change-overwrite";
+    const items = publicChange(script, cookie, cause);
+    if (!items) return;
+    const row = items.changed[0] ?? items.deleted[0];
     for (const [frame, { creationUrl, documentId, sender }] of registrations) {
       try {
         if (!trusted(frame, sender, creationUrl) || frame.detached) {
@@ -147,8 +122,7 @@ export function installCookieIpc({
         if (path !== row.path && !path.startsWith(row.path.endsWith("/") ? row.path : row.path + "/")) continue;
         frame.send(channels.changed, {
           documentId,
-          changed: inserted ? [row] : [],
-          deleted: inserted ? [] : [deleted],
+          ...items,
         } satisfies CookiePush);
       } catch {
         // A frame may disappear between checking it and sending the push.
@@ -156,4 +130,44 @@ export function installCookieIpc({
       }
     }
   });
+}
+
+export async function invokeCookieStore<T>(
+  url: string | undefined,
+  operation: (url: string, signal: AbortSignal) => Promise<T>,
+): Promise<CookieReply<T>> {
+  if (!url)
+    return {
+      ok: false,
+      error: { name: "SecurityError", message: "Access to the CookieStore API is denied in this context." },
+    };
+  const deadline = storeDeadline(STORE_TIMEOUT_MS);
+  try {
+    const value = await operation(url, deadline.signal);
+    return { ok: true, value };
+  } catch (err) {
+    if (err instanceof TypeError) return { ok: false, error: { name: "TypeError", message: err.message } };
+    return {
+      ok: false,
+      error: {
+        name: err instanceof CookieStoreTimeoutError ? "TimeoutError" : "InvalidStateError",
+        message: err instanceof CookieStoreTimeoutError ? "Cookie store timed out" : "CookieStore backend went away",
+      },
+    };
+  } finally {
+    deadline.clear();
+  }
+}
+
+export function publicChange(
+  script: ScriptCookies,
+  cookie: Cookie,
+  cause: string,
+): Omit<CookiePush, "documentId"> | undefined {
+  if (cookie.domain?.replace(/^\./, "") !== script.storageHost) return undefined;
+  if (cookie.httpOnly || cause === "overwrite" || cause === "inserted-no-change-overwrite") return undefined;
+  const row = script.publicCookie(cookie);
+  const { value: _value, expires: _expires, ...deleted } = row;
+  const inserted = cause === "inserted" || cause === "inserted-no-value-change-overwrite";
+  return { changed: inserted ? [row] : [], deleted: inserted ? [] : [deleted] };
 }
