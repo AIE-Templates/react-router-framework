@@ -2,6 +2,7 @@ import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError
 import { DESKTOP_HEADERS, type DesktopRequest, isDesktopHeader } from "@repo/shared";
 
 import { APP_ORIGIN, isAppUrl } from "./app-url.ts";
+import { CookieStoreTimeoutError } from "./cookie-jar.ts";
 
 /**
  * The origin the server sees instead. `app://` is not a special scheme for the URL parser, so its
@@ -96,15 +97,17 @@ function toInternal(value: string, internalOrigin: string): string {
 }
 
 /**
- * The status and text an `app://` request gets when the port fetch fails. Transient failures that
- * never reached the app (the utility restarting, either side's request budget) are 503 so a retry
- * makes sense; a missing response is 504; anything else, the app's own failure included, is 500.
+ * The status and text an `app://` request gets when it fails in the main process. Transient failures
+ * that never reached the app (the utility restarting, either side's request budget, a cookie store
+ * that did not answer the lookup) are 503 so a retry makes sense; a missing response is 504; anything
+ * else, the app's own failure included, is 500.
  */
 export function failureStatus(err: unknown): { status: 500 | 503 | 504; message: string } {
   if (err instanceof PortClosedError) return { status: 503, message: "Server Restarting" };
   if (err instanceof PortBusyError || (err instanceof RemoteFetchError && err.code === "busy")) {
     return { status: 503, message: "Server Busy" };
   }
+  if (err instanceof CookieStoreTimeoutError) return { status: 503, message: "Cookies Unavailable" };
   if (err instanceof PortFetchTimeoutError) return { status: 504, message: "Internal Server Error" };
   return { status: 500, message: "Internal Server Error" };
 }

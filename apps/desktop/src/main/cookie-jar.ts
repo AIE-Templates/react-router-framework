@@ -29,6 +29,23 @@ export const MAX_ATTRIBUTE_VALUE_BYTES = 1024;
 export const MAX_AGE_S = 400 * 24 * 60 * 60;
 /** `Set-Cookie` headers handled per response; the rest are ignored. */
 export const MAX_SET_COOKIES_PER_RESPONSE = 50;
+/**
+ * How long one request waits for the store: for its cookie lookup, and again for all the writes and
+ * the flush of its response. A call that is in flight when the network service dies never settles
+ * (measured on Electron 45, macOS: neither resolved nor rejected); calls made afterwards wait for
+ * the restarted service, about 60 ms, and normal ones take well under a millisecond.
+ */
+export const STORE_TIMEOUT_MS = 5_000;
+
+/** The store did not answer a cookie lookup within `timeoutMs`. */
+export class CookieStoreTimeoutError extends Error {
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number) {
+    super(`cookie store did not answer within ${timeoutMs} ms`);
+    this.name = "CookieStoreTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
 
 /** `sameSite` as Electron's cookie store spells it. */
 export type SameSite = "unspecified" | "no_restriction" | "lax" | "strict";
@@ -215,12 +232,19 @@ export interface CookieStore {
 }
 
 export interface CookieJar {
-  /** The `Cookie` header for a request to `path`; undefined when no cookie applies or the store fails. */
-  cookieHeader(path: string): Promise<string | undefined>;
+  /**
+   * The `Cookie` header for a request to `path`; undefined when no cookie applies, the store fails or
+   * `signal` aborts first (the caller checks its own signal). Rejects with `CookieStoreTimeoutError`
+   * when the store does not answer in time: the request has not reached the server yet, and sending
+   * it without its cookies would show a signed-in user a signed-out answer.
+   */
+  cookieHeader(path: string, signal?: AbortSignal): Promise<string | undefined>;
   /**
    * Stores the `Set-Cookie`s of a response to a request for `requestPath`. Resolves once the store
    * has them and has flushed them to disk, so the next request sees them and a crash right after the
-   * response neither loses them nor brings back what they replaced. Never rejects.
+   * response neither loses them nor brings back what they replaced. Never rejects: when the store
+   * stops answering, it gives up after the timeout with a warning, as the server has already acted
+   * on the request and its response must still be delivered.
    */
   storeResponseCookies(headers: Headers, requestPath: string): Promise<void>;
 }
@@ -235,6 +259,28 @@ export interface CookieJarOptions {
   };
   jarOrigin?: string;
   now?: () => number;
+  /** Defaults to `STORE_TIMEOUT_MS`. */
+  timeoutMs?: number;
+}
+
+/**
+ * Settles like `operation`, or rejects with the signal's reason once `signal` aborts. The operation
+ * is abandoned, not cancelled: the store has no cancellation.
+ */
+function abandonOn<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+/** A signal that aborts with `CookieStoreTimeoutError` after `timeoutMs`, until `clear()`. */
+function storeDeadline(timeoutMs: number): { signal: AbortSignal; clear(): void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new CookieStoreTimeoutError(timeoutMs)), timeoutMs);
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 
 /**
@@ -247,68 +293,91 @@ export function createCookieJar({
   log,
   jarOrigin = COOKIE_JAR_ORIGIN,
   now = Date.now,
+  timeoutMs = STORE_TIMEOUT_MS,
 }: CookieJarOptions): CookieJar {
   return {
-    async cookieHeader(path) {
+    async cookieHeader(path, signal) {
+      const deadline = storeDeadline(timeoutMs);
       try {
-        const cookies = await store.get({ url: jarOrigin + path });
+        const waiting = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+        const cookies = await abandonOn(store.get({ url: jarOrigin + path }), waiting);
         return cookies.length === 0 ? undefined : serializeCookieHeader(cookies);
       } catch (err) {
+        if (signal?.aborted) return undefined;
+        if (err instanceof CookieStoreTimeoutError) throw err;
         log.warn({ err }, "reading cookies failed");
         return undefined;
+      } finally {
+        deadline.clear();
       }
     },
     async storeResponseCookies(headers, requestPath) {
       const values = headers.getSetCookie();
       if (values.length === 0) return;
-      if (values.length > MAX_SET_COOKIES_PER_RESPONSE) {
-        log.debug({ count: values.length }, "too many Set-Cookie headers; extra ones ignored");
-      }
-      // Flushed after any successful write, not only one with an expiry: a session cookie (or a
-      // deletion) replacing a persistent one must remove the persistent record from the disk too, or
-      // a crash brings the old value back. A flush with nothing persistent pending costs ~0.03 ms.
-      let changed = false;
-      for (const value of values.slice(0, MAX_SET_COOKIES_PER_RESPONSE)) {
-        const parsed = parseSetCookie(value, { requestPath, hosts, now: now() });
-        // Never the header: it carries the value.
-        if (!parsed.ok) {
-          log.debug({ reason: parsed.reason }, "Set-Cookie ignored");
-          continue;
-        }
-        const { change } = parsed;
-        // Always stored HttpOnly: Chromium refuses to let a non-HttpOnly write replace an HttpOnly
-        // cookie (EXCLUDE_OVERWRITE_HTTP_ONLY), so `sid=1; HttpOnly` followed by `sid=2` would keep
-        // sending `sid=1`, where a browser replaces it. The flag means nothing here otherwise: page
-        // scripts never see these cookies, and the `__Http-` prefix rules were checked while parsing.
-        const details =
-          change.kind === "set"
-            ? { ...change.cookie, httpOnly: true }
-            : // Expired: Chromium removes the stored cookie with this name and path, and stores nothing.
-              // Secure too, so it may replace a Secure cookie.
-              {
-                name: change.name,
-                value: "",
-                path: change.path,
-                secure: true,
-                httpOnly: true,
-                sameSite: "unspecified" as const,
-                expirationDate: 1,
-              };
-        try {
-          await store.set({ url: jarOrigin + details.path, ...details });
-          changed = true;
-        } catch (err) {
-          log.warn({ err, name: details.name }, "storing a cookie failed");
-        }
-      }
-      if (!changed) return;
+      // One deadline for the whole response, and no cancellation: a request cancelled halfway must
+      // not leave only some of its response's cookies stored.
+      const deadline = storeDeadline(timeoutMs);
       try {
-        await store.flushStore();
-      } catch (err) {
-        log.warn({ err }, "flushing cookies failed");
+        await applySetCookies(values, requestPath, deadline.signal);
+      } finally {
+        deadline.clear();
       }
     },
   };
+
+  async function applySetCookies(values: string[], requestPath: string, deadline: AbortSignal): Promise<void> {
+    if (values.length > MAX_SET_COOKIES_PER_RESPONSE) {
+      log.debug({ count: values.length }, "too many Set-Cookie headers; extra ones ignored");
+    }
+    // Flushed after any successful write, not only one with an expiry: a session cookie (or a
+    // deletion) replacing a persistent one must remove the persistent record from the disk too, or
+    // a crash brings the old value back. A flush with nothing persistent pending costs ~0.03 ms, one
+    // with a persistent change about 0.5 ms (measured on Electron 45, macOS).
+    let changed = false;
+    for (const value of values.slice(0, MAX_SET_COOKIES_PER_RESPONSE)) {
+      const parsed = parseSetCookie(value, { requestPath, hosts, now: now() });
+      // Never the header: it carries the value.
+      if (!parsed.ok) {
+        log.debug({ reason: parsed.reason }, "Set-Cookie ignored");
+        continue;
+      }
+      const { change } = parsed;
+      // Always stored HttpOnly: Chromium refuses to let a non-HttpOnly write replace an HttpOnly
+      // cookie (EXCLUDE_OVERWRITE_HTTP_ONLY), so `sid=1; HttpOnly` followed by `sid=2` would keep
+      // sending `sid=1`, where a browser replaces it. The flag means nothing here otherwise: page
+      // scripts never see these cookies, and the `__Http-` prefix rules were checked while parsing.
+      const details =
+        change.kind === "set"
+          ? { ...change.cookie, httpOnly: true }
+          : // Expired: Chromium removes the stored cookie with this name and path, and stores nothing.
+            // Secure too, so it may replace a Secure cookie.
+            {
+              name: change.name,
+              value: "",
+              path: change.path,
+              secure: true,
+              httpOnly: true,
+              sameSite: "unspecified" as const,
+              expirationDate: 1,
+            };
+      try {
+        await abandonOn(store.set({ url: jarOrigin + details.path, ...details }), deadline);
+        changed = true;
+      } catch (err) {
+        if (deadline.aborted) break;
+        log.warn({ err, name: details.name }, "storing a cookie failed");
+      }
+    }
+    try {
+      // Not after a timeout: the store is not answering.
+      if (changed && !deadline.aborted) await abandonOn(store.flushStore(), deadline);
+    } catch (err) {
+      if (!deadline.aborted) log.warn({ err }, "flushing cookies failed");
+    }
+    if (deadline.aborted) {
+      log.warn({ timeoutMs }, "storing cookies timed out; the response goes on, its cookies may be missing");
+    }
+  }
 }
 
 /** How long quitting waits for the cookie store to reach the disk. */

@@ -6,7 +6,7 @@ import type { WebRequestFilter } from "electron";
 
 import { APP_ORIGIN, APP_SCHEME } from "./app-url.ts";
 import type { BootProfile } from "./boot-profile.ts";
-import type { CookieJar } from "./cookie-jar.ts";
+import { type CookieJar, CookieStoreTimeoutError } from "./cookie-jar.ts";
 import { safeUrl } from "./log-url.ts";
 import type { Logger } from "./log.ts";
 import { failureStatus, shapeRequestHeaders, shapeResponseHeaders, toInternalUrl } from "./mapping.ts";
@@ -105,7 +105,7 @@ export function registerAppProtocol(
         desktop: desktop(entry?.contentsId),
         internalOrigin,
       });
-      const cookie = await cookies.cookieHeader(pathname);
+      const cookie = await cookies.cookieHeader(pathname, signal);
       signal.throwIfAborted();
       if (cookie !== undefined) headers.set("cookie", cookie);
       const forwarded = new Request(internalUrl, {
@@ -136,7 +136,10 @@ export function registerAppProtocol(
       log.error({ err, method: request.method, path: safeUrl(request.url, "path"), status }, "app:// request failed");
       // Let Electron report a failed main-document transport to the owning window's recovery.
       // An ordinary HTTP error from the host is still returned intact above.
-      if (entry?.mainDocument && err instanceof PortClosedError) return Response.error();
+      // A cookie store that did not answer is as transient: the request never left this process.
+      if (entry?.mainDocument && (err instanceof PortClosedError || err instanceof CookieStoreTimeoutError)) {
+        return Response.error();
+      }
       return new Response(message, { status, headers: { "content-type": "text/plain", "retry-after": "1" } });
     } finally {
       // Once Electron has the response, abandoning it cancels the body directly.

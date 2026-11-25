@@ -2,7 +2,7 @@ import type { DesktopRequest } from "@repo/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createBootProfile } from "./boot-profile.ts";
-import { createCookieJar, type CookieStore } from "./cookie-jar.ts";
+import { createCookieJar, type CookieStore, STORE_TIMEOUT_MS } from "./cookie-jar.ts";
 import { fakeCookieStore } from "./cookie-store-testing.ts";
 import { createDevProxyFetch } from "./dev-proxy.ts";
 import type { Logger } from "./log.ts";
@@ -55,9 +55,9 @@ function setup(
   });
   return {
     handle: (url: string, init?: RequestInit) => handler!(new Request(url, init)),
-    networkHeaders: (id: number, requestHeaders: Record<string, string> = {}) => {
+    networkHeaders: (id: number, requestHeaders: Record<string, string> = {}, resourceType?: string) => {
       let headers!: Record<string, string>;
-      before.mock.calls[0][1]({ id, requestHeaders }, (response) => {
+      before.mock.calls[0][1]({ id, requestHeaders, resourceType }, (response) => {
         headers = response.requestHeaders;
       });
       return headers;
@@ -132,6 +132,49 @@ describe("registerAppProtocol with the cookie jar", () => {
     expect((await pending).type).toBe("error");
     expect(upstream).not.toHaveBeenCalled();
     expect(await (await handle("app://app/next")).text()).toBe("ok");
+  });
+
+  it("answers 503 without calling upstream when the cookie lookup never answers, and serves the next request", async () => {
+    vi.useFakeTimers();
+    const store = fakeCookieStore();
+    store.get.mockImplementationOnce(() => new Promise(() => {}));
+    const upstream = vi.fn<Handler>(async () => new Response("ok"));
+    const { handle } = setup(upstream, { store });
+    const pending = handle("app://app/api/me");
+    await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
+    const response = await pending;
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(upstream).not.toHaveBeenCalled();
+    expect(await (await handle("app://app/api/me")).text()).toBe("ok");
+  });
+
+  it("fails a main document whose cookie lookup never answers as a transport error, for the window's recovery", async () => {
+    vi.useFakeTimers();
+    const store = fakeCookieStore();
+    store.get.mockImplementationOnce(() => new Promise(() => {}));
+    const upstream = vi.fn<Handler>(async () => new Response("ok"));
+    const { handle, networkHeaders } = setup(upstream, { store });
+    const pending = handle("app://app/", { headers: networkHeaders(11, {}, "mainFrame") });
+    await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
+    expect((await pending).type).toBe("error");
+    expect(upstream).not.toHaveBeenCalled();
+    expect(await (await handle("app://app/", { headers: networkHeaders(12, {}, "mainFrame") })).text()).toBe("ok");
+  });
+
+  it("delivers the response when storing its cookies never answers, and stores the next one's", async () => {
+    vi.useFakeTimers();
+    const store = fakeCookieStore();
+    store.set.mockImplementationOnce(() => new Promise(() => {}));
+    const { handle } = setup(async () => withCookies({ status: 200, setCookie: ["sid=1; Path=/"] }), { store });
+    const pending = handle("app://app/login", { method: "POST", body: "x" });
+    await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(store.cookies).toEqual([]);
+    await handle("app://app/login", { method: "POST", body: "x" });
+    expect(store.cookies.map((c) => c.name)).toEqual(["sid"]);
   });
 
   it("drops a request disconnected before dispatch and keeps the network ID out of the next upstream request", async () => {

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   COOKIE_JAR_ORIGIN,
   type CookieStore,
+  CookieStoreTimeoutError,
   createCookieJar,
   defaultPath,
   flushForQuit,
@@ -12,6 +13,7 @@ import {
   parseSetCookie,
   QUIT_FLUSH_TIMEOUT_MS,
   serializeCookieHeader,
+  STORE_TIMEOUT_MS,
 } from "./cookie-jar.ts";
 import { fakeCookieStore as fakeStore } from "./cookie-store-testing.ts";
 
@@ -367,6 +369,87 @@ describe("createCookieJar", () => {
     await jar.storeResponseCookies(new Headers({ "content-type": "text/html" }), "/");
     expect(store.set).not.toHaveBeenCalled();
     expect(store.flushStore).not.toHaveBeenCalled();
+  });
+});
+
+/** A store call in flight when the network service dies: it never settles. */
+const never = () => new Promise<never>(() => {});
+
+describe("createCookieJar with a store that stops answering", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects a lookup with CookieStoreTimeoutError after the timeout, and answers again once the store does", async () => {
+    vi.useFakeTimers();
+    const store = fakeStore();
+    const log = logger();
+    const jar = createCookieJar({ store, hosts: ["app.desktop"], log });
+    await jar.storeResponseCookies(response("sid=1; Path=/"), "/");
+    store.get.mockImplementationOnce(never);
+    let outcome: unknown;
+    const lookup = jar.cookieHeader("/").then(
+      (value) => (outcome = value),
+      (err: unknown) => (outcome = err),
+    );
+    await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS - 1);
+    expect(outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await lookup;
+    expect(outcome).toBeInstanceOf(CookieStoreTimeoutError);
+    expect(outcome).toMatchObject({ timeoutMs: STORE_TIMEOUT_MS });
+    // The fault is gone: the next lookup answers, and nothing is left on the clock.
+    expect(await jar.cookieHeader("/")).toBe("sid=1");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops waiting for a lookup when the request is cancelled, without a warning", async () => {
+    const store = fakeStore();
+    const log = logger();
+    const jar = createCookieJar({ store, hosts: ["app.desktop"], log });
+    store.get.mockImplementationOnce(never);
+    const controller = new AbortController();
+    const lookup = jar.cookieHeader("/", controller.signal);
+    controller.abort();
+    expect(await lookup).toBeUndefined();
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it("gives up on a response's cookies after one timeout for all of them, with a warning and no flush", async () => {
+    vi.useFakeTimers();
+    const store = fakeStore();
+    const log = logger();
+    const jar = createCookieJar({ store, hosts: ["app.desktop"], log });
+    store.set.mockImplementationOnce(never);
+    let settled = false;
+    const stored = jar.storeResponseCookies(response("a=1; Path=/", "b=2; Path=/"), "/").then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await stored;
+    expect(store.set).toHaveBeenCalledTimes(1);
+    expect(store.flushStore).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith({ timeoutMs: STORE_TIMEOUT_MS }, expect.stringContaining("timed out"));
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain("a=1");
+    // The fault is gone: the next response's cookies are stored and flushed.
+    await jar.storeResponseCookies(response("c=3; Path=/"), "/");
+    expect(await jar.cookieHeader("/")).toBe("c=3");
+    expect(store.flushStore).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("gives up on a flush that never answers, keeping what the store already has", async () => {
+    vi.useFakeTimers();
+    const store = fakeStore();
+    const log = logger();
+    const jar = createCookieJar({ store, hosts: ["app.desktop"], log, timeoutMs: 100 });
+    store.flushStore.mockImplementationOnce(never);
+    const stored = jar.storeResponseCookies(response("a=1; Path=/"), "/");
+    await vi.advanceTimersByTimeAsync(100);
+    await stored;
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledWith({ timeoutMs: 100 }, expect.stringContaining("timed out"));
+    expect(await jar.cookieHeader("/")).toBe("a=1");
   });
 });
 
