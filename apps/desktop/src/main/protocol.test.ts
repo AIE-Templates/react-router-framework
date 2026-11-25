@@ -1,13 +1,27 @@
+import { createCookieJar, type CookieStore, STORE_TIMEOUT_MS } from "@repo/electron-cookies/main";
+import { OMIT_COOKIES_HEADER } from "@repo/electron-cookies/shared";
 import type { DesktopRequest } from "@repo/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { APP_HOST, APP_SCHEME, APP_ORIGIN, COOKIE_JAR_ORIGIN } from "./app-url.ts";
 import { createBootProfile } from "./boot-profile.ts";
-import { createCookieJar, type CookieStore, STORE_TIMEOUT_MS } from "./cookie-jar.ts";
 import { fakeCookieStore } from "./cookie-store-testing.ts";
 import { createDevProxyFetch } from "./dev-proxy.ts";
 import type { Logger } from "./log.ts";
 import { INTERNAL_ORIGIN } from "./mapping.ts";
 import { type ProtocolSession, registerAppProtocol, REQUEST_HEADERS_TIMEOUT_MS } from "./protocol.ts";
+
+// Exercise protocol wiring with a different registered scheme and host.
+vi.mock("./app-url.ts", async (original) => ({
+  ...(await original<typeof import("./app-url.ts")>()),
+  APP_SCHEME: "xxx-app",
+  APP_HOST: "site",
+  APP_ORIGIN: "xxx-app://site",
+  isAppUrl: (value: string) => {
+    const url = new URL(value);
+    return url.protocol === "xxx-app:" && url.host === "site";
+  },
+}));
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -40,7 +54,8 @@ function setup(
   const session: ProtocolSession = {
     webRequest: { onBeforeSendHeaders: before, onErrorOccurred: onError, onCompleted },
     protocol: {
-      handle: (_scheme, h) => {
+      handle: (scheme, h) => {
+        expect(scheme).toBe(APP_SCHEME);
         handler = h;
       },
     },
@@ -49,12 +64,23 @@ function setup(
     upstream,
     internalOrigin,
     desktop,
-    cookies: createCookieJar({ store, hosts: ["app.desktop", new URL(internalOrigin).hostname], log }),
+    cookies: createCookieJar({
+      store,
+      scheme: APP_SCHEME,
+      host: APP_HOST,
+      origin: APP_ORIGIN,
+      storageOrigin: COOKIE_JAR_ORIGIN,
+      upstreamHost: new URL(internalOrigin).hostname,
+      fromPartition: () => ({ cookies: fakeCookieStore() }),
+      installPermissionPolicy: vi.fn<() => void>(),
+      log,
+    }),
     log,
     profile: createBootProfile(false),
   });
   return {
-    handle: (url: string, init?: RequestInit) => handler!(new Request(url, init)),
+    handle: (url: string, init?: RequestInit, initiatorOrigin?: string) =>
+      handler!(Object.assign(new Request(url, init), { initiatorOrigin })),
     networkHeaders: (id: number, requestHeaders: Record<string, string> = {}, resourceType?: string) => {
       let headers!: Record<string, string>;
       before.mock.calls[0][1]({ id, requestHeaders, resourceType }, (response) => {
@@ -92,7 +118,7 @@ describe("registerAppProtocol with the cookie jar", () => {
       return new Response(new ReadableStream({ cancel: cancelBody }));
     });
     const controller = new AbortController();
-    const pending = handle("app://app/", { signal: controller.signal });
+    const pending = handle(`${APP_ORIGIN}/`, { signal: controller.signal });
     await vi.waitFor(() => expect(received).toBeDefined());
     controller.abort();
     release();
@@ -109,9 +135,33 @@ describe("registerAppProtocol with the cookie jar", () => {
         ? withCookies({ status: 200, setCookie: ["sid=1; Path=/; HttpOnly"] })
         : new Response("ok");
     });
-    await handle("app://app/login", { method: "POST", body: "x" });
-    await handle("app://app/next", { headers: { cookie: "forged=1" } });
+    await handle(`${APP_ORIGIN}/login`, { method: "POST", body: "x" });
+    await handle(`${APP_ORIGIN}/next`, { headers: { cookie: "forged=1" } });
     expect(seen).toEqual([null, "sid=1"]);
+  });
+
+  it.each([
+    [undefined, false, true],
+    [APP_ORIGIN, false, true],
+    [undefined, true, false],
+    [APP_ORIGIN, true, false],
+    ["null", false, false],
+    ["media://site", false, false],
+    ["https://site", false, false],
+  ] as const)("applies initiator %s and omit %s on both hops", async (initiator, omit, allowed) => {
+    const seen: (string | null)[] = [];
+    const { handle } = setup(async (request) => {
+      seen.push(request.headers.get("cookie"));
+      expect(request.headers.has(OMIT_COOKIES_HEADER)).toBe(false);
+      return withCookies({ setCookie: [request.url.endsWith("/seed") ? "sid=old" : "sid=new"] });
+    });
+    await handle(`${APP_ORIGIN}/seed`);
+    const headers = new Headers({ cookie: "sid=forged" });
+    if (omit) headers.set(OMIT_COOKIES_HEADER, "1");
+    const response = await handle(`${APP_ORIGIN}/update`, { headers }, initiator);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    await handle(`${APP_ORIGIN}/read`);
+    expect(seen).toEqual([null, allowed ? "sid=old" : null, allowed ? "sid=new" : "sid=old"]);
   });
 
   it("skips the upstream call if the request was cancelled during a cookie lookup", async () => {
@@ -125,13 +175,13 @@ describe("registerAppProtocol with the cookie jar", () => {
     );
     const upstream = vi.fn<Handler>(async () => new Response("ok"));
     const { handle, networkHeaders, disconnect } = setup(upstream, { store });
-    const pending = handle("app://app/slow", { headers: networkHeaders(7) });
+    const pending = handle(`${APP_ORIGIN}/slow`, { headers: networkHeaders(7) });
     expect(store.get).toHaveBeenCalledOnce();
     disconnect(7);
     finishLookup();
     expect((await pending).type).toBe("error");
     expect(upstream).not.toHaveBeenCalled();
-    expect(await (await handle("app://app/next")).text()).toBe("ok");
+    expect(await (await handle(`${APP_ORIGIN}/next`)).text()).toBe("ok");
   });
 
   it("answers 503 without calling upstream when the cookie lookup never answers, and serves the next request", async () => {
@@ -140,13 +190,13 @@ describe("registerAppProtocol with the cookie jar", () => {
     store.get.mockImplementationOnce(() => new Promise(() => {}));
     const upstream = vi.fn<Handler>(async () => new Response("ok"));
     const { handle } = setup(upstream, { store });
-    const pending = handle("app://app/api/me");
+    const pending = handle(`${APP_ORIGIN}/api/me`);
     await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
     const response = await pending;
     expect(response.status).toBe(503);
     expect(response.headers.get("retry-after")).toBe("1");
     expect(upstream).not.toHaveBeenCalled();
-    expect(await (await handle("app://app/api/me")).text()).toBe("ok");
+    expect(await (await handle(`${APP_ORIGIN}/api/me`)).text()).toBe("ok");
   });
 
   it("fails a main document whose cookie lookup never answers as a transport error, for the window's recovery", async () => {
@@ -155,11 +205,11 @@ describe("registerAppProtocol with the cookie jar", () => {
     store.get.mockImplementationOnce(() => new Promise(() => {}));
     const upstream = vi.fn<Handler>(async () => new Response("ok"));
     const { handle, networkHeaders } = setup(upstream, { store });
-    const pending = handle("app://app/", { headers: networkHeaders(11, {}, "mainFrame") });
+    const pending = handle(`${APP_ORIGIN}/`, { headers: networkHeaders(11, {}, "mainFrame") });
     await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
     expect((await pending).type).toBe("error");
     expect(upstream).not.toHaveBeenCalled();
-    expect(await (await handle("app://app/", { headers: networkHeaders(12, {}, "mainFrame") })).text()).toBe("ok");
+    expect(await (await handle(`${APP_ORIGIN}/`, { headers: networkHeaders(12, {}, "mainFrame") })).text()).toBe("ok");
   });
 
   it("delivers the response when storing its cookies never answers, and stores the next one's", async () => {
@@ -167,13 +217,13 @@ describe("registerAppProtocol with the cookie jar", () => {
     const store = fakeCookieStore();
     store.set.mockImplementationOnce(() => new Promise(() => {}));
     const { handle } = setup(async () => withCookies({ status: 200, setCookie: ["sid=1; Path=/"] }), { store });
-    const pending = handle("app://app/login", { method: "POST", body: "x" });
+    const pending = handle(`${APP_ORIGIN}/login`, { method: "POST", body: "x" });
     await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
     const response = await pending;
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
     expect(store.cookies).toEqual([]);
-    await handle("app://app/login", { method: "POST", body: "x" });
+    await handle(`${APP_ORIGIN}/login`, { method: "POST", body: "x" });
     expect(store.cookies.map((c) => c.name)).toEqual(["sid"]);
   });
 
@@ -182,10 +232,10 @@ describe("registerAppProtocol with the cookie jar", () => {
     const { handle, networkHeaders, disconnect } = setup(upstream);
     const headers = networkHeaders(8);
     disconnect(8);
-    expect((await handle("app://app/path", { headers })).type).toBe("error");
+    expect((await handle(`${APP_ORIGIN}/path`, { headers })).type).toBe("error");
     expect(upstream).not.toHaveBeenCalled();
     const next = networkHeaders(9, { "X-Desktop-Protocol-Request": headers["x-desktop-protocol-request"] });
-    expect(await (await handle("app://app/path", { headers: next })).text()).toBe("ok");
+    expect(await (await handle(`${APP_ORIGIN}/path`, { headers: next })).text()).toBe("ok");
     expect(upstream.mock.calls[0][0].headers.has("x-desktop-protocol-request")).toBe(false);
   });
 
@@ -197,7 +247,7 @@ describe("registerAppProtocol with the cookie jar", () => {
       store,
     });
     let returned: Response | undefined;
-    const pending = handle("app://app/").then((response) => (returned = response));
+    const pending = handle(`${APP_ORIGIN}/`).then((response) => (returned = response));
     await vi.waitFor(() => expect(store.flushStore).toHaveBeenCalled());
     expect(store.cookies.map((c) => c.name)).toEqual(["keep"]);
     expect(returned).toBeUndefined();
@@ -213,9 +263,9 @@ describe("registerAppProtocol with the cookie jar", () => {
     const finished = networkHeaders(1);
     const active = networkHeaders(2);
     complete(1);
-    expect((await handle("app://app/path", { headers: finished })).type).toBe("error");
+    expect((await handle(`${APP_ORIGIN}/path`, { headers: finished })).type).toBe("error");
     expect(upstream).not.toHaveBeenCalled();
-    expect(await (await handle("app://app/path", { headers: active })).text()).toBe("ok");
+    expect(await (await handle(`${APP_ORIGIN}/path`, { headers: active })).text()).toBe("ok");
   });
 
   it("cancels the response body if the renderer disconnects during the cookie flush", async () => {
@@ -227,7 +277,7 @@ describe("registerAppProtocol with the cookie jar", () => {
       async () => new Response(new ReadableStream({ cancel }), { headers: { "set-cookie": "sid=1; Path=/" } }),
       { store },
     );
-    const pending = handle("app://app/login", { headers: networkHeaders(1) });
+    const pending = handle(`${APP_ORIGIN}/login`, { headers: networkHeaders(1) });
     await vi.waitFor(() => expect(store.flushStore).toHaveBeenCalledOnce());
     disconnect(1);
     finishFlush();
@@ -247,9 +297,9 @@ describe("registerAppProtocol with the cookie jar", () => {
           })
         : new Response("home");
     });
-    const redirect = await handle("app://app/login", { method: "POST", body: "x" });
+    const redirect = await handle(`${APP_ORIGIN}/login`, { method: "POST", body: "x" });
     expect(redirect.status).toBe(302);
-    expect(redirect.headers.get("location")).toBe("app://app/home");
+    expect(redirect.headers.get("location")).toBe(`${APP_ORIGIN}/home`);
     await handle(redirect.headers.get("location")!);
     expect(seen).toEqual([null, "sid=1"]);
   });
@@ -262,8 +312,8 @@ describe("registerAppProtocol with the cookie jar", () => {
         ? withCookies({ status: 202, headers: { "content-type": "text/x-script" }, setCookie: ["sid=1; Path=/"] })
         : new Response("data", { headers: { "content-type": "text/x-script" } });
     });
-    await handle("app://app/account/login.data", { method: "POST", body: "x" });
-    await handle("app://app/_root.data?_routes=root");
+    await handle(`${APP_ORIGIN}/account/login.data`, { method: "POST", body: "x" });
+    await handle(`${APP_ORIGIN}/_root.data?_routes=root`);
     expect(seen).toEqual([null, "sid=1"]);
   });
 
@@ -276,8 +326,8 @@ describe("registerAppProtocol with the cookie jar", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const { handle } = setup(createDevProxyFetch(), { internalOrigin: "http://localhost:5174" });
-    await handle("app://app/login", { method: "POST", body: "x" });
-    const next = await handle("app://app/next");
+    await handle(`${APP_ORIGIN}/login`, { method: "POST", body: "x" });
+    const next = await handle(`${APP_ORIGIN}/next`);
     expect(await next.text()).toBe("sid=dev");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:5174/next");
   });
@@ -293,13 +343,13 @@ describe("registerAppProtocol with the cookie jar", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const { handle } = setup(createDevProxyFetch());
-    const pending = handle("app://app/slow");
+    const pending = handle(`${APP_ORIGIN}/slow`);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const signal = fetchMock.mock.calls[0][1]!.signal!;
     await vi.advanceTimersByTimeAsync(REQUEST_HEADERS_TIMEOUT_MS);
     expect(signal.aborted).toBe(true);
     expect((await pending).status).toBe(504);
-    expect(await (await handle("app://app/next")).text()).toBe("recovered");
+    expect(await (await handle(`${APP_ORIGIN}/next`)).text()).toBe("recovered");
   });
 
   it.each(["POST", "PATCH", "DELETE"])("never replays a bodyless %s after a connection reset", async (method) => {
@@ -307,9 +357,9 @@ describe("registerAppProtocol with the cookie jar", () => {
     const fetchMock = vi.fn<typeof fetch>().mockRejectedValueOnce(reset).mockResolvedValue(new Response("next"));
     vi.stubGlobal("fetch", fetchMock);
     const { handle } = setup(createDevProxyFetch());
-    expect((await handle("app://app/write", { method })).status).toBe(500);
+    expect((await handle(`${APP_ORIGIN}/write`, { method })).status).toBe(500);
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(await (await handle("app://app/next")).text()).toBe("next");
+    expect(await (await handle(`${APP_ORIGIN}/next`)).text()).toBe("next");
   });
 
   it.each(["GET", "HEAD"])("retries a %s after the dev server restarts", async (method) => {
@@ -319,7 +369,7 @@ describe("registerAppProtocol with the cookie jar", () => {
       .mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
     const { handle } = setup(createDevProxyFetch());
-    expect((await handle("app://app/read", { method })).status).toBe(204);
+    expect((await handle(`${APP_ORIGIN}/read`, { method })).status).toBe(204);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -331,7 +381,7 @@ describe("registerAppProtocol with the cookie jar", () => {
       .mockResolvedValue(new Response("recovered"));
     vi.stubGlobal("fetch", fetchMock);
     const { handle, networkHeaders, disconnect } = setup(createDevProxyFetch());
-    const pending = handle("app://app/read", { headers: networkHeaders(1) });
+    const pending = handle(`${APP_ORIGIN}/read`, { headers: networkHeaders(1) });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     failAttempt(new TypeError("fetch failed", { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) }));
     // The fetch rejection enters backoff in the next microtask. Cancel before any retry timer can run.
@@ -339,7 +389,7 @@ describe("registerAppProtocol with the cookie jar", () => {
     disconnect(1);
     expect((await pending).type).toBe("error");
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(await (await handle("app://app/read", { headers: networkHeaders(2) })).text()).toBe("recovered");
+    expect(await (await handle(`${APP_ORIGIN}/read`, { headers: networkHeaders(2) })).text()).toBe("recovered");
   });
 
   it("keeps a dev response body live past the headers deadline and forwards later caller cancellation", async () => {
@@ -349,7 +399,7 @@ describe("registerAppProtocol with the cookie jar", () => {
     vi.stubGlobal("fetch", fetchMock);
     const caller = new AbortController();
     const { handle } = setup(createDevProxyFetch());
-    const response = await handle("app://app/events", { signal: caller.signal });
+    const response = await handle(`${APP_ORIGIN}/events`, { signal: caller.signal });
     const signal = fetchMock.mock.calls[0][1]!.signal!;
     await vi.advanceTimersByTimeAsync(REQUEST_HEADERS_TIMEOUT_MS + 1);
     expect(signal.aborted).toBe(false);

@@ -1,8 +1,8 @@
+import { CookieStoreTimeoutError } from "@repo/electron-cookies/main";
 import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError } from "@repo/port-fetch";
 import { DESKTOP_HEADERS, type DesktopRequest, isDesktopHeader } from "@repo/shared";
 
 import { APP_ORIGIN, isAppUrl } from "./app-url.ts";
-import { CookieStoreTimeoutError } from "./cookie-jar.ts";
 
 /**
  * The origin the server sees instead. `app://` is not a special scheme for the URL parser, so its
@@ -42,7 +42,7 @@ export interface RequestShape {
  * - Any `x-desktop-*` header a page sent is dropped, then the main process's own values are set, so
  *   page scripts cannot forge them.
  * - Any `Cookie` header is dropped: Chromium sends none for `app://`, and the cookies the server gets
- *   come from the main process's jar only (`cookie-jar.ts`), which the caller adds afterwards.
+ *   come from the main process's jar only, which the caller adds afterwards.
  */
 export function shapeRequestHeaders(
   headers: Headers,

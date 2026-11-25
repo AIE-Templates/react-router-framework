@@ -1,6 +1,7 @@
 import { writeSync } from "node:fs";
 import { join } from "node:path";
 
+import { createCookieJar, flushForQuit } from "@repo/electron-cookies/main";
 import type { PortFetch } from "@repo/port-fetch";
 import {
   DESKTOP_PREFS_IPC,
@@ -17,10 +18,9 @@ import { readDebugEnv, utilityDebugEnv } from "~/debug-env.ts";
 import { selectMainRun } from "~/diagnostics/entry.ts";
 import { developmentHost } from "~/main/dev-host.ts";
 
-import { APP_ORIGIN, APP_SCHEME, isAppUrl } from "./main/app-url.ts";
+import { APP_HOST, APP_ORIGIN, APP_SCHEME, COOKIE_JAR_ORIGIN, isAppUrl } from "./main/app-url.ts";
 import { type BootProfile, createBootProfile } from "./main/boot-profile.ts";
 import { resolveChromePolicy } from "./main/chrome-policy.ts";
-import { COOKIE_JAR_ORIGIN, createCookieJar, flushForQuit } from "./main/cookie-jar.ts";
 import {
   checkCookieKeyProbe,
   COOKIE_KEY_PROBE_TEXT,
@@ -375,17 +375,22 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     upstream,
     internalOrigin,
     desktop,
-    // A `Domain` attribute may name the jar's host or the host the server sees (the dev server's).
     cookies: createCookieJar({
       store: appSession.cookies,
-      hosts: [new URL(COOKIE_JAR_ORIGIN).hostname, new URL(internalOrigin).hostname],
+      scheme: APP_SCHEME,
+      host: APP_HOST,
+      origin: APP_ORIGIN,
+      storageOrigin: COOKIE_JAR_ORIGIN,
+      upstreamHost: new URL(internalOrigin).hostname,
+      fromPartition: (partition) => session.fromPartition(partition),
+      installPermissionPolicy: (probe) => installPermissionPolicy(probe, log),
       log,
     }),
     log,
     profile,
   });
   if (dev) {
-    log.info({ devServerUrl: dev.serverUrl }, "development: forwarding app:// to react-router dev");
+    log.info({ devServerUrl: dev.serverUrl }, `development: forwarding ${APP_SCHEME}:// to react-router dev`);
     dev.onReloadRequest(() => {
       for (const win of registry.windows()) win.webContents.reload();
     });
