@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Session } from "electron";
 
 import { parseCookieDate, parseSetCookie } from "./parse.ts";
+import { createScriptCookies, type ScriptCookies } from "./script-cookies.ts";
 import { OMIT_COOKIES_HEADER } from "./shared.ts";
 import {
   abandonOn,
@@ -11,6 +12,10 @@ import {
   type CookieStore,
   type CookieWrite,
   STORE_TIMEOUT_MS,
+  observeStore,
+  orderCookies,
+  serializeCookies,
+  toCookieWrite,
   storeDeadline,
   writeCookie,
   type WriteResult,
@@ -31,6 +36,7 @@ export interface CookieRequest {
 }
 
 export interface CookieJar {
+  readonly script: ScriptCookies;
   cookieHeader(request: CookieRequest, signal?: AbortSignal): Promise<string | undefined>;
   storeResponseCookies(headers: Headers, request: CookieRequest): Promise<void>;
 }
@@ -51,16 +57,11 @@ export interface CookieJarOptions<S extends { cookies: CookieStore } = Session> 
 export const MAX_SET_COOKIES_PER_RESPONSE = 50;
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
-function serializeCookieHeader(cookies: Awaited<ReturnType<CookieStore["get"]>>): string {
-  const header = cookies
-    .toSorted((a, b) => (b.path ?? "/").length - (a.path ?? "/").length)
-    .map(({ name, value }) => (name === "" ? value : name + "=" + value))
-    .join("; ");
-  return Buffer.from(header, "utf8").toString("latin1");
-}
+export { installCookieIpc, type CookieIpcOptions, SYNC_STORE_TIMEOUT_MS, SYNC_STORE_PROBE_TIMEOUT_MS } from "./ipc.ts";
 
 export function createCookieJar<S extends { cookies: CookieStore }>(options: CookieJarOptions<S>): CookieJar {
-  const { store, storageOrigin, log, timeoutMs = STORE_TIMEOUT_MS } = options;
+  const { storageOrigin, log, timeoutMs = STORE_TIMEOUT_MS } = options;
+  const store = observeStore(options.store);
   const storageHost = new URL(storageOrigin).hostname;
   const slowWrites = new Map<string, Promise<WriteResult>>();
   let probeStore: CookieStore | undefined;
@@ -143,12 +144,7 @@ export function createCookieJar<S extends { cookies: CookieStore }>(options: Coo
         log.debug({ reason: parsed.reason }, "Set-Cookie ignored");
         continue;
       }
-      const { cookie } = parsed;
-      const details: CookieWrite = { url: storageOrigin + cookie.path, ...cookie };
-      if (details.domain === options.upstreamHost.toLowerCase()) details.domain = storageHost;
-      if (details.expirationDate !== undefined && details.expirationDate * 1000 <= now && !details.value)
-        details.value = "1";
-      writes.push(details);
+      writes.push(toCookieWrite(parsed.cookie, storageOrigin, storageHost, options.upstreamHost));
     }
 
     const outcomes = await Promise.all(writes.map((details) => writeCookie(store, details, deadline)));
@@ -180,13 +176,16 @@ export function createCookieJar<S extends { cookies: CookieStore }>(options: Coo
   }
 
   return {
+    script: createScriptCookies(store, options.origin, options.host, storageOrigin, storageHost),
     async cookieHeader(request, signal) {
       if (!accepts(request)) return undefined;
       const deadline = storeDeadline(timeoutMs);
       try {
         const waiting = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
         const cookies = await abandonOn(store.get({ url: storageOrigin + request.path }), waiting);
-        return cookies.length ? serializeCookieHeader(cookies) : undefined;
+        return cookies.length
+          ? Buffer.from(serializeCookies(orderCookies(cookies)), "utf8").toString("latin1")
+          : undefined;
       } catch (err) {
         if (signal?.aborted) return undefined;
         if (err instanceof CookieStoreTimeoutError) throw err;

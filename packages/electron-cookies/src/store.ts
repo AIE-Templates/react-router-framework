@@ -1,3 +1,5 @@
+import type { Cookie } from "electron";
+
 import type { JarCookie } from "./parse.ts";
 
 export interface CookieLogger {
@@ -6,13 +8,55 @@ export interface CookieLogger {
 }
 
 export interface CookieStore {
-  get(filter: { url: string }): Promise<{ name: string; value: string; path?: string }[]>;
+  get(filter: { url: string; httpOnly?: boolean }): Promise<Cookie[]>;
   set(details: CookieWrite): Promise<void>;
   flushStore(): Promise<void>;
 }
 
+/** A success on any entry point means synchronous callers can leave probe mode.
+ * Count only the real session's operations, never writes in the validation session.
+ */
+export function observeStore(store: CookieStore) {
+  let successes = 0;
+  function succeeded<T>(value: T): T {
+    successes++;
+    return value;
+  }
+  return {
+    get successes() {
+      return successes;
+    },
+    get: (filter: Parameters<CookieStore["get"]>[0]) => store.get(filter).then(succeeded),
+    set: (details: CookieWrite) => store.set(details).then(succeeded),
+    flushStore: () => store.flushStore().then(succeeded),
+  };
+}
+
 export interface CookieWrite extends JarCookie {
   url: string;
+}
+
+/** Map an accepted public Domain to the private store and preserve deletion identity. */
+export function toCookieWrite(
+  cookie: JarCookie,
+  storageOrigin: string,
+  storageHost: string,
+  publicHost: string,
+): CookieWrite {
+  const details: CookieWrite = { ...cookie, url: storageOrigin + cookie.path };
+  if (details.domain === publicHost.toLowerCase()) details.domain = storageHost;
+  if (details.expirationDate !== undefined && details.expirationDate * 1000 <= Date.now() && !details.value)
+    details.value = "1";
+  return details;
+}
+
+/** Chromium's path order, retaining the store's creation order within equal paths. */
+export function orderCookies(cookies: Cookie[]): Cookie[] {
+  return cookies.toSorted((a, b) => (b.path ?? "/").length - (a.path ?? "/").length);
+}
+
+export function serializeCookies(ordered: Cookie[]): string {
+  return ordered.map(({ name, value }) => (name === "" ? value : name + "=" + value)).join("; ");
 }
 
 export type WriteResult = { status: "stored" } | { status: "rejected"; reason: unknown } | { status: "unknown" };

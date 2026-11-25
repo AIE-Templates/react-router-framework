@@ -3,6 +3,7 @@ import { DESKTOP_CHROME_IPC, DESKTOP_PREFS_IPC } from "@repo/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const wire = vi.hoisted(() => ({
+  cookies: vi.fn<() => void>(),
   sendSync: vi.fn<() => unknown>(() => ({ revision: 0, preference: "auto" })),
   expose: vi.fn<(key: string, bridge: DesktopBridge) => void>(),
   invoke: vi.fn<(channel: string, payload: unknown) => Promise<unknown>>(),
@@ -10,6 +11,7 @@ const wire = vi.hoisted(() => ({
   off: vi.fn<(channel: string, callback: (event: unknown, payload: unknown) => void) => void>(),
   send: vi.fn<(channel: string, payload?: unknown) => void>(),
 }));
+vi.mock("@repo/electron-cookies/preload", () => ({ installWindowCookiePreload: wire.cookies }));
 vi.mock("electron", () => ({ contextBridge: { exposeInMainWorld: wire.expose }, ipcRenderer: wire }));
 
 function deferred() {
@@ -27,6 +29,7 @@ const state = (revision: number): DesktopWindowState => ({
 });
 async function load() {
   await import("./preload.ts");
+  expect(wire.cookies).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ frame: window, isMainFrame: true }));
   return wire.expose.mock.calls[0][1];
 }
 
@@ -170,6 +173,7 @@ it("does not expose the bridge, register teardown or announce paint in a sub-fra
   const paint = vi.fn<() => void>();
   vi.stubGlobal("requestAnimationFrame", paint);
   await import("./preload.ts");
+  expect(wire.cookies).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ frame: window, isMainFrame: false }));
   expect(wire.sendSync).not.toHaveBeenCalled();
   expect(wire.expose).not.toHaveBeenCalled();
   expect(window.addEventListener).not.toHaveBeenCalled();

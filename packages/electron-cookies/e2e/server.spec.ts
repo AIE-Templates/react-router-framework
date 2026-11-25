@@ -152,13 +152,13 @@ test("SRV-08 | match path boundaries, send longest first and delete just the mat
 
 test("SRV-08 | a hard kill preserves the latest persistent value and cannot resurrect a replaced one", async ({
   fixture,
-  restartAfterKill,
+  restart,
 }) => {
   await fixture.set(["keep=before; Path=/", "drop=before; Max-Age=3600; Path=/"]);
   const previous = await fixture.set(["keep=after; Max-Age=3600; Path=/", "drop=after; Path=/"]);
   expect(previous.split("; ").toSorted()).toEqual(["drop=before", "keep=before"]);
   expect((await requestCookie(fixture.page)).split("; ").toSorted()).toEqual(["drop=after", "keep=after"]);
-  const restarted = await restartAfterKill();
+  const restarted = await restart("kill");
   expect(await requestCookie(restarted.page)).toBe("keep=after");
   expect((await restarted.stored("jar")).map(({ name, value, session }) => ({ name, value, session }))).toEqual([
     { name: "keep", value: "after", session: false },

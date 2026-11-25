@@ -28,7 +28,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "build:e2e": "tsc -p tsconfig.e2e.json",
+    "build:e2e": "tsc -p tsconfig.e2e.json && rolldown e2e/app/preload.ts --format cjs --external electron --file dist/e2e/fixture/e2e/app/preload.cjs",
     "test:e2e": "pnpm build:e2e && playwright test",
     "typecheck": "tsc"
   },
@@ -36,7 +36,9 @@
     "@babel/parser": "^7.29.11",
     "@babel/types": "^7.29.11",
     "@playwright/test": "^1.64.1",
-    "electron": "45.0.0"
+    "electron": "45.0.0",
+    "jsdom": "^30.1.3",
+    "rolldown": "1.2.15"
   },
   "peerDependencies": {
     "electron": "^45.0.0"

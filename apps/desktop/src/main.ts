@@ -1,7 +1,7 @@
 import { writeSync } from "node:fs";
 import { join } from "node:path";
 
-import { createCookieJar, flushForQuit } from "@repo/electron-cookies/main";
+import { createCookieJar, flushForQuit, installCookieIpc } from "@repo/electron-cookies/main";
 import type { PortFetch } from "@repo/port-fetch";
 import {
   DESKTOP_PREFS_IPC,
@@ -10,7 +10,7 @@ import {
   type DesktopRequest,
   type VisualThemeSnapshot,
 } from "@repo/shared";
-import { app, type BrowserWindow, dialog, nativeTheme, protocol, safeStorage, session } from "electron";
+import { app, type BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session } from "electron";
 
 import type { DebugEnv } from "~/debug-env.contract.ts";
 // These three are replaced per build profile (vite.base.config.ts): import them by exactly these names.
@@ -371,21 +371,31 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     });
     upstream = server.fetch;
   }
+  const cookies = createCookieJar({
+    store: appSession.cookies,
+    scheme: APP_SCHEME,
+    host: APP_HOST,
+    origin: APP_ORIGIN,
+    storageOrigin: COOKIE_JAR_ORIGIN,
+    upstreamHost: new URL(internalOrigin).hostname,
+    fromPartition: (partition) => session.fromPartition(partition),
+    installPermissionPolicy: (probe) => installPermissionPolicy(probe, log),
+    log,
+  });
+  installCookieIpc({
+    jar: cookies,
+    prefix: "desktop",
+    ipcMain,
+    changes: appSession.cookies,
+    ownsSender: (sender) => registry.byContentsId(sender.id)?.webContents === sender && sender.session === appSession,
+    isAppUrl,
+    log,
+  });
   registerAppProtocol(appSession, {
     upstream,
     internalOrigin,
     desktop,
-    cookies: createCookieJar({
-      store: appSession.cookies,
-      scheme: APP_SCHEME,
-      host: APP_HOST,
-      origin: APP_ORIGIN,
-      storageOrigin: COOKIE_JAR_ORIGIN,
-      upstreamHost: new URL(internalOrigin).hostname,
-      fromPartition: (partition) => session.fromPartition(partition),
-      installPermissionPolicy: (probe) => installPermissionPolicy(probe, log),
-      log,
-    }),
+    cookies,
     log,
     profile,
   });

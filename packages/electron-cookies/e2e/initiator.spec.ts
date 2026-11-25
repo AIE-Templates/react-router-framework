@@ -1,6 +1,6 @@
 import { expect, requestCookie, test } from "./fixture.ts";
 
-test("SRV-09 | cookies follow Chromium's initiator for main loads, the app and its workers", async ({ fixture }) => {
+test("SRV-07/09 | cookies follow Chromium's initiator for main loads, the app and its workers", async ({ fixture }) => {
   const { app, page } = fixture;
   await fixture.set(["sid=trusted; Path=/; Secure; SameSite=None"]);
   const path = await fixture.replyPath(["main=ok; Path=/"]);
@@ -16,37 +16,40 @@ test("SRV-09 | cookies follow Chromium's initiator for main loads, the app and i
   const echo = await requestCookie(page);
   expect(echo.split("; ").toSorted()).toEqual(["main=ok", "sid=trusted"]);
   for (const kind of ["dedicated", "shared"]) {
-    const workerEcho = await fixture.replyPath(["sid=trusted; Secure; SameSite=None; Path=/"]);
-    const result = await page.evaluate(
-      ({ workerType, script }) =>
-        new Promise<unknown>((resolve, reject) => {
-          const worker =
-            workerType === "shared"
-              ? new SharedWorker(script, { type: "module" })
-              : new Worker(script, { type: "module" });
-          const received = (event: MessageEvent<unknown>) => {
-            if (worker instanceof SharedWorker) worker.port.close();
-            else worker.terminate();
-            resolve(event.data);
-          };
-          if (worker instanceof SharedWorker) {
-            worker.port.addEventListener("message", received, { once: true });
-            worker.port.start();
-          } else {
-            worker.addEventListener("message", received, { once: true });
-          }
-          worker.addEventListener("error", () => reject(new Error("Failed to load " + workerType + " worker")), {
-            once: true,
-          });
-        }),
-      { workerType: kind, script: "/worker.js?echo=" + encodeURIComponent(workerEcho) },
-    );
-    expect(result, kind).toEqual([200, echo]);
-    expect(await app.evaluate((_module, p) => globalThis.cookieFixture.observation(p), workerEcho)).toEqual({
-      reached: true,
-      initiator: fixture.origins.jar,
-      cookie: echo,
-    });
+    for (const omit of [false, true]) {
+      const workerEcho = await fixture.replyPath(["sid=trusted; Secure; SameSite=None; Path=/"]);
+      const result = await page.evaluate(
+        ({ workerType, script }) =>
+          new Promise<unknown>((resolve, reject) => {
+            const worker =
+              workerType === "shared"
+                ? new SharedWorker(script, { type: "module" })
+                : new Worker(script, { type: "module" });
+            const received = (event: MessageEvent<unknown>) => {
+              if (worker instanceof SharedWorker) worker.port.close();
+              else worker.terminate();
+              resolve(event.data);
+            };
+            if (worker instanceof SharedWorker) {
+              worker.port.addEventListener("message", received, { once: true });
+              worker.port.start();
+            } else {
+              worker.addEventListener("message", received, { once: true });
+            }
+            worker.addEventListener("error", () => reject(new Error("Failed to load " + workerType + " worker")), {
+              once: true,
+            });
+          }),
+        { workerType: kind, script: "/worker.js?echo=" + encodeURIComponent(workerEcho) + (omit ? "&omit" : "") },
+      );
+      expect(result, kind).toEqual([200, echo]);
+      expect(await app.evaluate((_module, p) => globalThis.cookieFixture.observation(p), workerEcho)).toEqual({
+        reached: true,
+        initiator: fixture.origins.jar,
+        cookie: echo,
+      });
+      expect(await app.evaluate((_module, p) => globalThis.cookieFixture.network(p).marker, workerEcho)).toBeNull();
+    }
   }
 });
 

@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+
 import { createServerApp, logger } from "@repo/server";
 import { describe, expect, it } from "vitest";
 
@@ -21,6 +25,17 @@ function post(body: unknown, headers: Record<string, string> = {}) {
 }
 
 describe("e2eRoutes", () => {
+  it.each([
+    ["axios", "axios.min.js"],
+    ["js-cookie", "js.cookie.min.js"],
+  ])("serves the installed %s browser distribution as JavaScript", async (name, filename) => {
+    const manifest = createRequire(import.meta.url).resolve(name + "/package.json");
+    const response = await createApp().request(origin + E2E_PREFIX + "/scripts/" + name + ".js");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/javascript");
+    expect(await response.text()).toBe(readFileSync(join(dirname(manifest), "dist", filename), "utf8"));
+  });
+
   it("allows only the navigation fixture target through its parent CSP", async () => {
     const app = createApp();
     const page = await app.request(`${origin}/__e2e/navigation/page`);

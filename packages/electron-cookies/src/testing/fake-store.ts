@@ -15,14 +15,20 @@ export function fakeCookieStore() {
   return {
     cookies,
     disk,
-    get: vi.fn<CookieStore["get"]>(async ({ url }) => {
+    get: vi.fn<CookieStore["get"]>(async ({ url, httpOnly }) => {
       const path = new URL(url).pathname;
       return cookies
         .filter(
           (c) =>
+            (httpOnly === undefined || c.httpOnly === httpOnly) &&
             (c.expirationDate === undefined || c.expirationDate * 1000 > Date.now()) &&
             (path === c.path || path.startsWith(c.path.endsWith("/") ? c.path : c.path + "/")),
         )
+        .map((c) => ({
+          ...c,
+          hostOnly: c.domain === undefined,
+          domain: c.domain ? "." + c.domain : new URL(c.url).hostname,
+        }))
         .toSorted((a, b) => b.path.length - a.path.length);
     }),
     set: vi.fn<CookieStore["set"]>(async (details) => {

@@ -40,7 +40,7 @@ export interface AppProtocolOptions {
   /** The window's current title bar mode, full-screen state and preferences, injected per request. */
   desktop: (contentsId?: number) => DesktopRequest;
   /** The server's cookies, which Chromium does not keep for `app://` (HOST-09). */
-  cookies: CookieJar;
+  cookies: Pick<CookieJar, "cookieHeader" | "storeResponseCookies">;
   log: Logger;
   profile: BootProfile;
 }

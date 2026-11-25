@@ -4,9 +4,10 @@ declare const self: DedicatedWorkerGlobalScope | SharedWorkerGlobalScope;
 
 async function echo(port: MessagePort | DedicatedWorkerGlobalScope) {
   try {
-    const target = new URL(self.location.href).searchParams.get("echo");
+    const params = new URL(self.location.href).searchParams;
+    const target = params.get("echo");
     if (!target) throw new Error("Missing echo URL");
-    const response = await fetch(target);
+    const response = await fetch(target, { credentials: params.has("omit") ? "omit" : "same-origin" });
     port.postMessage([response.status, await response.text()]);
   } catch (error) {
     port.postMessage([0, String(error)]);

@@ -1,3 +1,11 @@
+/// <reference types="vite/client" />
+// Vite resolves these browser distributions relative to the desktop project root and embeds their bytes.
+/* oxlint-disable import/no-absolute-path */
+import axiosScript from "/node_modules/axios/dist/axios.min.js?raw";
+import languageDetectorScript from "/node_modules/i18next-browser-languagedetector/dist/umd/i18nextBrowserLanguageDetector.min.js?raw";
+import i18nextScript from "/node_modules/i18next/dist/umd/i18next.min.js?raw";
+import jsCookieScript from "/node_modules/js-cookie/dist/js.cookie.min.js?raw";
+/* oxlint-enable import/no-absolute-path */
 import { Hono } from "hono";
 
 /** Where the end-to-end tests' own endpoints live; nothing in the web app uses this prefix. */
@@ -33,6 +41,17 @@ export function e2eRoutes() {
   // One app per test. Hold both replies until the driver chooses their delivery order.
   const pending = new Map<string, { release: () => void; signal: AbortSignal }>();
   return new Hono()
+    .get("/scripts/axios.js", (c) => c.body(axiosScript, 200, { "Content-Type": "text/javascript" }))
+    .get("/scripts/js-cookie.js", (c) => c.body(jsCookieScript, 200, { "Content-Type": "text/javascript" }))
+    .get("/scripts/i18next.js", (c) => c.body(i18nextScript, 200, { "Content-Type": "text/javascript" }))
+    .get("/scripts/i18next-language-detector.js", (c) =>
+      c.body(languageDetectorScript, 200, { "Content-Type": "text/javascript" }),
+    )
+    .get("/xsrf/token", (c) => {
+      c.header("Set-Cookie", "XSRF-TOKEN=e2e-xsrf; Secure; SameSite=Lax; Path=/");
+      return c.body(null, 204);
+    })
+    .get("/xsrf/echo", (c) => c.json({ header: c.req.header("X-XSRF-TOKEN") ?? null }))
     .post("/reload/request", async (c) => {
       const owner = await c.req.text();
       if (owner !== "old" && owner !== "new") return c.text("Unknown document", 400);

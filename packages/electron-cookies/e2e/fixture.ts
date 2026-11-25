@@ -86,8 +86,17 @@ async function launch(profile: string, upstreamHost: string) {
       page,
       origins,
       storageOrigin,
-      async visit(site: Site) {
-        await page.goto(origins[site] + "/");
+      async visit(site: Site, path = "/") {
+        await page.goto(origins[site] + path);
+      },
+      async peer(site: Site, path = "/") {
+        const url = origins[site] + path;
+        const [peer] = await Promise.all([
+          app.waitForEvent("window"),
+          app.evaluate((_electron, target) => globalThis.cookieFixture.openWindow(target), url),
+        ]);
+        await peer.waitForURL(url);
+        return peer;
       },
       async replyPath(cookies: string[], path = "/account/set", date?: string) {
         const id = await app.evaluate((_electron, reply: Reply) => globalThis.cookieFixture.addReply(reply), {
@@ -145,8 +154,12 @@ export async function requestCookie(page: Page, path = "/echo") {
   }, path);
 }
 
-type Fixture = Awaited<ReturnType<typeof launch>>;
-export const test = base.extend<{ fixture: Fixture; restartAfterKill: () => Promise<Fixture>; upstreamHost: string }>({
+export type Fixture = Awaited<ReturnType<typeof launch>>;
+export const test = base.extend<{
+  fixture: Fixture;
+  restart: (mode: "quit" | "kill") => Promise<Fixture>;
+  upstreamHost: string;
+}>({
   upstreamHost: ["127.0.0.1", { option: true }],
   fixture: async ({ upstreamHost }, provide) => {
     const profile = mkdtempSync(join(tmpdir(), "electron-cookies-"));
@@ -162,12 +175,13 @@ export const test = base.extend<{ fixture: Fixture; restartAfterKill: () => Prom
       rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
     }
   },
-  restartAfterKill: async ({ fixture, upstreamHost }, provide) => {
+  restart: async ({ fixture, upstreamHost }, provide) => {
     const profile = await fixture.app.evaluate(({ app }) => app.getPath("userData"));
     let second: Fixture | undefined;
     try {
-      await provide(async () => {
-        await fixture.kill();
+      await provide(async (mode) => {
+        if (mode === "quit") await fixture.close();
+        else await fixture.kill();
         second = await launch(profile, upstreamHost);
         return second;
       });
@@ -177,3 +191,16 @@ export const test = base.extend<{ fixture: Fixture; restartAfterKill: () => Prom
   },
 });
 export { expect };
+
+/** Run the same page operations in three isolated cookie namespaces in the same Chromium build. */
+export async function compareNative(fixture: Fixture, path: string, observe: (site: Site) => Promise<unknown>) {
+  const results = new Map<Site, unknown>();
+  for (const site of ["localhost", "https", "jar"] as const) {
+    await test.step(site, async () => {
+      await fixture.visit(site, path);
+      results.set(site, await observe(site));
+    });
+  }
+  expect(results.get("jar"), "https ordinary domain").toEqual(results.get("https"));
+  expect(results.get("jar"), "http localhost").toEqual(results.get("localhost"));
+}
