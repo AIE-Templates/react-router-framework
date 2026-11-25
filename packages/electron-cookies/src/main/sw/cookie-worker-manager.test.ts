@@ -538,6 +538,57 @@ describe("registration changes during delivery", () => {
 });
 
 describe("active worker delivery and event lifetime", () => {
+  it.each(["resolution", "rejection"] as const)(
+    "SW-12a: ignores late %s while the next wake is pending",
+    async (outcome) => {
+      const h = setup([seed()]);
+      const first = deferred<WorkerPort<Item>>();
+      const retry = deferred<WorkerPort<Item>>();
+      const stale = workerPort(6);
+      h.startWorkerForScope.mockReturnValueOnce(first.promise).mockReturnValueOnce(retry.promise);
+      h.change("first");
+      h.change("second");
+      await tick(60_000 + 99);
+      expect(h.startWorkerForScope).toHaveBeenCalledOnce();
+      await tick(1);
+      expect(h.startWorkerForScope).toHaveBeenCalledTimes(2);
+
+      if (outcome === "resolution") first.resolve(stale);
+      else first.reject(new Error("late start failure"));
+      await tick(2_100);
+      expect(stale.startTask).not.toHaveBeenCalled();
+      expect(stale.send).not.toHaveBeenCalled();
+      expect(h.worker.send).not.toHaveBeenCalled();
+      expect(h.startWorkerForScope).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(1);
+
+      retry.resolve(h.worker);
+      await tick();
+      h.manager.ack(h.ref());
+      await tick();
+      h.manager.ack(h.ref(1));
+      expect(h.worker.send.mock.calls.map(([event]) => event.changed[0].value)).toEqual(["first", "second"]);
+      expect(h.logger.warn).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      await h.manager.quitAll();
+    },
+  );
+
+  it("SW-12a: quitAll clears the pending wake timer and ignores its worker", async () => {
+    const h = setup([seed()]);
+    const wake = deferred<WorkerPort<Item>>();
+    h.startWorkerForScope.mockReturnValueOnce(wake.promise);
+    h.change();
+    expect(vi.getTimerCount()).toBe(1);
+    await h.manager.quitAll();
+    expect(vi.getTimerCount()).toBe(0);
+    wake.resolve(h.worker);
+    await tick(60_100);
+    expect(h.worker.startTask).not.toHaveBeenCalled();
+    expect(h.startWorkerForScope).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("SW-12a: queued changes share one retry schedule and only the next change wakes the recovered scope", async () => {
     const h = setup([seed()]);
     for (let i = 0; i < 4; i++) h.startWorkerForScope.mockRejectedValueOnce(new Error("busy"));
