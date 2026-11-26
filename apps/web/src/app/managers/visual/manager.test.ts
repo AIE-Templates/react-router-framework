@@ -1,5 +1,5 @@
 import { VISUAL_DEFAULTS, visualRecordKernel as records, type VisualPreferences } from "@repo/shared";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, expectTypeOf, it, vi } from "vitest";
 
 import { visualCookie } from "~/config/visual-cookie";
 
@@ -122,21 +122,21 @@ it.each(["local", "cookie"] as const)(
   (store) => {
     const old = raw(1, { direction: "rtl" });
     const newer = raw(2, { direction: "ltr" });
-    let reads = 0;
     if (store === "local") {
       writeVisualCookie(window, old);
-      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => (++reads === 1 ? null : newer));
+      localStorage.setItem(key, newer);
+      vi.spyOn(Storage.prototype, "getItem").mockReturnValueOnce(null);
     } else {
       localStorage.setItem(key, old);
-      vi.spyOn(document, "cookie", "get").mockImplementation(() =>
-        ++reads === 1 ? "" : visualCookie.name + "=" + encodeURIComponent(newer),
-      );
+      writeVisualCookie(window, newer);
+      vi.spyOn(document, "cookie", "get").mockReturnValueOnce("");
     }
     const write = vi.spyOn(Storage.prototype, "setItem");
     const setCookie = vi.spyOn(document, "cookie", "set");
     const manager = tab();
-    expect(reads).toBe(2);
-    expect(write).not.toHaveBeenCalled();
+    expect(local()).toBe(newer);
+    expect(cookie()).toBe(newer);
+    expect(write).toHaveBeenCalledTimes(store === "local" ? 0 : 1);
     expect(setCookie).toHaveBeenCalledTimes(store === "local" ? 1 : 0);
     expect(manager.getSnapshot().preferences).toEqual({ direction: "ltr" });
     restore();
@@ -343,6 +343,14 @@ it("recovers a disabled cookie on explicit retry", () => {
   expect(cookie()).toBe(local());
   expect(manager.getStatus().storage.cookie).toBe("ok");
 });
+it("applies the connected manager's appearance to the document", () => {
+  expectTypeOf<NonNullable<Parameters<typeof createVisualManager>[0]>>().not.toHaveProperty("applyToDocument");
+  localStorage.setItem(key, raw(1, { direction: "rtl" }));
+  const manager = tab();
+  expect(document.documentElement.dir).toBe("rtl");
+  manager.actions.setDirection("ltr");
+  expect(document.documentElement.dir).toBe("ltr");
+});
 it("resolves system changes while auto and releases both media subscriptions", () => {
   const listeners = new Set<() => void>();
   let matches = false;
@@ -364,6 +372,31 @@ it("resolves system changes while auto and releases both media subscriptions", (
   expect(manager.getSnapshot().resolved).toMatchObject({ colorScheme: "light", reducedMotion: false });
   releases.pop()!();
   expect(listeners.size).toBe(0);
+});
+
+it("loses a Web-only edit on refresh when both writes fail", () => {
+  const saved = raw(1, { direction: "ltr" });
+  localStorage.setItem(key, saved);
+  writeVisualCookie(window, saved);
+  const manager = tab();
+  const localFault = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  const cookieFault = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
+  try {
+    manager.actions.setDirection("rtl");
+    expect(manager.getSnapshot().preferences.direction).toBe("rtl");
+    expect(manager.getStatus().storage).toEqual({ local: "failed", cookie: "failed", native: "absent" });
+    releases.pop()!();
+  } finally {
+    localFault.mockRestore();
+    cookieFault.mockRestore();
+  }
+  const refreshed = tab();
+  expect(refreshed.getSnapshot().preferences.direction).toBe("ltr");
+  refreshed.actions.setDirection("rtl");
+  expect(refreshed.getStatus().storage).toEqual({ local: "ok", cookie: "ok", native: "absent" });
+  expect(tab().getSnapshot().preferences.direction).toBe("rtl");
 });
 
 function nativeSource(
@@ -422,6 +455,30 @@ it("ignores late native push results from superseded operations", async () => {
   } finally {
     first.resolve("ok");
     second.resolve("ok");
+  }
+});
+it("keeps a restored native confirmation when the original failed push replies late", async () => {
+  const reply = pushGate();
+  let mirror: string | null = null;
+  let pending = false;
+  const push = vi.fn<(value: string) => typeof reply.promise>((value) => {
+    mirror = value;
+    pending = true;
+    return reply.promise;
+  });
+  const manager = tab({ nativeSource: nativeSource(() => ({ record: mirror, pending }), push) });
+  try {
+    manager.actions.setDirection("rtl");
+    // Main retries the pending write before the original IPC reply reaches this window.
+    pending = false;
+    restore();
+    expect(push).toHaveBeenCalledExactlyOnceWith(local());
+    expect(manager.getStatus().storage.native).toBe("ok");
+    reply.resolve("failed");
+    await reply.promise;
+    expect(manager.getStatus().storage.native).toBe("ok");
+  } finally {
+    reply.resolve("failed");
   }
 });
 it("E20/E21 repairs from the pending native mirror and confirms it only on explicit retry", async () => {
