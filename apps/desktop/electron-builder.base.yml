@@ -6,8 +6,8 @@
 # electron-builder packages what the Vite builds emitted plus the web client build. Build-time
 # packages live in devDependencies and are already bundled, so no node_modules ship; `dependencies`
 # is reserved for native modules that must stay external (none yet).
-# Placeholders to replace per project: appId, productName, the icon, and in package.json `homepage` and
-# `author` (deb needs both; the author's email is the package maintainer).
+# Placeholders to replace per project: appId, productName, the icon, and in package.json `homepage`,
+# `author` (deb needs both; the author's email is the package maintainer) and `desktopName`.
 appId: dev.repo.desktop
 productName: Desktop
 # Replace the image but keep an icon configured: without one, deb/rpm builds take electron-builder's
@@ -41,3 +41,7 @@ linux:
   target:
     - deb
     - rpm
+  # Electron uses package.json `desktopName` as the window's app_id / WM_CLASS. Keep it
+  # `<appId>.desktop`; syncDesktopName names the installed .desktop entry after it, so desktop
+  # environments associate running windows with the launcher entry.
+  syncDesktopName: true
