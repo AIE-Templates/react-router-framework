@@ -1,6 +1,8 @@
-import { type VisualPrepaintSource, visualScript } from "./bootstrap";
+import { visualScript } from "./bootstrap";
 import { useVisualManager } from "./hooks";
-export function VisualInitScript({ nonce, source }: { nonce?: string; source?: VisualPrepaintSource }) {
+import type { NativeVisualSource } from "./types";
+
+export function VisualInitScript({ nonce, prepaint }: { nonce?: string; prepaint?: NativeVisualSource["prepaint"] }) {
   const manager = useVisualManager();
   return (
     <script
@@ -8,7 +10,7 @@ export function VisualInitScript({ nonce, source }: { nonce?: string; source?: V
       data-visual-init=""
       // SSR and client transforms can format the kernel differently; this script has already run.
       suppressHydrationWarning
-      dangerouslySetInnerHTML={{ __html: visualScript(manager.getServerSnapshot().preferences, source) }}
+      dangerouslySetInnerHTML={{ __html: visualScript(prepaint ?? manager.prepaint) }}
     />
   );
 }

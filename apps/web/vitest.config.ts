@@ -23,6 +23,7 @@ const conditions = ["@repo/source", ...defaultServerConditions];
 // Kept separate from vite.config.ts so the React Router plugin does not run under Vitest.
 export default defineConfig({
   plugins: [visualFallbackPlugin(), serverBuildStub],
+  define: { APP_SSR: "true" },
   // Tests in the node environment (`@vitest-environment node`) run in the SSR environment, which
   // does not inherit the top-level `resolve.conditions`.
   environments: { ssr: { resolve: { conditions } } },

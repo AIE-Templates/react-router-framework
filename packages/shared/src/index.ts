@@ -55,3 +55,11 @@ export {
   desktopBootstrapFromArguments,
   shellFromEnv,
 } from "./desktop-protocol.ts";
+
+export {
+  VISUAL_DEFAULTS,
+  createVisualRecordKernel,
+  visualRecordKernel,
+  type VisualPreferences,
+  type VisualRecord,
+} from "./visual-record.ts";

@@ -1,16 +1,16 @@
 import { Button, Group, Menu, Modal, Popover, Select, Text, Tooltip } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { visualRecordKernel } from "@repo/shared";
 import { useRef, useState } from "react";
 
 import { getInteractiveProps } from "~/managers/environment/dom-props";
-import { visualCodec } from "~/managers/visual/bootstrap";
-import { useVisualManager, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
+import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
 
 import classes from "./appearance-settings.module.css";
 
 /** Imperative modal and notification APIs are served by AppUiProvider. */
-function confirmReset(reset: () => void, trigger: HTMLElement | null, externalColorScheme: boolean) {
+function confirmReset(reset: () => void, trigger: HTMLElement | null) {
   modals.openConfirmModal({
     // The menu item that opened the dialog unmounts, so return focus to the persistent trigger.
     returnFocus: false,
@@ -20,20 +20,17 @@ function confirmReset(reset: () => void, trigger: HTMLElement | null, externalCo
     labels: { confirm: "Reset", cancel: "Cancel" },
     onConfirm: () => {
       reset();
-      notifications.show(
-        externalColorScheme
-          ? { title: "Appearance", message: "Reset requested." }
-          : { title: "Appearance reset", message: "System defaults restored." },
-      );
+      notifications.show({ title: "Appearance reset", message: "System defaults restored." });
     },
   });
 }
 
 export function VisualSettings() {
-  const { preferences } = useVisualState();
-  const manager = useVisualManager();
-  const { actions } = manager;
+  const preferences = visualRecordKernel.effective(useVisualState());
+  const actions = useVisualActions();
   const status = useVisualStatus();
+  const stores = Object.values(status.storage);
+  const saveFailed = stores.includes("failed") || !stores.includes("ok");
   const [opened, setOpened] = useState(false);
   const previewButton = useRef<HTMLButtonElement>(null);
   const popup = getInteractiveProps();
@@ -49,7 +46,9 @@ export function VisualSettings() {
           { value: "light", label: "Light" },
           { value: "dark", label: "Dark" },
         ]}
-        onChange={(value) => actions.setColorSchemePreference(visualCodec.parse({ colorScheme: value }).colorScheme)}
+        onChange={(value) => {
+          if (value === "auto" || value === "light" || value === "dark") actions.setColorSchemePreference(value);
+        }}
         styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Select
@@ -69,9 +68,9 @@ export function VisualSettings() {
           { value: "reduce", label: "Reduced" },
           { value: "full", label: "Full" },
         ]}
-        onChange={(value) =>
-          actions.setReducedMotionPreference(visualCodec.parse({ reducedMotion: value }).reducedMotion)
-        }
+        onChange={(value) => {
+          if (value === "auto" || value === "reduce" || value === "full") actions.setReducedMotionPreference(value);
+        }}
         styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Group gap="xs">
@@ -96,11 +95,7 @@ export function VisualSettings() {
           </Menu.Target>
           <Menu.Dropdown {...popup}>
             <Menu.Item onClick={() => setOpened(true)}>Open dialog</Menu.Item>
-            <Menu.Item
-              onClick={() =>
-                confirmReset(actions.resetVisualPreferences, previewButton.current, manager.hasExternalColorScheme())
-              }
-            >
+            <Menu.Item onClick={() => confirmReset(actions.resetVisualPreferences, previewButton.current)}>
               Reset with confirmation
             </Menu.Item>
           </Menu.Dropdown>
@@ -119,18 +114,14 @@ export function VisualSettings() {
           Close preview
         </Button>
       </Modal>
-      {status.colorSchemeSaveFailed && (
-        <Group gap="xs">
-          <output>Color scheme could not be saved.</output>
-          <Button variant="default" onClick={actions.retryColorScheme}>
-            Retry color scheme
+      {status.initialized && saveFailed && (
+        <>
+          <output>Appearance settings could not be saved.</output>
+          <Button variant="default" onClick={actions.retry}>
+            Retry
           </Button>
-        </Group>
+        </>
       )}
-      {(status.persistence === "failed" ||
-        status.persistence === "unavailable" ||
-        status.persistence === "unsupported-version") &&
-        status.initialized && <output>Appearance is available for this session; settings could not be saved.</output>}
     </fieldset>
   );
 }

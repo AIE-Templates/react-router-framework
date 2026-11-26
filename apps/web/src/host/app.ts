@@ -11,7 +11,6 @@ import type { Hono, MiddlewareHandler } from "hono";
 import type { Logger } from "pino";
 import { createRequestHandler, RouterContextProvider } from "react-router";
 
-import { visualCookie } from "~/config/visual-cookie";
 import { apiContext } from "~/lib/api";
 import { cspNonceContext } from "~/lib/csp";
 import { loggerContext } from "~/lib/logger";
@@ -34,6 +33,8 @@ export { logStreamErrors } from "@repo/server";
 const handleRequest = createRequestHandler(() => import("virtual:react-router/server-build"), import.meta.env.MODE);
 
 export interface HostAppOptions {
+  /** Whether React Router serves SSR responses. Defaults to what the build says; tests set it. */
+  ssr?: boolean;
   /**
    * Where the app runs, fixed for the life of the process: `{ kind: "web" }` (the default) or the
    * desktop shell, whose entry passes it. Only the desktop shell trusts `x-desktop-*` request headers.
@@ -62,18 +63,24 @@ export interface HostAppOptions {
  * is on, and the SPA shell (root route with HydrateFallback) otherwise, which is also how the shell
  * is prebuilt.
  */
-export function createHostApp({ shell = WEB_SHELL, extend, csp = defaultPolicy() }: HostAppOptions = {}): Hono {
+export function createHostApp({ ssr, shell = WEB_SHELL, extend, csp = defaultPolicy() }: HostAppOptions = {}): Hono {
   const app = createServerApp();
   // Loaders and actions call this app's API in-process, under the request's ID and logger.
   const fetch = createInProcessFetch(app);
-  if (visualCookie.enabled)
-    app.use(async (c, next) => {
-      await next();
-      if (c.res.headers.get("content-type")?.includes("text/html") || c.req.path.endsWith(".data"))
-        c.header("Cache-Control", "private, no-store");
-    });
   extend?.(app);
   app.use(shellMiddleware(shell));
+  // Only Router responses reach this point. Loaders can use request credentials even without a visual cookie.
+  // The build is imported lazily, like the request handler: tests stub it, and only need it when they
+  // don't pass the mode themselves.
+  let serverRendered: Promise<boolean> | undefined;
+  app.use(async (c, next) => {
+    await next();
+    serverRendered ??=
+      ssr === undefined ? import("virtual:react-router/server-build").then((build) => build.ssr) : Promise.resolve(ssr);
+    if (!(await serverRendered)) return;
+    if (c.res.headers.get("content-type")?.includes("text/html") || c.req.path.endsWith(".data"))
+      c.header("Cache-Control", "private, no-store");
+  });
   if (csp) app.use(cspMiddleware(csp));
   app.all("*", (c) =>
     handleRequest(

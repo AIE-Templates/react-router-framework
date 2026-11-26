@@ -1,5 +1,4 @@
-import type { ColorSchemeSnapshot, VisualPreferences } from "./visual/types";
+import type { VisualRecord } from "@repo/shared";
 export interface ManagersInitialState {
-  visual?: VisualPreferences;
-  externalColorScheme?: ColorSchemeSnapshot;
+  visual?: VisualRecord;
 }

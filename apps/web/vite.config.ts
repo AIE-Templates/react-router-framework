@@ -2,6 +2,7 @@ import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
 
+import routerConfig from "./react-router.config.ts";
 import { honoServer } from "./src/host/vite-plugin.ts";
 import { mantineCss } from "./vite-plugins/styles.ts";
 import { visualFallbackPlugin } from "./vite-plugins/visual-fallback.ts";
@@ -21,6 +22,7 @@ export default defineConfig({
         },
       }
     : undefined,
+  define: { APP_SSR: JSON.stringify(routerConfig.ssr) },
   environments: {
     ssr: {
       resolve: {
