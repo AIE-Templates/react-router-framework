@@ -2,6 +2,7 @@ import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
 
+import routerConfig from "./react-router.config.ts";
 import { honoServer } from "./src/host/vite-plugin.ts";
 
 export default defineConfig({
@@ -19,6 +20,7 @@ export default defineConfig({
         },
       }
     : undefined,
+  define: { APP_SSR: JSON.stringify(routerConfig.ssr) },
   environments: {
     ssr: {
       resolve: {

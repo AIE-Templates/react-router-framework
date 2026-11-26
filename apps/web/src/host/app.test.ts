@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createAdaptorServer } from "@hono/node-server";
 import { logger } from "@repo/server";
-import { PREFERENCE_COOKIE_PREFIX, type Shell } from "@repo/shared";
+import { cookieName, PREFERENCE_COOKIE_PREFIX, type Shell, visualRecordKernel } from "@repo/shared";
 import type { Hono } from "hono";
 import { pino } from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,8 @@ import { getPreference, preferencesContext } from "~/platform/electron/preferenc
 import { desktopContext, shellContext } from "~/platform/electron/shell";
 
 import { createHostApp, createLoadContext, developmentShell, getHostApp } from "./app";
+import { defaultPolicy } from "./csp";
+import { createWebApp } from "./web-app";
 
 const desktop: Shell = { kind: "desktop", platform: "darwin", osVersion: "26.1" };
 
@@ -24,8 +26,7 @@ const desktopHeaders = {
 
 /**
  * What reaches React Router: `extend` middleware runs before the shell middleware, so after `next()`
- * it sees the request and variables the React Router handler was called with. The handler itself
- * fails in tests (the server build is stubbed), which doesn't matter here.
+ * it sees the request and variables the React Router handler was called with.
  */
 function observe(shell?: Shell) {
   const seen: { headers?: Headers; shell?: Shell; desktop?: unknown; raw?: Request }[] = [];
@@ -39,6 +40,29 @@ function observe(shell?: Shell) {
   });
   return { app, seen };
 }
+
+// Supply the build that the Router Vite plugin normally generates. Both response types
+// go through the real request handler and the host's load context.
+vi.mock("virtual:react-router/server-build", async () => {
+  const { loader } = await import("~/root");
+  return {
+    ssr: true,
+    basename: "/",
+    routeDiscovery: { mode: "initial", manifestPath: "/__manifest" },
+    future: {},
+    assets: {},
+    routes: { root: { id: "root", path: "/settings", module: { loader, default: () => null } } },
+    entry: {
+      module: {
+        default: (_request: Request, status: number) =>
+          new Response("<html></html>", { status, headers: { "Content-Type": "text/html" } }),
+      },
+    },
+    unstable_apiOnly: false,
+    unstable_apiServerOrigin: undefined,
+    unstable_getCriticalCss: undefined,
+  };
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -55,6 +79,32 @@ describe("host app", () => {
   it("is built once, while createHostApp() builds a new one each time", () => {
     expect(getHostApp()).toBe(getHostApp());
     expect(createHostApp()).not.toBe(getHostApp());
+  });
+
+  it.each([false, true])("marks SSR documents and data private with visual cookie present=%s", async (withCookie) => {
+    const app = createHostApp({ csp: defaultPolicy(false) });
+    const record = visualRecordKernel.encode({
+      version: 1,
+      stamp: { t: 1, id: "a" },
+      preferences: { direction: "rtl" },
+    });
+    const headers = withCookie ? { Cookie: cookieName("visual") + "=" + encodeURIComponent(record) } : undefined;
+    for (const method of ["GET", "HEAD"]) {
+      const response = await app.request("/settings", { method, headers });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(response.headers.get("content-type")).toContain("text/html");
+    }
+    const data = await app.request("/settings.data", { headers });
+    expect(data.status).toBe(200);
+    expect(data.headers.get("cache-control")).toBe("private, no-store");
+    expect((await data.text()).includes("rtl")).toBe(withCookie);
+  });
+
+  it("honors a SPA host override on data requests that reach the Router in an SSR build", async () => {
+    const response = await createWebApp({ ssr: false }).request("/settings.data");
+    expect(response.status).toBe(200);
+    expect(response.headers.has("cache-control")).toBe(false);
   });
 
   it("runs middleware from `extend` after the API and before React Router", async () => {

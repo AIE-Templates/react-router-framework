@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import type { DesktopRequest, Shell } from "@repo/shared";
+import { visualRecordKernel, type VisualRecord, type DesktopRequest, type Shell } from "@repo/shared";
 import { render, waitFor } from "@testing-library/react";
 import { createRoutesStub, RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { visualCookie } from "~/config/visual-cookie";
 import { Layout, loader } from "~/root";
 
 import { createLoadContext } from "./app";
@@ -18,9 +19,12 @@ const facts: DesktopRequest = {
   visualTheme: { preference: "dark", revision: 4 },
 };
 
-function loaderArgs(context: RouterContextProvider): Parameters<typeof loader>[0] {
-  const url = new URL("http://localhost/");
-  return { context, request: new Request(url), url, params: {}, pattern: "/" };
+function loaderArgs(
+  context: RouterContextProvider,
+  request = new Request("http://localhost/"),
+): Parameters<typeof loader>[0] {
+  const url = new URL(request.url);
+  return { context, request, url, params: {}, pattern: "/" };
 }
 
 afterEach(() => {
@@ -39,14 +43,18 @@ describe("root loader", () => {
     });
   });
 
-  it("reports the desktop shell and its per-request facts", () => {
-    const context = createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts });
+  it("seeds desktop SSR appearance from the request cookie along with shell and window facts", () => {
+    const visual: VisualRecord = { version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "light" } };
+    const request = new Request("http://localhost/", {
+      headers: { Cookie: visualCookie.name + "=" + encodeURIComponent(visualRecordKernel.encode(visual)) },
+    });
+    const context = createLoadContext(request, { shell: desktop, desktop: facts });
 
-    expect(loader(loaderArgs(context))).toEqual({
+    expect(loader(loaderArgs(context, request))).toEqual({
       shell: desktop,
       desktop: facts,
       nonce: undefined,
-      managersInitialState: { visual: undefined, externalColorScheme: facts.visualTheme },
+      managersInitialState: { visual },
     });
   });
 });
@@ -70,7 +78,6 @@ describe("Layout", () => {
     const html = renderLayout(createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts }));
 
     await waitFor(() => expect(html.dataset.shell).toBe("desktop"));
-    expect(html.dataset.colorScheme).toBe("dark");
     expect(html.dataset.platform).toBe("darwin");
     expect(html.dataset.titlebar).toBe("native");
     expect(html.dataset.fullscreen).toBe("true");

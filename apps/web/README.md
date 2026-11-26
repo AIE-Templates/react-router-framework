@@ -8,6 +8,8 @@ Run `pnpm dev` at the workspace root for HMR at http://localhost:5173. Build wit
 
 SSR is the default. Set SSR=false for an SPA build; application route exports must be compatible. Server loaders/actions/middleware/headers (except the build-time root loader) and non-root HydrateFallback prevent SPA builds. Client data APIs can work in both modes, with a first-render skeleton followed by browser data loading.
 
+SSR builds read the visual cookie for the initial document and keep it in sync with local storage. SPA builds use local storage alone.
+
 ### Development dependency optimization
 
 `future.unstable_optimizeDeps` lets React Router supply Vite with the client entry and route modules as dependency scanning inputs. It reduces late discovery when a route first imports a dependency. It does not change production data loading or revalidation. The flag is experimental in React Router 8.5; recheck it on upgrades. If it causes dependency optimization errors, remove the flag and restart development.
@@ -47,7 +49,7 @@ SSR has one per-document nonce shared by ServerRouter, React streaming, Links, S
 
 Copy .env.example for local configuration. Router config loads it for dev/build; server.ts loads it for start. Existing variables take priority and ${VAR} expansion is supported. Restart dev after edits. Only VITE_* enters browser bundles; native server code uses process.env. HOST/PORT default to 0.0.0.0/3000, LOG_LEVEL to debug in development and warn in production. Enable TRUST_PROXY only behind a trusted TLS-terminating proxy supplying forwarded protocol/host.
 
-Run pnpm build then node apps/web/server.ts, or the configured start script. Deploy build, server.ts, package.json and production dependencies with pnpm deploy. Start Node directly in production to receive signals. The host chooses SSR/SPA from the built server export, not runtime SSR configuration. Static assets are cached/compressed; documents and API are left to the proxy/CDN for compression so streaming HTML is not buffered. Prerendered HTML/data revalidate; SPA deep links use __spa-fallback.html when present, otherwise index.html.
+Run pnpm build then node apps/web/server.ts, or the configured start script. Deploy build, server.ts, package.json and production dependencies with pnpm deploy. Start Node directly in production to receive signals. The host uses the rendering mode compiled from the Router configuration. Static assets are cached/compressed; documents and API are left to the proxy/CDN for compression so streaming HTML is not buffered. Dynamic SSR documents and Router `.data` responses use `Cache-Control: private, no-store` on every request. The static SPA shell and prerendered HTML and data use `no-cache` to revalidate. SPA deep links use __spa-fallback.html when present, otherwise index.html.
 
 createWebApp returns a Hono app with standard Request/Response fetch semantics for embedding. clientDir can locate external static resources. External React, Router, Hono, node adapter and pino versions must match the web package. Heavy SSR shares the host event loop; use a worker/utility process when isolation is needed. Build Docker from the workspace root using apps/web/Dockerfile; the deployed Node process runs as a nonprivileged user.
 
@@ -107,7 +109,7 @@ async function refresh(resourceId: string) {
 
 Here `readResource`, `publish` and `publishError` belong to the consumer. Keep these variables inside its lifecycle/controller, not an SSR module singleton. Call `invalidate()` on owner changes and disposal, before clearing owned caches. Recheck after each later await; a check before an asynchronous database open is not sufficient to guard the eventual write. Persistent writes already started need ordering/transaction handling, and aborting a request does not undo a server mutation. Before navigating after a mutation, also check the initiating resource/path and whether a newer navigation is pending.
 
-The template already uses lifecycle and sequence guards in `src/app/platform/electron/desktop-visual-sync.tsx`, with out-of-order completion tests beside it. Extend existing owners when adding data features; no generic cache or account manager is required. Test old-success/new-success and old-failure/new-success ordering with deferred promises, plus disposal or identity replacement while work is pending.
+The template already uses operation ownership checks in `src/app/managers/visual/manager.ts`, with out-of-order completion tests beside it. Extend existing owners when adding data features; no generic cache or account manager is required. Test old-success/new-success and old-failure/new-success ordering with deferred promises, plus disposal or identity replacement while work is pending.
 
 ### Shared components
 
@@ -119,11 +121,11 @@ Colors use Core semantic variables; viewport media widths come from `~/config/br
 
 `src/host/api.integration.test.ts` exercises the real in-process BFF; the fake-client component test remains beside `src/app/lib/api.ts`. `src/host/root.integration.test.tsx` exercises the actual root loader and CSP nonce handoff. Host tests explicitly select Node or jsdom and import application code through `~/`; generated route argument types are inferred from the exported function. Pure component tests remain colocated.
 
-The fullstack Core host root suite also verifies web document attributes and hydration. The no-loader safety/bootstrap fallback test stays beside `root.tsx`. Visual cookie names come from `cookieName("visual")` in `@repo/shared`; enable the cookie mirror at build time with `VITE_VISUAL_COOKIE=true` or `docker build --build-arg VITE_VISUAL_COOKIE=true -f apps/web/Dockerfile .`.
+The fullstack Core host root suite also verifies web document attributes and hydration. The no-loader safety/bootstrap fallback test stays beside `root.tsx`.
 
 ## Electron adapters
 
-Electron-specific host contexts and preference helpers live in `~/platform/electron/shell` and `~/platform/electron/preferences`; the visual adapter alongside them subscribes to main’s committed color scheme and forwards explicit user commands. Direction and motion still use the renderer preference store. Features may consume the preference API without implementing host branches. Application code never imports `src/host`; host integration can import the adapters through `~/`.
+Electron-specific host contexts and preference helpers live in `~/platform/electron/shell` and `~/platform/electron/preferences`. The visual prepaint adapter reads the fixed window appearance from preload. Features may consume the preference API without implementing host branches. Application code never imports `src/host`; host integration can import the adapters through `~/`.
 
 `src/host/desktop-root.integration.test.tsx` covers Electron root host facts with an explicit jsdom environment and real host context. The pure safety/bootstrap fallback rendering test remains beside `root.tsx`.
 

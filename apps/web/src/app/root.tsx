@@ -1,4 +1,3 @@
-import type { VisualThemeSnapshot } from "@repo/shared";
 import { useContext, useEffect, useState } from "react";
 import {
   isRouteErrorResponse,
@@ -13,7 +12,7 @@ import {
 import { useAppEnvironment } from "~/managers/environment/hooks";
 import { DesktopPreferenceSync } from "~/platform/electron/preferences";
 import { desktopContext, shellContext } from "~/platform/electron/shell";
-import { desktopPrepaintTheme, desktopWindowAppearance } from "~/platform/electron/visual-prepaint";
+import { desktopWindowAppearance } from "~/platform/electron/visual-prepaint";
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
@@ -22,8 +21,7 @@ import { cspNonceContext } from "./lib/csp";
 import { visualServerAttributes } from "./managers/visual/bootstrap";
 import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
-import { readVisualRequestSeed } from "./managers/visual/persistence/cookie.server";
-import { DesktopVisualSync } from "./platform/electron/desktop-visual-sync";
+import { readVisualRequestSeed } from "./managers/visual/request-seed";
 import { AppRoot } from "./providers/app-root";
 import { AppUiProvider } from "./providers/app-ui-provider";
 import { DocumentNonceContext } from "./providers/document-nonce";
@@ -41,19 +39,12 @@ export const links: Route.LinksFunction = () => [];
  * rendering modes; in a SPA build it runs once at build time, so it always reports the web shell.
  */
 export function loader({ request, context }: Route.LoaderArgs) {
-  const shell = context.get(shellContext);
-  const desktop = context.get(desktopContext);
-  const result = {
-    shell,
-    desktop,
+  return {
+    shell: context.get(shellContext),
+    desktop: context.get(desktopContext),
     nonce: context.get(cspNonceContext),
-    managersInitialState: {
-      visual: shell.kind === "web" ? readVisualRequestSeed(request) : undefined,
-      externalColorScheme:
-        shell.kind === "desktop" ? (desktop?.visualTheme ?? { revision: -1, preference: "auto" as const }) : undefined,
-    },
+    managersInitialState: { visual: readVisualRequestSeed(request) },
   };
-  return result;
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -67,27 +58,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
       fullscreen={data?.desktop?.fullscreen}
       managersInitialState={data?.managersInitialState}
     >
-      <DesktopVisualSync>
-        <Document nonce={nonce} desktopTheme={data?.managersInitialState.externalColorScheme}>
-          {data?.desktop && <DesktopPreferenceSync prefs={data.desktop.prefs} />}
-          {children}
-        </Document>
-      </DesktopVisualSync>
+      <Document nonce={nonce}>
+        {data?.desktop && <DesktopPreferenceSync prefs={data.desktop.prefs} />}
+        {children}
+      </Document>
     </AppRoot>
   );
 }
 
-function Document({
-  children,
-  nonce,
-  desktopTheme,
-}: {
-  children: React.ReactNode;
-  nonce?: string;
-  desktopTheme?: VisualThemeSnapshot;
-}) {
+function Document({ children, nonce }: { children: React.ReactNode; nonce?: string }) {
   const environment = useAppEnvironment();
-  const visual = useVisualManager().getServerSnapshot().preferences;
+  const visual = useVisualManager().getServerSnapshot();
   const { shell, fullscreen, windowState } = environment;
   useEffect(() => {
     // Evidence that the client bundle ran and hydration finished, for tests and the desktop smoke.
@@ -97,10 +78,7 @@ function Document({
     <html
       lang="en"
       suppressHydrationWarning
-      {...visualServerAttributes(visual.colorScheme)}
-      dir={visual.direction}
-      data-color-scheme={visual.colorScheme === "auto" ? undefined : visual.colorScheme}
-      data-reduced-motion={visual.reducedMotion === "auto" ? undefined : visual.reducedMotion}
+      {...visualServerAttributes(visual)}
       data-shell={shell.kind}
       data-platform={shell.kind === "desktop" ? shell.platform : undefined}
       data-titlebar={
@@ -118,10 +96,7 @@ function Document({
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style id="window-chrome-safety">{CHROME_SAFETY_CSS}</style>
-        <VisualInitScript
-          nonce={nonce}
-          source={{ read: desktopPrepaintTheme, readFixedAppearance: desktopWindowAppearance, seed: desktopTheme }}
-        />
+        <VisualInitScript nonce={nonce} prepaint={desktopWindowAppearance} />
         <Meta />
         <Links nonce={nonce} />
       </head>

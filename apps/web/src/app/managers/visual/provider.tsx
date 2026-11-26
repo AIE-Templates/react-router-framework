@@ -1,17 +1,24 @@
+import type { Shell, VisualRecord } from "@repo/shared";
 import { useEffect, useState, type PropsWithChildren } from "react";
 
 import { VisualManagerContext } from "./context";
 import { createVisualManager } from "./manager";
-import type { ColorSchemeSnapshot, VisualPreferences } from "./types";
+import type { NativeVisualSource } from "./types";
 export function VisualManagerProvider({
-  initialPreferences,
-  externalColorScheme,
+  initialRecord,
+  initialShell,
+  nativeSource,
   children,
-}: PropsWithChildren<{ initialPreferences?: VisualPreferences; externalColorScheme?: ColorSchemeSnapshot }>) {
+}: PropsWithChildren<{
+  initialRecord?: VisualRecord;
+  initialShell?: Shell["kind"];
+  nativeSource?: NativeVisualSource;
+}>) {
   const [manager] = useState(() =>
     createVisualManager({
-      initialPreferences,
-      externalColorScheme,
+      initialRecord,
+      initialShell,
+      nativeSource,
       host: typeof window === "undefined" ? undefined : window,
     }),
   );

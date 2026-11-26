@@ -10,7 +10,7 @@ Settled design contracts and rationale.
 
 - [Global visual state](visual.spec.md)
 
-- [Optional visual cookie mirror](visual-cookie.spec.md)
+- [SSR visual cookie](visual-cookie.spec.md)
 
 - [Desktop visual synchronization](desktop-visual.spec.md)
 

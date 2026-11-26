@@ -1,11 +1,14 @@
-import { visualCodec } from "~/managers/visual/bootstrap";
+import { visualRecordKernel } from "@repo/shared";
+
 import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
 
 import classes from "./appearance-settings.module.css";
 export function VisualSettings() {
-  const { preferences } = useVisualState();
+  const preferences = visualRecordKernel.effective(useVisualState());
   const actions = useVisualActions();
   const status = useVisualStatus();
+  const stores = Object.values(status.storage);
+  const saveFailed = stores.includes("failed") || !stores.includes("ok");
   return (
     <fieldset className={classes.visualSettings} data-window-interactive="">
       <legend>Appearance</legend>
@@ -14,9 +17,10 @@ export function VisualSettings() {
         <select
           data-native-control=""
           value={preferences.colorScheme}
-          onChange={(event) =>
-            actions.setColorSchemePreference(visualCodec.parse({ colorScheme: event.target.value }).colorScheme)
-          }
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            if (value === "auto" || value === "light" || value === "dark") actions.setColorSchemePreference(value);
+          }}
         >
           <option value="auto">System</option>
           <option value="light">Light</option>
@@ -39,9 +43,10 @@ export function VisualSettings() {
         <select
           data-native-control=""
           value={preferences.reducedMotion}
-          onChange={(event) =>
-            actions.setReducedMotionPreference(visualCodec.parse({ reducedMotion: event.target.value }).reducedMotion)
-          }
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            if (value === "auto" || value === "reduce" || value === "full") actions.setReducedMotionPreference(value);
+          }}
         >
           <option value="auto">System</option>
           <option value="reduce">Reduced</option>
@@ -51,18 +56,14 @@ export function VisualSettings() {
       <button data-native-control="" type="button" onClick={actions.resetVisualPreferences}>
         Reset appearance
       </button>
-      {status.colorSchemeSaveFailed && (
+      {status.initialized && saveFailed && (
         <>
-          <output>Color scheme could not be saved.</output>
-          <button data-native-control="" type="button" onClick={actions.retryColorScheme}>
-            Retry color scheme
+          <output>Appearance settings could not be saved.</output>
+          <button data-native-control="" type="button" onClick={actions.retry}>
+            Retry
           </button>
         </>
       )}
-      {(status.persistence === "failed" ||
-        status.persistence === "unavailable" ||
-        status.persistence === "unsupported-version") &&
-        status.initialized && <output>Appearance is available for this session; settings could not be saved.</output>}
     </fieldset>
   );
 }

@@ -54,6 +54,7 @@ export function createWebApp({
 }: WebAppOptions = {}): Hono {
   return createHostApp({
     shell,
+    ssr,
     csp,
     extend: (app) => {
       extend?.(app);
