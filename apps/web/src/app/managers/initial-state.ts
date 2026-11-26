@@ -1,4 +1,4 @@
-import type { VisualPreferences } from "./visual/types";
+import type { VisualRecord } from "@repo/shared";
 export interface ManagersInitialState {
-  visual?: VisualPreferences;
+  visual?: VisualRecord;
 }

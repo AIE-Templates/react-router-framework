@@ -122,3 +122,5 @@ The fullstack Core host root suite also verifies web document attributes and hyd
 ## Mantine UI
 
 `AppUiProvider` composes the Mantine providers. Extend the adapters in `src/app/managers/visual/mantine` to map application tokens to component themes. The appearance panel in `src/app/components/appearance-settings.tsx` demonstrates Select, Button and portalled surfaces.
+
+Mantine’s `setColorScheme` skips writes when the effective preference already matches. Use the VisualManager action `setColorSchemePreference` when an explicit choice should survive a future change to the product default. See the [Mantine integration spec](../../docs/specs/mantine.spec.md).

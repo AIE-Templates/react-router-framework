@@ -1,15 +1,15 @@
+import type { VisualRecord, Shell } from "@repo/shared";
 import type { PropsWithChildren } from "react";
 
-import { VisualCookieProvider } from "./persistence/cookie-provider";
 import { VisualManagerProvider } from "./provider";
-import type { VisualPreferences } from "./types";
 export function VisualManagerRegistry({
   initialState,
+  initialShell,
   children,
-}: PropsWithChildren<{ initialState?: VisualPreferences }>) {
+}: PropsWithChildren<{ initialState?: VisualRecord; initialShell?: Shell["kind"] }>) {
   return (
-    <VisualManagerProvider initialPreferences={initialState}>
-      <VisualCookieProvider requestSeed={initialState}>{children}</VisualCookieProvider>
+    <VisualManagerProvider initialRecord={initialState} initialShell={initialShell}>
+      {children}
     </VisualManagerProvider>
   );
 }
