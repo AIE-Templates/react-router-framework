@@ -16,7 +16,7 @@ Application and browser code imports only server types through `@repo/server/typ
 
 CSRF protects browser API mutations (`Origin`, JSON content type, and explicit `ALLOWED_ORIGINS` for credentialed cross-origin clients). Because in-process calls bypass API CSRF, mutations must live in Router actions (which enforce Router origin checks), never in loaders reachable from cross-site navigation.
 
-The Fullstack root loader identifies the host as `WEB_SHELL`. Only trust forwarded protocol and host headers when `TRUST_PROXY` is explicitly enabled behind a trusted TLS-terminating proxy. Server redirects stay relative; an embedded host's internal request URL is not a public origin.
+Host identity comes from entry configuration (`createWebApp({ shell })`), never request headers. Only trust forwarded protocol and host headers when `TRUST_PROXY` is explicitly enabled behind a trusted TLS-terminating proxy. Server redirects stay relative; an embedded host's internal request URL is not a public origin.
 
 ## Content Security Policy (SRV-03)
 

@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { visualRecordKernel as records, type VisualMirrorSnapshot, type VisualRecord } from "@repo/shared";
 
-import { nodeFs, renameWithRetry, writeDurably, type AtomicFileFs } from "./atomic-file.ts";
+import { nodeFs, renameWithRetry, withFileRetry, writeDurably, type AtomicFileFs } from "./atomic-file.ts";
 import type { Logger } from "./log.ts";
 
 const fileSystem = { ...nodeFs, readFileSync: (file: string) => readFileSync(file, "utf8") };
@@ -23,9 +23,12 @@ export function createVisualMirror(
   const temp = file + ".tmp";
   let record: VisualRecord | undefined;
   try {
-    record = records.decode(fs.readFileSync(file)).record;
-  } catch {
-    // First launch or unavailable storage.
+    const stored = withFileRetry(() => fs.readFileSync(file), fs);
+    record = records.decode(stored).record;
+  } catch (err) {
+    if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
+      log.warn({ err }, "visual mirror read failed");
+    }
   }
   let raw = record ? records.encode(record) : null;
   let pending = false;
