@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { DesktopRequest } from "@repo/shared";
 
 import { expect, quit, test, waitForApp } from "./desktop.ts";
 
@@ -65,11 +66,13 @@ test("invalid preferences are rejected and change nothing", async ({ desktop: { 
 
 test("a preference survives quitting and relaunching on the same user data", async ({ launchApp }) => {
   const first = await launchApp();
+  expect(await first.page.evaluate(() => window.desktop!.readVisual())).toEqual({ record: null, pending: false });
   expect(await setPref(first.page, KEY, VALUE)).toEqual({ status: "applied" });
   // Quit right after writing: the store writes prefs.json before answering.
   await quit(first);
   const second = await launchApp();
   expect(await rendered(second.page)).toEqual({ document: true, fetched: true });
+  expect(await second.page.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: null, pending: false });
 });
 
 test("desktop writes enforce the application-prefixed cookie budget", async ({ desktop: { page } }) => {
@@ -113,20 +116,36 @@ test("a burst of preference changes reaches the peer's loaders with the final va
   const peer = await opened;
   await waitForApp(peer);
   let requests = 0;
+  const failures: string[] = [];
   peer.on("request", (request) => {
     if (new URL(request.url()).pathname.endsWith(".data")) requests++;
   });
+  // The Router aborts a revalidation that a newer one supersedes; any other failure is a real error.
+  peer.on("requestfailed", (request) => {
+    const error = request.failure()!.errorText;
+    if (new URL(request.url()).pathname.endsWith(".data") && error !== "net::ERR_ABORTED") failures.push(error);
+  });
   const final = "final-peer-value";
-  const result = peer.waitForResponse(
-    async (response) =>
-      new URL(response.url()).pathname.endsWith(".data") && response.ok() && (await response.text()).includes(final),
-  );
   await page.evaluate(async (last) => {
     for (let i = 0; i < 60; i++) {
       const update = await window.desktop!.setPref("burst", i === 59 ? last : i);
       if (update.status !== "applied") throw new Error("Preference rejected");
     }
   }, final);
-  await result;
+  // Read the data the peer's hydrated Router actually committed. CDP can lose an earlier
+  // no-store response body even after the Router consumed it.
+  await expect
+    .poll(() =>
+      peer.evaluate(() => {
+        const router: { state: { loaderData: { root: { desktop: DesktopRequest } } } } = Reflect.get(
+          window,
+          "__reactRouterDataRouter",
+        );
+        return router.state.loaderData.root.desktop.prefs.burst;
+      }),
+    )
+    .toBe(final);
+  expect(failures).toEqual([]);
+  expect(requests).toBeGreaterThan(0);
   expect(requests).toBeLessThan(60);
 });
