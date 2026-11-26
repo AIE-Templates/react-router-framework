@@ -2,13 +2,23 @@
 
 The UI branch pins @mantine/core, @mantine/hooks, @mantine/modals, @mantine/notifications and
 @mantine/form to 9.7.4. Core remains usable without any of them.
-AppUiProvider mounts VisualMantineProvider inside body. The provider consumes the existing
-VisualManager and uses a stable custom color scheme adapter; equal-value subscription feedback
-never writes storage again. Each subscription reconciles the current preference immediately,
-including changes made before subscription or while effects were disconnected. Clearing the Mantine preference resets only the color scheme.
+`AppUiProvider` mounts `VisualMantineProvider` inside the body. During SSR and the first hydration
+render, the color scheme adapter reads the effective preference from the VisualManager server snapshot
+seeded by the request cookie. Each subscription immediately delivers the effective client preference
+and follows subsequent changes. This also picks up changes made before subscription or while effects
+were disconnected. Mantine takes its `defaultColorScheme` from `VISUAL_DEFAULTS.colorScheme`.
+After hydration, a fixed window appearance from VisualManager takes precedence through `forceColorScheme`.
+The window override leaves the shared preference record intact.
+
+The effective preference combines the sparse record with the product defaults and can be `auto`.
+Mantine's `setColorScheme` writes only when its argument differs from that preference, so mounting
+with defaults and receiving subscription updates leave storage untouched. To record an explicit user
+choice equal to the default, call `visual.actions.setColorSchemePreference(value)`.
+Mantine's `clearColorScheme` removes only the color scheme field and restores the product default.
 
 Core CSS reads data-color-scheme. The UI integration's data-only configuration adds
-data-mantine-color-scheme to the same prepaint script and runtime mapping. There is no second
+data-mantine-color-scheme to the same prepaint script and runtime mapping. Core owns both root
+attributes through hydration so Mantine’s mount effects preserve the prepaint result. There is no second
 ColorSchemeScript. DirectionProvider renders with the hydration-safe visual snapshot so direction-dependent component
 markup matches the server. Its layout-effect bridge adopts the actual client direction before paint
 and subscribes to later changes without restoring a default html direction. Application commands

@@ -1,10 +1,10 @@
 import { Button, Group, Menu, Modal, Popover, Select, Text, Tooltip } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { visualRecordKernel } from "@repo/shared";
 import { useRef, useState } from "react";
 
 import { getInteractiveProps } from "~/managers/environment/dom-props";
-import { visualCodec } from "~/managers/visual/bootstrap";
 import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
 
 import classes from "./appearance-settings.module.css";
@@ -26,9 +26,11 @@ function confirmReset(reset: () => void, trigger: HTMLElement | null) {
 }
 
 export function VisualSettings() {
-  const { preferences } = useVisualState();
+  const preferences = visualRecordKernel.effective(useVisualState());
   const actions = useVisualActions();
   const status = useVisualStatus();
+  const stores = Object.values(status.storage);
+  const saveFailed = stores.includes("failed") || !stores.includes("ok");
   const [opened, setOpened] = useState(false);
   const previewButton = useRef<HTMLButtonElement>(null);
   const popup = getInteractiveProps();
@@ -44,7 +46,9 @@ export function VisualSettings() {
           { value: "light", label: "Light" },
           { value: "dark", label: "Dark" },
         ]}
-        onChange={(value) => actions.setColorSchemePreference(visualCodec.parse({ colorScheme: value }).colorScheme)}
+        onChange={(value) => {
+          if (value === "auto" || value === "light" || value === "dark") actions.setColorSchemePreference(value);
+        }}
         styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Select
@@ -64,9 +68,9 @@ export function VisualSettings() {
           { value: "reduce", label: "Reduced" },
           { value: "full", label: "Full" },
         ]}
-        onChange={(value) =>
-          actions.setReducedMotionPreference(visualCodec.parse({ reducedMotion: value }).reducedMotion)
-        }
+        onChange={(value) => {
+          if (value === "auto" || value === "reduce" || value === "full") actions.setReducedMotionPreference(value);
+        }}
         styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Group gap="xs">
@@ -110,10 +114,14 @@ export function VisualSettings() {
           Close preview
         </Button>
       </Modal>
-      {(status.persistence === "failed" ||
-        status.persistence === "unavailable" ||
-        status.persistence === "unsupported-version") &&
-        status.initialized && <output>Appearance is available for this session; settings could not be saved.</output>}
+      {status.initialized && saveFailed && (
+        <>
+          <output>Appearance settings could not be saved.</output>
+          <Button variant="default" onClick={actions.retry}>
+            Retry
+          </Button>
+        </>
+      )}
     </fieldset>
   );
 }

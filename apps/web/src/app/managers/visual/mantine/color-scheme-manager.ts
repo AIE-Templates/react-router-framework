@@ -1,20 +1,23 @@
 import type { MantineColorSchemeManager } from "@mantine/core";
+import { visualRecordKernel } from "@repo/shared";
 
 import type { VisualManager } from "~/managers/visual/manager";
 /** Mantine can call set from its own subscription; equal values must not write again. */
 export function createMantineColorSchemeManager(visual: VisualManager): MantineColorSchemeManager {
   let release: (() => void) | undefined;
+  const clientScheme = () => visualRecordKernel.effective(visual.getSnapshot()).colorScheme;
   return {
-    get: () => visual.getSnapshot().preferences.colorScheme,
+    // Mantine reads during render, before its subscription takes over from SSR.
+    get: () => (release ? clientScheme() : visualRecordKernel.effective(visual.getServerSnapshot()).colorScheme),
     set: (value) => {
-      if (value !== visual.getSnapshot().preferences.colorScheme) visual.actions.setColorSchemePreference(value);
+      if (value !== clientScheme()) visual.actions.setColorSchemePreference(value);
     },
     clear: () => visual.actions.resetColorSchemePreference(),
     subscribe: (notify) => {
       release?.();
-      let previous = visual.getSnapshot().preferences.colorScheme;
+      let previous = clientScheme();
       release = visual.subscribe(() => {
-        const next = visual.getSnapshot().preferences.colorScheme;
+        const next = clientScheme();
         if (next !== previous) {
           previous = next;
           notify(next);
