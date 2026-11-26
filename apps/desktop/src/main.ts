@@ -36,6 +36,7 @@ import {
   storeCookieKeyFirst,
 } from "./main/cookie-key.ts";
 import { cookieWakeStorage } from "./main/cookie-wake-storage.ts";
+import { openFirstWindow } from "./main/first-window.ts";
 import { createLogger, type Logger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
@@ -422,27 +423,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     });
   }
 
-  const openMainWindow = () => registry.open(APP_ORIGIN + "/", "primary");
-  profile.mark("navigation-start");
-  const first = openMainWindow();
-  const initialLoad = first.loaded ?? Promise.resolve();
-  // After the first window is on its way, so the check never delays it.
-  checkCookieKey(log, cookieKey);
-
   let quitting = false;
-  const reopenMainWindow = () => {
-    if (quitting) return;
-    const { loaded } = openMainWindow();
-    void loaded?.catch((err: unknown) => log.error({ err }, "reopened window failed to load"));
-  };
-  app.on("second-instance", reopenMainWindow);
-  app.on("activate", () => {
-    // Ordinary activation can leave the user's current child window in front.
-    if (!registry.find("primary")) reopenMainWindow();
-  });
-  app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
-  });
   // A window can veto quit while closing. Keep its recovery and shared server alive until all windows agree.
   app.on("will-quit", function finishQuit(event) {
     event.preventDefault();
@@ -456,6 +437,31 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
       app.off("will-quit", finishQuit);
       app.quit();
     });
+  });
+
+  const openMainWindow = () => registry.open(APP_ORIGIN + "/", "primary");
+  const first = await openFirstWindow(appSession.cookies, log, profile, () => {
+    if (quitting) return undefined;
+    profile.mark("navigation-start");
+    return openMainWindow();
+  });
+  if (!first) return;
+  const initialLoad = first.loaded ?? Promise.resolve();
+  // After the first window is on its way, so the check never delays it.
+  checkCookieKey(log, cookieKey);
+
+  const reopenMainWindow = () => {
+    if (quitting) return;
+    const { loaded } = openMainWindow();
+    void loaded?.catch((err: unknown) => log.error({ err }, "reopened window failed to load"));
+  };
+  app.on("second-instance", reopenMainWindow);
+  app.on("activate", () => {
+    // Ordinary activation can leave the user's current child window in front.
+    if (!registry.find("primary")) reopenMainWindow();
+  });
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
   });
 
   // did-fail-load is handled by recovery; startup failure must not bypass the native retry path.
