@@ -20,6 +20,7 @@ export class WakeIndex {
   // On disk these hints cover a crash after native subscribe. In this process we can wait for its outcome.
   readonly #pending = new WeakSet<WakeRecord>();
   #lastWrite: Promise<void> = Promise.resolve();
+  #writesClosed = false;
 
   constructor(storage: WakeStorage) {
     this.#storage = storage;
@@ -41,6 +42,10 @@ export class WakeIndex {
     this.#revisions.set(scope, this.revision(scope) + 1);
   }
 
+  closeWrites(): void {
+    this.#writesClosed = true;
+  }
+
   #publish(scope: string, records: WakeRecord[]): void {
     if (records.length) this.#records.set(scope, records);
     else this.#records.delete(scope);
@@ -52,6 +57,8 @@ export class WakeIndex {
     // Scopes have independent owners but share one file. Build each snapshot at the head
     // of the writer queue so a failed subscribe cannot leak into another scope's write.
     const write = this.#lastWrite.then(async () => {
+      // Quit may have timed out while an earlier scope's write was in flight.
+      if (this.#writesClosed) return;
       const snapshot = new Map(this.#records);
       snapshot.set(scope, records);
       await this.#storage.write([...snapshot.values()].flat());

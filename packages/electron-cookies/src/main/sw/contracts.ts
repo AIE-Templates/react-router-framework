@@ -21,7 +21,10 @@ export interface Scheduler {
 }
 
 export interface WakeLogger {
-  warn(fields: { scope: string; operationId?: string; eventId?: string }, message: string): void;
+  warn(
+    fields: { scope: string; operationId?: string; eventId?: string } | { timeoutMs: number },
+    message: string,
+  ): void;
 }
 
 /** Numeric IDs are worker version IDs. Frames use a document-lifetime string ID. */
@@ -67,6 +70,7 @@ export interface CookieWorkerOptions<Item extends CookieItem> {
   /** Maximum wait for each worker start. Defaults to 60 seconds. */
   wakeTimeoutMs?: number;
   taskTimeoutMs?: number;
+  quitTimeoutMs?: number;
   logger: WakeLogger;
   native: NativePort<Item>;
 }

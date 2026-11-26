@@ -11,6 +11,8 @@ export interface CookieWorkerIpcOptions extends CookieIpcOptions {
   wakeTimeoutMs?: number;
   /** Maximum lifetime of an outstanding cookie event. Defaults to five minutes. */
   taskTimeoutMs?: number;
+  /** Maximum wait for wake-index writes during quit. Defaults to two seconds. */
+  quitTimeoutMs?: number;
 }
 
 function validateOperation(scope: string, input: unknown): SubscriptionOperation {
@@ -42,6 +44,7 @@ export function installCookieWorkerIpc({
   storage,
   wakeTimeoutMs,
   taskTimeoutMs,
+  quitTimeoutMs,
   changes,
   jar: { script },
   ipcMain,
@@ -60,9 +63,11 @@ export function installCookieWorkerIpc({
     storage,
     wakeTimeoutMs,
     taskTimeoutMs,
+    quitTimeoutMs,
     logger: {
-      warn({ scope, ...fields }, message) {
-        const url = new URL(scope);
+      warn(fields, message) {
+        if (!("scope" in fields)) return log.warn(fields, message);
+        const url = new URL(fields.scope);
         log.warn({ ...fields, scope: url.protocol + "//" + url.host + url.pathname }, message);
       },
     },

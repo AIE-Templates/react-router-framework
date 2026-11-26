@@ -18,7 +18,7 @@ export class ScopeOperations {
   readonly #cancelEvents: (scope: string) => void;
   readonly #tails = new Map<string, Promise<void>>();
   readonly #requests = new Map<string, Request>();
-  #closed = false;
+  #quit?: Promise<void>;
 
   constructor(index: WakeIndex, scheduler: Scheduler, logger: WakeLogger, cancelEvents: (scope: string) => void) {
     this.#index = index;
@@ -39,7 +39,7 @@ export class ScopeOperations {
   }
 
   acquire(scope: string, operation: Operation, ownerId: OwnerId): Promise<{ operationId: string }> {
-    if (this.#closed) return Promise.reject(new Error("Cookie worker manager closed"));
+    if (this.#quit) return Promise.reject(new Error("Cookie worker manager closed"));
     const operationId = crypto.randomUUID();
     const grant = deferred<{ operationId: string }>();
     const released = deferred<void>();
@@ -123,7 +123,7 @@ export class ScopeOperations {
 
   missingRegistration(scope: string, revision: number): Promise<void> {
     return this.#enqueue(scope, async () => {
-      if (this.#closed) return;
+      if (this.#quit) return;
       const unchanged = this.#index.revision(scope) === revision;
       this.#index.advance(scope);
       if (unchanged) {
@@ -133,9 +133,20 @@ export class ScopeOperations {
     });
   }
 
-  async quitAll(): Promise<void> {
-    this.#closed = true;
+  quitAll(timeoutMs: number): Promise<void> {
+    if (this.#quit) return this.#quit;
+    const finished = deferred<void>();
+    this.#quit = finished.promise;
     for (const request of this.#requests.values()) request.settle("destroyed");
-    await Promise.all(this.#tails.values());
+    const cancelTimeout = this.#scheduler.after(timeoutMs, () => {
+      this.#index.closeWrites();
+      this.#logger.warn({ timeoutMs }, "Finalizing cookie wake index timed out");
+      finished.resolve();
+    });
+    void Promise.all(this.#tails.values()).then(() => {
+      cancelTimeout();
+      return finished.resolve();
+    });
+    return this.#quit;
   }
 }

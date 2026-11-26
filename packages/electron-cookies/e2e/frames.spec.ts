@@ -84,6 +84,49 @@ test("DC-18/20/21 | inherited srcdoc URL and sandboxed read/write behavior match
   });
 });
 
+test("DC-18/CS-03 | borrowed parent cookie APIs use the child document's creation URL", async ({ fixture }) => {
+  await compareNative(fixture, "/parent/page", async () => {
+    await fixture.set(["theme=blue; Path=/parent", "theme=green; Path=/child"]);
+    const results = [];
+    for (const srcdoc of [true, false]) {
+      const result = await fixture.page.evaluate(async (inherited) => {
+        const frame = document.createElement("iframe");
+        const loaded = new Promise<void>((resolve) => frame.addEventListener("load", () => resolve(), { once: true }));
+        if (inherited) frame.srcdoc = "<body>child</body>";
+        else frame.src = "/child/page";
+        document.body.replaceChildren(frame);
+        await loaded;
+        const child = frame.contentWindow!;
+        const cookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie")!;
+        const proto = CookieStore.prototype;
+        const direct = child.document.cookie;
+        // oxlint-disable-next-line typescript/unbound-method -- Borrow the parent getter with the child receiver.
+        const borrowed = Reflect.apply(cookie.get!, child.document, []);
+        // oxlint-disable-next-line typescript/unbound-method -- Borrow the parent setter with the child receiver.
+        Reflect.apply(cookie.set!, child.document, ["text=written"]);
+        const text = child.document.cookie;
+        const store = child.cookieStore;
+        const theme = await proto.get.call(store, { name: "theme" });
+        await proto.set.call(store, { name: "structured", value: "written", path: "" });
+        const all = await proto.getAll.call(store, { name: "structured" });
+        await proto.delete.call(store, { name: "structured", path: "" });
+        return { direct, borrowed, text, theme, all, deleted: await store.get("structured") };
+      }, srcdoc);
+      const value = srcdoc ? "blue" : "green";
+      expect(result).toMatchObject({
+        direct: "theme=" + value,
+        borrowed: "theme=" + value,
+        theme: { value },
+        all: [{ name: "structured", value: "written", path: srcdoc ? "/parent" : "/child" }],
+        deleted: null,
+      });
+      expect(result.text).toContain("text=written");
+      results.push(result);
+    }
+    return results;
+  });
+});
+
 test("DC-20 | paired CSP sandbox policies govern writes and subresource cookies", async ({ fixture }) => {
   await compareNative(fixture, "/", async (site) => {
     const results = [];

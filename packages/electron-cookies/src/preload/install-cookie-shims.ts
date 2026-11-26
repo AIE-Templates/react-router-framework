@@ -71,25 +71,51 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
   const nonAscii = /[^\u0020-\u007e]/;
   const malformed = "Cookie was malformed and could not be stored, due to problem(s) while parsing.";
 
+  // Only the registered singleton can use its lookup, even if page code copies the hook.
+  const receiverMethodsKey = Symbol.for("@repo/electron-cookies/receiver-methods");
+  function registerReceiver(owner: object, methods: object) {
+    defineProperty(owner, receiverMethodsKey, {
+      value: (receiver: unknown, method: string) =>
+        receiver === owner ? getOwnPropertyDescriptor(methods, method)?.value : undefined,
+    });
+  }
+
+  type Binding = (...args: never[]) => unknown;
+  function invokeBorrowed(receiver: object, method: string, args: unknown[], original: Binding, brand: Binding) {
+    let binding: unknown;
+    try {
+      // Use a native getter before inspecting the receiver, including for Proxy receivers.
+      apply(brand, receiver, []);
+      const lookup = getOwnPropertyDescriptor(receiver, receiverMethodsKey)?.value;
+      if (typeof lookup === "function") binding = apply(lookup, undefined, [receiver, method]);
+    } catch {
+      // Let the original binding report its own receiver error.
+    }
+    return apply(typeof binding === "function" ? binding : original, receiver, args);
+  }
+
   if (windowBridge) {
     const { getCookie, setCookie } = windowBridge;
     const cookie = getOwnPropertyDescriptor(Document.prototype, "cookie")!;
+    const defaultView = getOwnPropertyDescriptor(Document.prototype, "defaultView")!.get!;
     defineProperty(Document.prototype, "cookie", {
       configurable: cookie.configurable,
       enumerable: cookie.enumerable,
       get(this: Document) {
-        if (this !== ownDocument) return apply(cookie.get!, this, []);
+        if (this !== ownDocument) return invokeBorrowed(this, "getCookie", [], cookie.get!, defaultView);
         const reply = getCookie(creationUrl);
         return typeof reply === "string" ? reply : "";
       },
       set(this: Document, value: unknown) {
         if (this !== ownDocument) {
-          apply(cookie.set!, this, [value]);
+          invokeBorrowed(this, "setCookie", [value], cookie.set!, defaultView);
           return;
         }
         setCookie(creationUrl, domString(value));
       },
     });
+    const installed = getOwnPropertyDescriptor(Document.prototype, "cookie")!;
+    registerReceiver(ownDocument, { getCookie: installed.get, setCookie: installed.set });
   }
 
   function withoutFragment(url: URL): string {
@@ -329,6 +355,7 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
       await result("delete", () => set(creationUrl, write));
     },
   };
+  const storeBrand = windowBridge && getOwnPropertyDescriptor(prototype, "onchange")!.get!;
   // Keep the native singleton, constructor, global accessor and Web IDL receiver checks.
   for (const method of ["get", "getAll", "set", "delete"] as const) {
     const native = prototype[method];
@@ -337,12 +364,20 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
       ...getOwnPropertyDescriptor(prototype, method),
       value: new NativeProxy(native, {
         apply(original, receiver, args) {
-          return apply(receiver === store ? invoke : original, receiver, args);
+          if (receiver === store) return apply(invoke, receiver, args);
+          if (storeBrand) return invokeBorrowed(receiver, method, args, original, storeBrand);
+          return apply(original, receiver, args);
         },
       }),
     });
   }
   if (windowBridge) {
+    registerReceiver(store, {
+      get: prototype.get,
+      getAll: prototype.getAll,
+      set: prototype.set,
+      delete: prototype.delete,
+    });
     const onchange = getOwnPropertyDescriptor(prototype, "onchange")!;
     const ownerKey = Symbol.for("@repo/electron-cookies/window-change-listener");
     const addListener = new NativeProxy(add, {

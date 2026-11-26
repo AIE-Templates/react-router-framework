@@ -1,3 +1,4 @@
+import { QUIT_FLUSH_TIMEOUT_MS } from "../../store.ts";
 import type {
   CookieChange,
   CookieItem,
@@ -240,6 +241,6 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
     this.#closed = true;
     for (const scope of this.#lanes.keys()) this.#cancelScope(scope);
     for (const delivery of this.#deliveries.values()) delivery.release("quit");
-    return this.#operations.quitAll();
+    return this.#operations.quitAll(this.#options.quitTimeoutMs ?? QUIT_FLUSH_TIMEOUT_MS);
   }
 }
