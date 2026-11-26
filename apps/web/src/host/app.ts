@@ -71,16 +71,26 @@ export function createHostApp({ ssr, shell = WEB_SHELL, extend, csp = defaultPol
   app.use(shellMiddleware(shell));
   // Only Router responses reach this point. Loaders can use request credentials even without a visual cookie.
   // The build is imported lazily, like the request handler: tests stub it, and only need it when they
-  // don't pass the mode themselves.
+  // don't pass the mode themselves. A failed import is retried on the next request, not kept.
   let serverRendered: Promise<boolean> | undefined;
-  app.use(async (c, next) => {
-    await next();
-    serverRendered ??=
-      ssr === undefined ? import("virtual:react-router/server-build").then((build) => build.ssr) : Promise.resolve(ssr);
-    if (!(await serverRendered)) return;
-    if (c.res.headers.get("content-type")?.includes("text/html") || c.req.path.endsWith(".data"))
-      c.header("Cache-Control", "private, no-store");
-  });
+  const isServerRendered = () =>
+    (serverRendered ??=
+      ssr === undefined
+        ? import("virtual:react-router/server-build").then(
+            (build) => build.ssr,
+            (err: unknown) => {
+              serverRendered = undefined;
+              throw err;
+            },
+          )
+        : Promise.resolve(ssr));
+  if (ssr !== false)
+    app.use(async (c, next) => {
+      await next();
+      if (!(await isServerRendered())) return;
+      if (c.res.headers.get("content-type")?.includes("text/html") || c.req.path.endsWith(".data"))
+        c.header("Cache-Control", "private, no-store");
+    });
   if (csp) app.use(cspMiddleware(csp));
   app.all("*", (c) =>
     handleRequest(
