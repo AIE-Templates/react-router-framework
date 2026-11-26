@@ -27,6 +27,7 @@ export function toAppUrl(url: string, internalOrigin = INTERNAL_ORIGIN): string 
 
 export interface RequestShape {
   method: string;
+  initiatorOrigin?: string;
   /** What the main process knows about the window right now, injected as `x-desktop-*` headers. */
   desktop: DesktopRequest;
   internalOrigin?: string;
@@ -35,10 +36,8 @@ export interface RequestShape {
 /**
  * The headers the server receives for a page's request:
  * - `Origin` and `Referer` are rewritten to the internal origin when present. Chromium does not
- *   send them for pages on a non-http(s) scheme, so on non-GET/HEAD requests an `Origin` of the
- *   internal origin and `Sec-Fetch-Site: same-origin` are synthesized: every request reaching the
- *   protocol handler comes from this app's pages (the window never navigates elsewhere), and Hono's
- *   CSRF check rejects form posts without one.
+ *   always supply an Origin on a custom scheme. For non-GET/HEAD requests from the application
+ *   or with no initiator, supply the missing Origin and Sec-Fetch-Site for the upstream CSRF check.
  * - Any `x-desktop-*` header a page sent is dropped, then the main process's own values are set, so
  *   page scripts cannot forge them.
  * - Any `Cookie` header is dropped: Chromium sends none for `app://`, and the cookies the server gets
@@ -46,14 +45,19 @@ export interface RequestShape {
  */
 export function shapeRequestHeaders(
   headers: Headers,
-  { method, desktop, internalOrigin = INTERNAL_ORIGIN }: RequestShape,
+  { method, initiatorOrigin, desktop, internalOrigin = INTERNAL_ORIGIN }: RequestShape,
 ): Headers {
   const out = new Headers();
   for (const [name, value] of headers) {
     if (isDesktopHeader(name) || name === "host" || name === "cookie") continue;
     out.append(name, name === "origin" || name === "referer" ? toInternal(value, internalOrigin) : value);
   }
-  if (method !== "GET" && method !== "HEAD" && !out.has("origin")) {
+  if (
+    method !== "GET" &&
+    method !== "HEAD" &&
+    !out.has("origin") &&
+    (initiatorOrigin === undefined || initiatorOrigin === APP_ORIGIN)
+  ) {
     out.set("origin", internalOrigin);
     out.set("sec-fetch-site", "same-origin");
   }

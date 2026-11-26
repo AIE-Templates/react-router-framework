@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { publicChange } from "./ipc.ts";
-import { createCookieJar, MAX_SET_COOKIES_PER_RESPONSE } from "./main.ts";
+import { createCookieJar, MAX_SET_COOKIES_PER_RESPONSE, stripCookieMarkers } from "./main.ts";
 import { OMIT_COOKIES_HEADER } from "./shared.ts";
 import {
   type CookieStore,
@@ -22,9 +22,8 @@ function setup(store: CookieStore = fakeStore(), log = logger(), timeoutMs = STO
   const fromPartition = vi.fn<(partition: string) => typeof session>(() => session);
   const installPermissionPolicy = vi.fn<(_session: typeof session) => void>();
   const jar = createCookieJar({
-    scheme: "xxx-app",
     host: "site",
-    origin,
+    scheme: "xxx-app",
     storageOrigin: COOKIE_JAR_ORIGIN,
     upstreamHost: "127.0.0.1",
     store,
@@ -43,6 +42,26 @@ function response(...setCookies: string[]): Headers {
 }
 
 describe("createCookieJar", () => {
+  it("derives the request and script origin from the registered scheme and host", async () => {
+    const { jar } = setup();
+    expect(jar.script.origin).toBe(origin);
+    await jar.storeResponseCookies(response("sid=ok"), req("/", origin));
+    expect(await jar.cookieHeader(req("/", origin))).toBe("sid=ok");
+    expect(await jar.cookieHeader(req("/", "other://site"))).toBeUndefined();
+  });
+
+  it("strips the omit marker upstream while preserving it for both jar decisions", async () => {
+    const { jar } = setup();
+    await jar.storeResponseCookies(response("sid=before"), req());
+    const request = req("/", origin, new Headers({ [OMIT_COOKIES_HEADER]: "1", accept: "text/plain" }));
+    const upstream = new Headers(request.headers);
+    stripCookieMarkers(upstream);
+    expect([...upstream]).toEqual([["accept", "text/plain"]]);
+    expect(await jar.cookieHeader(request)).toBeUndefined();
+    await jar.storeResponseCookies(response("sid=after"), request);
+    expect(await jar.cookieHeader(req())).toBe("sid=before");
+  });
+
   it("stores Set-Cookie host-only under the jar origin and sends it back on matching paths", async () => {
     const store = fakeStore();
     const { jar } = setup(store);
@@ -265,6 +284,17 @@ function gate() {
 }
 
 describe("server cookie writes", () => {
+  it("attempts a rejected HttpOnly write only once", async () => {
+    const store = fakeStore();
+    const { jar } = setup(store);
+    store.set.mockRejectedValueOnce(new Error("store rejected the write"));
+    await jar.storeResponseCookies(response("sid=one; HttpOnly"), req());
+    expect(store.set).toHaveBeenCalledTimes(1);
+    expect(await jar.cookieHeader(req())).toBeUndefined();
+    await jar.storeResponseCookies(response("sid=two; HttpOnly"), req());
+    expect(await jar.cookieHeader(req())).toBe("sid=two");
+  });
+
   it("passes Secure Partitioned writes to the ordinary store and ignores Partitioned without Secure", async () => {
     const store = fakeStore();
     const { jar } = setup(store);

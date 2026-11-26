@@ -1,5 +1,5 @@
 import { OMIT_COOKIES_HEADER } from "../src/shared.ts";
-import { compareNative, expect, requestCookie, test } from "./fixture.ts";
+import { compareNative, expect, type Fixture, requestCookie, type Site, test } from "./fixture.ts";
 
 test("SRV-07 | effective window credentials control request and response cookies", async ({ fixture }) => {
   await fixture.set(["sid=initial; Path=/"]);
@@ -96,4 +96,118 @@ test("SRV-07 | window fetch defaults to same-origin credentials", async ({ fixtu
     expect(result).toEqual(["sid=before", "sid=after"]);
     return result;
   });
+});
+
+async function observeResponseCookies(fixture: Fixture, site: Site, path: string) {
+  const { cookie } = await fixture.app.evaluate((_e, target) => globalThis.cookieFixture.observation(target), path);
+  const stored = (await fixture.stored(site)).some(({ name, value }) => name === "received" && value === "two");
+  return { requestReachedServer: cookie !== undefined, cookie: cookie ?? null, stored };
+}
+
+for (const [kind, route] of [
+  ["manifest", "/manifest.webmanifest"],
+  ["module worker", "/module-worker.js"],
+] as const) {
+  test("SRV-07 | browser-managed credentials for " + kind, async ({ fixture }) => {
+    await compareNative(
+      fixture,
+      "/",
+      async (site) => {
+        await fixture.set(["sent=one; Path=/"]);
+        expect(await requestCookie(fixture.page)).toBe("sent=one");
+        const path = await fixture.replyPath(["received=two; Path=/"], route);
+        let outcome: string;
+        if (kind === "manifest") {
+          const href = await fixture.page.evaluate((target) => {
+            const link = document.createElement("link");
+            link.rel = "manifest";
+            link.href = target;
+            document.head.append(link);
+            return link.href;
+          }, path);
+          // Electron need not request a manifest eagerly. Ask Chromium for this document's manifest.
+          const session = await fixture.page.context().newCDPSession(fixture.page);
+          try {
+            const manifest = await session.send("Page.getAppManifest");
+            outcome =
+              manifest.url === href && manifest.data?.includes("Credential comparison") ? "loaded" : "unavailable";
+          } finally {
+            await session.detach();
+          }
+        } else {
+          outcome = await fixture.page.evaluate(async (url) => {
+            const worker = new Worker(url, { type: "module", credentials: "omit" });
+            try {
+              return await new Promise<string>((resolve) => {
+                worker.addEventListener("message", ({ data }) =>
+                  resolve(data === "ready" ? "loaded" : "unexpected message"),
+                );
+                worker.addEventListener("error", () => resolve("worker error"));
+              });
+            } finally {
+              worker.terminate();
+            }
+          }, path);
+        }
+        return { outcome, ...(await observeResponseCookies(fixture, site, path)) };
+      },
+      (native) => {
+        expect(native).toEqual({ outcome: "loaded", requestReachedServer: true, cookie: "", stored: false });
+        return { outcome: "loaded", requestReachedServer: true, cookie: "sent=one", stored: true };
+      },
+    );
+  });
+}
+
+test("SRV-07 | browser-managed credentials for Cache.add and the Cache.put scheme restriction", async ({ fixture }) => {
+  const scheme = new URL(fixture.origins.jar).protocol.slice(0, -1);
+  await compareNative(
+    fixture,
+    "/",
+    async (site) => {
+      await fixture.set(["sent=one; Path=/"]);
+      expect(await requestCookie(fixture.page)).toBe("sent=one");
+      const path = await fixture.replyPath(["received=two; Path=/"], "/echo");
+      const operations = await fixture.page.evaluate(async (url) => {
+        const cache = await caches.open("credentials");
+        async function errorFrom(method: "add" | "put") {
+          try {
+            if (method === "add") await cache.add(new Request(url, { credentials: "omit" }));
+            else await cache.put(new Request(url), new Response("local response"));
+            return null;
+          } catch (error) {
+            if (!(error instanceof Error)) throw error;
+            return { name: error.name, message: error.message };
+          }
+        }
+        const addError = await errorFrom("add");
+        const putError = await errorFrom("put");
+        const cachedBody = putError ? null : await (await cache.match(url))?.text();
+        return { addError, putError, cachedBody };
+      }, path);
+      return { ...operations, ...(await observeResponseCookies(fixture, site, path)) };
+    },
+    (native) => {
+      expect(native).toEqual({
+        addError: null,
+        putError: null,
+        cachedBody: "local response",
+        requestReachedServer: true,
+        cookie: "",
+        stored: false,
+      });
+      const unsupported = {
+        name: "TypeError",
+        message: expect.stringContaining(`Request scheme '${scheme}' is unsupported`),
+      };
+      return {
+        addError: unsupported,
+        putError: unsupported,
+        cachedBody: null,
+        requestReachedServer: false,
+        cookie: null,
+        stored: false,
+      };
+    },
+  );
 });

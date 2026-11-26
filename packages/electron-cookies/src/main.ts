@@ -41,10 +41,11 @@ export interface CookieJar {
   storeResponseCookies(headers: Headers, request: CookieRequest): Promise<void>;
 }
 
-export interface CookieJarOptions<S extends { cookies: CookieStore } = Session> {
-  scheme: string;
+export type CookieJarOptions<S extends { cookies: CookieStore } = Session> = (
+  | { origin: string; scheme?: string }
+  | { scheme: string; origin?: undefined }
+) & {
   host: string;
-  origin: string;
   storageOrigin: string;
   upstreamHost: string;
   store: CookieStore;
@@ -52,15 +53,21 @@ export interface CookieJarOptions<S extends { cookies: CookieStore } = Session> 
   installPermissionPolicy(session: S): void;
   log: CookieLogger;
   timeoutMs?: number;
-}
+};
 
 export const MAX_SET_COOKIES_PER_RESPONSE = 50;
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** Strip the preload marker from upstream headers. Both jar methods need the original request headers. */
+export function stripCookieMarkers(upstreamHeaders: Headers): void {
+  upstreamHeaders.delete(OMIT_COOKIES_HEADER);
+}
 
 export { installCookieIpc, type CookieIpcOptions, SYNC_STORE_TIMEOUT_MS, SYNC_STORE_PROBE_TIMEOUT_MS } from "./ipc.ts";
 
 export function createCookieJar<S extends { cookies: CookieStore }>(options: CookieJarOptions<S>): CookieJar {
   const { storageOrigin, log, timeoutMs = STORE_TIMEOUT_MS } = options;
+  const origin = options.origin ?? `${options.scheme}://${options.host}`;
   const store = observeStore(options.store);
   const storageHost = new URL(storageOrigin).hostname;
   interface SlowWrites {
@@ -73,7 +80,7 @@ export function createCookieJar<S extends { cookies: CookieStore }>(options: Coo
   function accepts(request: CookieRequest): boolean {
     // Chromium supplies the initiator. Node's URL.origin is "null" for a custom scheme.
     return (
-      (request.initiatorOrigin === undefined || request.initiatorOrigin === options.origin) &&
+      (request.initiatorOrigin === undefined || request.initiatorOrigin === origin) &&
       !request.headers.has(OMIT_COOKIES_HEADER)
     );
   }
@@ -205,7 +212,7 @@ export function createCookieJar<S extends { cookies: CookieStore }>(options: Coo
   }
 
   return {
-    script: createScriptCookies(store, options.origin, options.host, storageOrigin, storageHost),
+    script: createScriptCookies(store, origin, options.host, storageOrigin, storageHost),
     async cookieHeader(request, signal) {
       if (!accepts(request)) return undefined;
       const deadline = storeDeadline(timeoutMs);

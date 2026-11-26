@@ -56,15 +56,30 @@ describe("shapeRequestHeaders", () => {
     expect(headers.get("x-desktop-prefs")).toBe('{"theme":"dark"}');
   });
 
-  it("synthesizes Origin and Sec-Fetch-Site on non-GET requests without one, never on GET", () => {
-    const post = shapeRequestHeaders(new Headers(), { method: "POST", desktop });
+  it.each([undefined, APP_ORIGIN])("supplies missing POST origin headers for initiator %s", (initiatorOrigin) => {
+    const post = shapeRequestHeaders(new Headers(), { method: "POST", initiatorOrigin, desktop });
     expect(post.get("origin")).toBe(INTERNAL_ORIGIN);
     expect(post.get("sec-fetch-site")).toBe("same-origin");
+  });
 
-    const get = shapeRequestHeaders(new Headers(), { method: "GET", desktop });
+  it.each(["GET", "HEAD"])("leaves origin headers absent on %s", (method) => {
+    const get = shapeRequestHeaders(new Headers(), { method, desktop });
     expect(get.has("origin")).toBe(false);
     expect(get.has("sec-fetch-site")).toBe(false);
   });
+
+  it.each(["null", "", "https://site", "app://elsewhere"])(
+    "preserves cross-site metadata for a POST from initiator %s",
+    (initiatorOrigin) => {
+      const headers = shapeRequestHeaders(new Headers({ "sec-fetch-site": "cross-site" }), {
+        method: "POST",
+        initiatorOrigin,
+        desktop,
+      });
+      expect(headers.has("origin")).toBe(false);
+      expect(headers.get("sec-fetch-site")).toBe("cross-site");
+    },
+  );
 
   it("drops a Cookie header a page sent", () => {
     const headers = shapeRequestHeaders(new Headers({ cookie: "forged=1", accept: "*/*" }), { method: "GET", desktop });
