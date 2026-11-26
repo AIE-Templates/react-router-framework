@@ -27,6 +27,21 @@ export default defineConfig({
       files: ["apps/*/src/**"],
       rules: { "import/no-relative-parent-imports": "error" },
     },
+    {
+      files: ["apps/web/src/app/**"],
+      excludeFiles: ["**/*.test.{ts,tsx}", "apps/web/src/app/testing/**"],
+      rules: {
+        "no-restricted-imports": [
+          "error",
+          {
+            name: "@mantine/core",
+            importNames: ["useMantineColorScheme"],
+            message:
+              "Use useVisualState and useVisualActions from ~/managers/visual/hooks for the application color scheme.",
+          },
+        ],
+      },
+    },
   ],
   rules: {
     "unicorn/filename-case": ["error", { case: "kebabCase" }],
