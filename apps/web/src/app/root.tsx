@@ -1,3 +1,4 @@
+import { WEB_SHELL } from "@repo/shared";
 import { useContext, useEffect, useState } from "react";
 import {
   isRouteErrorResponse,
@@ -10,6 +11,7 @@ import {
 } from "react-router";
 
 import { useAppEnvironment } from "~/managers/environment/hooks";
+import { readVisualRequestSeed } from "~/managers/visual/request-seed";
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
@@ -18,7 +20,6 @@ import { cspNonceContext } from "./lib/csp";
 import { visualServerAttributes } from "./managers/visual/bootstrap";
 import { useVisualManager } from "./managers/visual/hooks";
 import { VisualInitScript } from "./managers/visual/init-script";
-import { readVisualRequestSeed } from "./managers/visual/persistence/cookie.server";
 import { AppRoot } from "./providers/app-root";
 import { AppUiProvider } from "./providers/app-ui-provider";
 import { DocumentNonceContext } from "./providers/document-nonce";
@@ -35,11 +36,11 @@ export const links: Route.LinksFunction = () => [];
  * rendering modes; in a SPA build it runs once at build time.
  */
 export function loader({ request, context }: Route.LoaderArgs) {
-  const result = {
+  return {
+    shell: WEB_SHELL,
     nonce: context.get(cspNonceContext),
     managersInitialState: { visual: readVisualRequestSeed(request) },
   };
-  return result;
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -47,7 +48,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData<typeof loader>("root");
   const nonce = useCspNonce(data?.nonce);
   return (
-    <AppRoot managersInitialState={data?.managersInitialState}>
+    <AppRoot shell={data?.shell} managersInitialState={data?.managersInitialState}>
       <Document nonce={nonce}>{children}</Document>
     </AppRoot>
   );
@@ -55,7 +56,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 function Document({ children, nonce }: { children: React.ReactNode; nonce?: string }) {
   const environment = useAppEnvironment();
-  const visual = useVisualManager().getServerSnapshot().preferences;
+  const visual = useVisualManager().getServerSnapshot();
   const { shell, fullscreen, windowState } = environment;
   useEffect(() => {
     // Evidence that the client bundle ran and hydration finished, for tests and smoke checks.
@@ -65,10 +66,7 @@ function Document({ children, nonce }: { children: React.ReactNode; nonce?: stri
     <html
       lang="en"
       suppressHydrationWarning
-      {...visualServerAttributes(visual.colorScheme)}
-      dir={visual.direction}
-      data-color-scheme={visual.colorScheme === "auto" ? undefined : visual.colorScheme}
-      data-reduced-motion={visual.reducedMotion === "auto" ? undefined : visual.reducedMotion}
+      {...visualServerAttributes(visual)}
       data-shell={shell.kind}
       data-platform={shell.kind === "desktop" ? shell.platform : undefined}
       data-titlebar={

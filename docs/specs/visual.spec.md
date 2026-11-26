@@ -1,63 +1,46 @@
 # Global visual state
 
-Core provides `ManagersRegistry` → `VisualManagerRegistry` → `VisualManagerProvider`.
-Registries are stateless composition boundaries. The provider creates one stable, document-scoped
-VisualManager and owns connection cleanup. Context carries the instance; hooks subscribe to immutable
-state/status snapshots and expose stable actions. Server requests never share a mutable instance.
-UI-library persistence and application state must not become competing writers; UI and host
-integrations consume the manager and report their own synchronization outcomes without changing
-preference authority.
+Core provides `ManagersRegistry` → `VisualManagerRegistry` → `VisualManagerProvider`. Each document has one manager. Its provider owns the connection and cleanup. React hooks subscribe to immutable state and status snapshots. Requests have separate server snapshots.
 
-## Preferences and persistence
+## Records and defaults
 
-`VisualPreferences` contains `colorScheme: auto | light | dark`, `direction: ltr | rtl`, and
-`reducedMotion: auto | reduce | full`. Defaults and whole resets are auto/ltr/auto. Resolved state is
-light/dark, ltr/rtl and a motion boolean; it is never persisted. Explicit modes override media queries.
+`@repo/shared` owns `VisualPreferences`, the build-time `VISUAL_DEFAULTS` and `visualRecordKernel`. The template defaults are `colorScheme: "auto"`, `direction: "ltr"` and `reducedMotion: "auto"`. Products can change their defaults. A missing field adopts the new default on upgrade. Explicit selections survive, including a selection equal to a previous default.
 
-`@repo/shared` defines `APP_ID`, `storageKey()` and `cookieName()` in `app-identity.ts`;
-`config/storage.ts` derives the Web keys. Change the shared ID when making a new application. The value is `{ version: 1, preferences }`. Known records are validated per field;
-unknown versions are preserved until an explicit whole reset. Single-field resets preserve other
-preferences. Never clear unrelated storage. Storage failures retain the current session state and
-are reported separately; repeated commands retry persistence. External storage changes reconcile
-without write echoes. Concurrent documents use last successful whole-record write semantics.
-Reconnects reread storage without writing. Once a stored record has been observed, its removal
-restores defaults instead of replaying a request seed. A never-persisted seed and unsaved session
-commands survive effect replay; unavailable storage does not erase the current session. Every
-connection re-resolves system appearance and motion, including after failed or unavailable storage,
-without retrying an unsaved write.
+Every store carries the same canonical JSON payload. For example, choosing only RTL writes a record of this shape:
+
+```json
+{ "version": 1, "stamp": { "t": 123, "id": "abc" }, "preferences": { "direction": "rtl" } }
+```
+
+The codec distinguishes missing, invalid and valid input. Unknown keys, an incompatible version, an invalid stamp or any invalid preference invalidate the whole record. Direction accepts `ltr | rtl`, color scheme accepts `auto | light | dark` and motion accepts `auto | reduce | full`. The wire encoder emits compact JSON in a fixed field order. Readers compare complete records by time, then ID, then canonical preference JSON using UTF-16 code units. A commit advances time to the greater of the current clock and the highest observed time plus one, with a random ID from Web Crypto.
+
+## Storage and convergence
+
+Local storage uses `storageKey("visual-preferences")`. SSR builds also maintain `cookieName("visual")` with a one-year lifetime, path `/`, `SameSite=Lax` and `Secure` on HTTPS. SPA builds omit the cookie. An optional platform source provides a native replica.
+
+- A commit first reads all available replicas and the current in-memory record, then edits the maximum and writes the new record to available stores. Each setter records an explicit choice. A single-field reset deletes that field. A whole reset writes an empty preferences object with a new stamp.
+- On connection, a relevant storage event, `pageshow`, or a transition to visible, the manager reads the replicas again and repairs missing or older records. Web repairs re-read the target immediately before writing. Events convey invalidation, so their payloads cannot overwrite a newer record. Repair preserves the original stamp. Defaults alone cause zero writes.
+- **Intentional behavior change:** manually deleting local storage while a page holds a record lets that page restore the deleted record on reconciliation. Use `resetVisualPreferences()` to propagate a reset.
+- Sequential edits retain earlier fields whenever the next writer can observe the earlier record. Concurrent edits can lose a field because comparison selects one whole record. If the winning record loses its last copy before another page sees it, the remaining record survives. Without local storage, other tabs can observe changes through another shared replica on restore or commit. Independent SPA tabs with only memory cannot synchronize.
+
+## Status and retry
+
+`getStatus()` and `getServerStatus()` expose `initialized` and `storage: { local, cookie, native }`. Each store reports `ok`, `failed`, `unavailable` or `absent`. Only a mode without that store uses `absent`. A local access/read exception means unavailable. A local write exception means failed. Reading the visual cookie back after a write confirms success for the target or a newer record. A missing cookie means unavailable. An invalid or older cookie means failed. Before its first write, a readable SSR cookie store counts as available.
+
+A failed write leaves the new record usable in memory. `retry()` re-reads current sources, repairs failed stores and re-probes unavailable stores without advancing the clock. Page restoration also re-probes. The settings panel waits for initialization and offers retry when a store failed or all persistent stores are unavailable.
 
 ## First paint and hydration
 
-A single `VisualInitScript` in head uses the same self-contained parser as the runtime. It reads local
-storage, resolves system preferences, applies attributes and hands off a document-local bootstrap
-record. Fresh accessible storage takes precedence when a manager is recreated; the bootstrap is only a fallback if storage access fails. It accepts a CSP nonce; its bytes are deterministic for static rendering. UI integrations can
-supply extra color attributes through data-only `config/visual-integration.ts`.
+The root loader reads a valid request cookie for SSR and hydration. The document renders effective server values, omitting automatic color and motion attributes for the CSS media-query fallback. `lang` remains an application concern. The deterministic inline script reads current local storage, the current SSR-mode document cookie and the optional platform bootstrap. It selects once, resolves media queries, applies document attributes and leaves its state on the window. It performs no writes to storage and carries no request seed. The shared record factory, DOM kernel, cookie reader and optional platform reader must remain serializable without module-scope dependencies.
 
-Core uses `data-color-scheme`, standard `dir`, and `data-reduced-motion`. Server-unknown auto attributes
-are omitted, allowing media-query CSS fallback. CSS `color-scheme` tracks the resolved appearance.
-The prepaint bootstrap retains both preference and resolution: a dark DOM cannot distinguish auto
-from explicit dark.
+The constructor adopts that handoff without touching storage or the bridge. React hydrates from the separate server snapshot. The manager connects after render and owns subsequent document updates, including media changes. Route revalidation preserves the document-scoped manager. `preferences` stays sparse. Use `visualRecordKernel.effective(snapshot)` for selected values and `snapshot.resolved` for the actual color scheme, direction and reduced-motion boolean.
 
-The manager's server snapshot remains the SSR seed. Its client snapshot is prepared synchronously,
-without effects, before child UI providers mount. React's external-store hydration path uses the
-server snapshot; adapters read the client snapshot. HTML hydration suppression is element-wide:
-nonvisual host attributes must still be tested independently. Content structure must remain stable.
-The document's visual attribute props retain the initial seed, while the manager owns subsequent
-attribute updates. Route revalidation must not recreate the manager.
+## Platform and UI integration
 
-## Composition and scope
+`VisualManagerProvider` accepts an optional `nativeSource`. Supply a standalone, self-contained `prepaint` function returning the cached wire record and optional fixed window appearance. Its `connect(window)` function discovers the live bridge, whose synchronous `read()` returns `{ record, pending }` and whose asynchronous `push(raw)` returns `ok | failed | unavailable`. An absent bridge is unavailable when the initial shell is desktop or a desktop bridge object exists. Ordinary Web reports absent. A pending mirror reports failed. Automatic repair pushes only a missing or older mirror. Explicit retry can confirm a pending equal record. Superseded push completions cannot change current status.
 
-AppRoot owns state providers outside Document; AppUiProvider is a transparent body slot for optional
-UI libraries. The inline window safety fallback remains outside route content. Layout geometry,
-platform identification and window bridges keep their existing owners. Core contains no UI-library
-or Electron persistence protocol. Reduced motion affects the sample's transitions; explicit full
-permits them even when the OS requests reduced motion. Direction changes layout through logical CSS,
-without reversing the native window's physical reserved geometry.
+A platform-fixed window color scheme affects only resolution. Direction and motion still inherit. Web components can style local regions independently. AppRoot owns providers outside the document. AppUiProvider is the body integration slot. Adapters consume the manager and can register extra document color attributes in `config/visual-integration.ts`.
 
 ## Semantic styles
 
-Core `styles/tokens.css` owns `--app-color-*`, `--app-font-sans`, `--app-radius` and `--app-shadow-surface`. Tailwind theme aliases refer to these values. Explicit appearance follows `data-color-scheme`; only missing attributes use system media-query fallback. `styles/base.css` must not reintroduce starter OS-driven color rules that override explicit preferences. Appearance controls are reusable UI in `components/appearance-settings.tsx`, outside the manager implementation.
-
-## Document appearance
-
-A web document opened with `windowAppearance=light` or `windowAppearance=dark` uses that color scheme from prepaint onward. The override applies only to that document. Other tabs continue to use the shared preference, and preference changes still reach the fixed document.
+Core applies `data-color-scheme`, `dir` and `data-reduced-motion` through a single DOM writer. CSS `color-scheme` tracks appearance. `styles/tokens.css` owns `--app-color-*`, `--app-font-sans`, `--app-radius` and `--app-shadow-surface`. Tailwind aliases use those tokens. Explicit motion and color override system preferences. Logical CSS changes layout direction while preserving physical native control geometry.
