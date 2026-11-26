@@ -132,6 +132,19 @@ describe("serialized main-world cookie installer", () => {
     owner.bridge.getCookie.mockReturnValue("theme=blue");
     const cookie = Object.getOwnPropertyDescriptor(caller.page.Document.prototype, "cookie")!;
     expect(Reflect.apply(cookie.get!, owner.page.document, [])).toBe("theme=blue");
+    expect(() => Reflect.apply(cookie.set!, owner.page.document, [Symbol()])).toThrow(caller.page.TypeError);
+    const error = new owner.page.TypeError("conversion failed");
+    const convert = vi.fn<(hint: string) => never>(() => {
+      throw error;
+    });
+    let thrown: unknown;
+    try {
+      Reflect.apply(cookie.set!, owner.page.document, [{ [Symbol.toPrimitive]: convert }]);
+    } catch (caught) {
+      thrown = caught;
+    }
+    expect(thrown).toBe(error);
+    expect(convert).toHaveBeenCalledExactlyOnceWith("string");
     Reflect.apply(cookie.set!, owner.page.document, ["theme=red"]);
     expect(owner.bridge.getCookie).toHaveBeenCalledExactlyOnceWith(url);
     expect(owner.bridge.setCookie).toHaveBeenCalledExactlyOnceWith(url, "theme=red");
@@ -158,6 +171,61 @@ describe("serialized main-world cookie installer", () => {
       [url, sample],
       [url, { ...sample, value: "", expires: 0 }],
     ]);
+    expect(caller.bridge.getAll).not.toHaveBeenCalled();
+    expect(caller.bridge.set).not.toHaveBeenCalled();
+  });
+
+  it("rejects borrowed CookieStore validation failures in the method realm", async () => {
+    const caller = install();
+    const owner = install();
+    const proto = caller.page.CookieStore.prototype;
+    for (const [method, args] of [
+      ["get", []],
+      ["getAll", [{ url: "/different" }]],
+      ["set", [{ name: "a", value: "b", expires: Symbol() }]],
+      ["delete", [{ name: "a", path: "relative" }]],
+    ] as const) {
+      const pending = Reflect.apply(proto[method], owner.store, args);
+      expect(pending).toBeInstanceOf(caller.page.Promise);
+      await expect(pending).rejects.toBeInstanceOf(caller.page.TypeError);
+    }
+    const conversionError = new owner.page.TypeError("getter failed");
+    const name = vi.fn<() => never>(() => {
+      throw conversionError;
+    });
+    const pending = proto.get.call(owner.store, Object.defineProperty({}, "name", { get: name }));
+    await expect(pending).rejects.toBe(conversionError);
+    expect(name).toHaveBeenCalledOnce();
+    expect(owner.bridge.getAll).not.toHaveBeenCalled();
+    expect(owner.bridge.set).not.toHaveBeenCalled();
+  });
+
+  it("uses receiver promises for borrowed store operations and rejects HttpOnly writes in the receiver realm", async () => {
+    const caller = install();
+    const owner = install();
+    const proto = caller.page.CookieStore.prototype;
+    owner.bridge.set.mockResolvedValueOnce({ ok: false, error: { name: "TypeError", message: malformed } });
+    const denied = Reflect.apply(proto.set, owner.store, ["a", "b"]);
+    expect(denied).toBeInstanceOf(owner.page.Promise);
+    await expect(denied).rejects.toBeInstanceOf(owner.page.TypeError);
+    await expect(denied).rejects.toMatchObject({ message: "Failed to execute 'set' on 'CookieStore': " + malformed });
+    for (const error of [
+      { name: "SecurityError", message: "Access to the CookieStore API is denied in this context." },
+      { name: "TimeoutError", message: "Cookie store timed out" },
+    ]) {
+      owner.bridge.getAll.mockResolvedValueOnce({ ok: false, error });
+      const pending = proto.getAll.call(owner.store);
+      expect(pending).toBeInstanceOf(owner.page.Promise);
+      await expect(pending).rejects.toBeInstanceOf(caller.page.DOMException);
+      await expect(pending).rejects.toMatchObject(error);
+    }
+    owner.bridge.getAll.mockResolvedValue({ ok: true, value: [sample] });
+    const read = proto.get.call(owner.store, { name: "a" });
+    expect(read).toBeInstanceOf(owner.page.Promise);
+    await expect(read).resolves.toEqual(sample);
+    const write = Reflect.apply(proto.set, owner.store, ["a", "b"]);
+    expect(write).toBeInstanceOf(owner.page.Promise);
+    await expect(write).resolves.toBeUndefined();
     expect(caller.bridge.getAll).not.toHaveBeenCalled();
     expect(caller.bridge.set).not.toHaveBeenCalled();
   });

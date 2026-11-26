@@ -1,6 +1,7 @@
 import type { Cookie } from "electron";
 
 import type { JarCookie } from "./parse.ts";
+import type { DocumentCookieSetReply } from "./shared.ts";
 
 export interface CookieLogger {
   debug(data: Record<string, unknown>, message: string): void;
@@ -57,7 +58,9 @@ export function serializeCookies(ordered: Cookie[]): string {
   return ordered.map(({ name, value }) => (name === "" ? value : name + "=" + value)).join("; ");
 }
 
-export type WriteResult = { status: "stored" } | { status: "rejected"; reason: unknown } | { status: "unknown" };
+export type WriteResult =
+  | { status: Exclude<DocumentCookieSetReply, "rejected" | null> }
+  | { status: "rejected"; reason: unknown };
 
 /** Submit synchronously. A timeout bounds the caller's wait, not the underlying store operation. */
 export async function writeCookie(

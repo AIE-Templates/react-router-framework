@@ -1,7 +1,7 @@
 import type { Cookie, Cookies, IpcMain, IpcMainEvent, IpcMainInvokeEvent, WebContents, WebFrameMain } from "electron";
 
 import type { ScriptCookies } from "./script-cookies.ts";
-import { cookieIpcChannels, type CookiePush, type CookieReply } from "./shared.ts";
+import { cookieIpcChannels, type CookiePush, type CookieReply, type DocumentCookieSetReply } from "./shared.ts";
 import { createCookieSnapshots } from "./snapshots.ts";
 import { type CookieLogger, CookieStoreTimeoutError, STORE_TIMEOUT_MS, storeDeadline } from "./store.ts";
 
@@ -49,7 +49,8 @@ export function installCookieIpc({
 
   async function sync(event: IpcMainEvent, url: unknown, op: "get" | "set", text?: unknown) {
     const receivedAt = performance.now();
-    let reply: string | null = op === "get" ? "" : null;
+    let readReply = "";
+    let writeReply: DocumentCookieSetReply = null;
     let deadline: ReturnType<typeof storeDeadline> | undefined;
     let acceptedUrl: string | undefined;
     let probing = false;
@@ -64,13 +65,13 @@ export function installCookieIpc({
       if (op === "get") {
         const value = await script.readText(url, deadline.signal);
         snapshots.record(url, value);
-        reply = value;
+        readReply = value;
       } else if (typeof text === "string") {
         const result = await script.writeText(url, text, deadline.signal);
-        reply = result.status;
+        writeReply = result.status;
       }
     } catch {
-      if (acceptedUrl !== undefined && op === "get") reply = snapshots.fallback(acceptedUrl);
+      if (acceptedUrl !== undefined && op === "get") readReply = snapshots.fallback(acceptedUrl);
     } finally {
       deadline?.clear();
       if (deadline?.signal.aborted) {
@@ -80,7 +81,7 @@ export function installCookieIpc({
           cooldownUntil = performance.now() + COOLDOWN_MS;
         }
       }
-      event.returnValue = reply;
+      event.returnValue = op === "get" ? readReply : writeReply;
       if (deadline?.signal.aborted) log.debug({ operation: op }, "synchronous cookie store call timed out");
     }
   }

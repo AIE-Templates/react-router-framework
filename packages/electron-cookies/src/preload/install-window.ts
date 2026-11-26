@@ -1,6 +1,6 @@
 import type { ContextBridge, IpcRenderer } from "electron";
 
-import { cookieIpcChannels, OMIT_COOKIES_HEADER, type CookiePush } from "../shared.ts";
+import { cookieIpcChannels, OMIT_COOKIES_HEADER, type CookiePush, type DocumentCookieSetReply } from "../shared.ts";
 import { prepareCookieFrame } from "./frame.ts";
 import { installCookieShims } from "./install-cookie-shims.ts";
 import { installSubscriptionShims, type SubscriptionBridge } from "./subscriptions.ts";
@@ -12,7 +12,10 @@ export interface WindowCookiePreloadOptions {
   prefix: string;
   frame: Parameters<typeof prepareCookieFrame>[1];
   isMainFrame: boolean;
-  ipcRenderer: Pick<IpcRenderer, "sendSync" | "invoke" | "on" | "off" | "send">;
+  ipcRenderer: Pick<IpcRenderer, "invoke" | "on" | "off" | "send"> & {
+    sendSync(channel: string, creationUrl: string | null): string;
+    sendSync(channel: string, creationUrl: string | null, text: string): DocumentCookieSetReply;
+  };
   contextBridge: Pick<ContextBridge, "executeInMainWorld">;
 }
 

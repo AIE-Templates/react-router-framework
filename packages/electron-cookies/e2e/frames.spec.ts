@@ -86,7 +86,7 @@ test("DC-18/20/21 | inherited srcdoc URL and sandboxed read/write behavior match
 
 test("DC-18/CS-03 | borrowed parent cookie APIs use the child document's creation URL", async ({ fixture }) => {
   await compareNative(fixture, "/parent/page", async () => {
-    await fixture.set(["theme=blue; Path=/parent", "theme=green; Path=/child"]);
+    await fixture.set(["theme=blue; Path=/parent", "theme=green; Path=/child", "shield=private; HttpOnly; Path=/"]);
     const results = [];
     for (const srcdoc of [true, false]) {
       const result = await fixture.page.evaluate(async (inherited) => {
@@ -106,20 +106,76 @@ test("DC-18/CS-03 | borrowed parent cookie APIs use the child document's creatio
         Reflect.apply(cookie.set!, child.document, ["text=written"]);
         const text = child.document.cookie;
         const store = child.cookieStore;
-        const theme = await proto.get.call(store, { name: "theme" });
+        function errorRealm(error: unknown) {
+          return {
+            parentTypeError: error instanceof TypeError,
+            childTypeError: error instanceof child.window.TypeError,
+            parentDOMException: error instanceof DOMException,
+            childDOMException: error instanceof child.window.DOMException,
+          };
+        }
+        function promiseRealm(pending: Promise<unknown>) {
+          return { parentPromise: pending instanceof Promise, childPromise: pending instanceof child.window.Promise };
+        }
+        let setterError;
+        try {
+          // oxlint-disable-next-line typescript/unbound-method -- Invoke the parent's setter on the child document.
+          Reflect.apply(cookie.set!, child.document, [Symbol()]);
+        } catch (error) {
+          setterError = errorRealm(error);
+        }
+        const conversionError = new DOMException("conversion failed", "SecurityError");
+        async function rejection(pending: Promise<unknown>) {
+          try {
+            await pending;
+            return null;
+          } catch (error) {
+            return { ...errorRealm(error), ...promiseRealm(pending), original: error === conversionError };
+          }
+        }
+        // oxlint-disable-next-line typescript/unbound-method -- Omit the query on the borrowed parent method.
+        const missingQuery = await rejection(Reflect.apply(proto.get, store, []));
+        const httpOnlyWrite = await rejection(proto.set.call(store, { name: "shield", value: "changed" }));
+        const throwingGetter = await rejection(
+          proto.get.call(store, {
+            get name(): string {
+              throw conversionError;
+            },
+          }),
+        );
+        const pendingTheme = proto.get.call(store, { name: "theme" });
+        const readPromise = promiseRealm(pendingTheme);
+        const theme = await pendingTheme;
         await proto.set.call(store, { name: "structured", value: "written", path: "" });
         const all = await proto.getAll.call(store, { name: "structured" });
         await proto.delete.call(store, { name: "structured", path: "" });
-        return { direct, borrowed, text, theme, all, deleted: await store.get("structured") };
+        return {
+          direct,
+          borrowed,
+          text,
+          theme,
+          all,
+          deleted: await store.get("structured"),
+          readPromise,
+          setterError,
+          missingQuery,
+          httpOnlyWrite,
+          throwingGetter,
+        };
       }, srcdoc);
       const value = srcdoc ? "blue" : "green";
       expect(result).toMatchObject({
+        setterError: { parentTypeError: true },
+        missingQuery: { parentTypeError: true, parentPromise: true, childPromise: false },
+        throwingGetter: { parentDOMException: true, parentPromise: true, original: true },
         direct: "theme=" + value,
         borrowed: "theme=" + value,
         theme: { value },
         all: [{ name: "structured", value: "written", path: srcdoc ? "/parent" : "/child" }],
         deleted: null,
       });
+      // compareNative checks which realm owns the backend rejection and the successful read promise.
+      expect(result.httpOnlyWrite).not.toBeNull();
       expect(result.text).toContain("text=written");
       results.push(result);
     }
