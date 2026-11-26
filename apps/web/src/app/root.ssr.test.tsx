@@ -9,8 +9,10 @@ import { expect, it, vi } from "vitest";
 
 import { visualCookie } from "~/config/visual-cookie";
 import { cspNonceContext } from "~/lib/csp";
-import { writeVisualCookie } from "~/managers/visual/cookie";
+import { visualBootstrapConfig } from "~/managers/visual/bootstrap";
+import { readVisualCookie, writeVisualCookie } from "~/managers/visual/cookie";
 import { useVisualState } from "~/managers/visual/hooks";
+import { createVisualManager } from "~/managers/visual/manager";
 
 import { Layout, loader } from "./root";
 
@@ -48,56 +50,27 @@ function rootData(header = "") {
 function tree(data: ReturnType<typeof loader>) {
   return <Stub initialEntries={["/"]} hydrationData={{ loaderData: { root: data } }} />;
 }
-it.each(["", visualCookie.name + "=%", visualCookie.name + "=%7B%7D"])(
-  "G2 renders the product default with a missing or invalid cookie %#",
-  (header) => {
-    const data = rootData(header);
-    expect(data.managersInitialState.visual).toBeUndefined();
-    const html = new DOMParser().parseFromString(renderToString(tree(data)), "text/html");
-    expect(html.documentElement.dataset.colorScheme).toBe("light");
-    expect(html.documentElement.dir).toBe("ltr");
-    expect(html.documentElement.dataset.reducedMotion).toBeUndefined();
-    expect(html.querySelector('meta[name="color-scheme"]')).toBeNull();
-  },
-);
-it("E5 hydrates the request snapshot and preserves the newer prepaint attributes and single head script", async () => {
-  const record: VisualRecord = {
-    version: 1,
-    stamp: { t: 1, id: "a" },
-    preferences: { colorScheme: "dark", reducedMotion: "reduce" },
-  };
-  const data = rootData(
-    "another=1; " + visualCookie.name + "=" + encodeURIComponent(visualRecordKernel.encode(record)),
-  );
-  const app = tree(data);
+async function withDocument(
+  app: ReturnType<typeof tree>,
+  check: (prepaint: () => void, hydrate: () => Promise<void>) => Promise<void>,
+) {
   const html = new DOMParser().parseFromString(renderToString(app), "text/html");
-  expect(html.documentElement.dataset.colorScheme).toBe("dark");
-  expect(html.documentElement.dataset.reducedMotion).toBe("reduce");
-  expect(html.querySelector("main")?.textContent).toBe("dark");
   const original = document.documentElement.cloneNode(true);
   const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
   let root: ReturnType<typeof hydrateRoot> | undefined;
   try {
     document.replaceChild(document.importNode(html.documentElement, true), document.documentElement);
-    const current = visualRecordKernel.encode({
-      ...record,
-      stamp: { t: 2, id: "a" },
-      preferences: { direction: "rtl", colorScheme: "light" },
-    });
-    writeVisualCookie(window, current);
-    runInNewContext(document.querySelector("[data-visual-init]")!.textContent, { window, document });
-    expect(document.documentElement.dataset.colorScheme).toBe("light");
-    expect(document.querySelector("main")?.textContent).toBe("dark");
-    const recover = vi.fn<(error: unknown) => void>();
-    await act(async () => {
-      root = hydrateRoot(document, app, { onRecoverableError: recover });
-    });
-    expect(recover).not.toHaveBeenCalled();
-    expect(document.querySelector("main")?.textContent).toBe("light");
-    expect(document.documentElement.dir).toBe("rtl");
-    expect(document.head.querySelectorAll("[data-visual-init]")).toHaveLength(1);
-    expect(document.head.querySelectorAll('meta[name="viewport"]')).toHaveLength(1);
-    expect(document.head.querySelectorAll("#window-chrome-safety")).toHaveLength(1);
+    await check(
+      () => runInNewContext(document.head.querySelector("[data-visual-init]")!.textContent, { window, document }),
+      async () => {
+        const recover = vi.fn<(error: unknown) => void>();
+        await act(async () => {
+          root = hydrateRoot(document, app, { onRecoverableError: recover });
+        });
+        expect(recover).not.toHaveBeenCalled();
+        expect(document.documentElement.dataset.hydrated).toBe("true");
+      },
+    );
   } finally {
     await act(async () => root?.unmount());
     document.replaceChild(original, document.documentElement);
@@ -106,4 +79,89 @@ it("E5 hydrates the request snapshot and preserves the newer prepaint attributes
     localStorage.clear();
     document.cookie = visualCookie.name + "=; Path=/; Max-Age=0";
   }
+}
+
+const auto = { version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "auto" } } as const;
+it.each([
+  ["missing", null],
+  ["explicit auto", auto],
+  ["malformed encoding", "%"],
+  ["missing envelope", {}],
+  ["wrong version", { ...auto, version: 2 }],
+  ["invalid stamp", { ...auto, stamp: { t: -1, id: "a" } }],
+  ["unknown field", { ...auto, preferences: { direction: "rtl", extra: 1 } }],
+  ["invalid field", { ...auto, preferences: { direction: "rtl", colorScheme: "blue" } }],
+] as const)("renders, prepaints and hydrates a %s request cookie with a concrete default", async (_, value) => {
+  if (value === "%") document.cookie = visualCookie.name + "=%; Path=/";
+  else if (value !== null) writeVisualCookie(window, JSON.stringify(value));
+  const data = rootData(document.cookie);
+  const isAuto = value === auto;
+  expect(data.managersInitialState.visual).toEqual(isAuto ? auto : undefined);
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(prefers-color-scheme: dark)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  try {
+    await withDocument(tree(data), async (prepaint, hydrate) => {
+      const html = document.documentElement;
+      expect(html.dataset.colorScheme).toBe(isAuto ? undefined : "light");
+      expect(html.dir).toBe("ltr");
+      expect(html.dataset.reducedMotion).toBeUndefined();
+      expect(document.querySelector('meta[name="color-scheme"]')).toBeNull();
+      expect(document.querySelector("main")?.textContent).toBe(isAuto ? "auto" : "light");
+      prepaint();
+      expect(html.dataset.colorScheme).toBe(isAuto ? "dark" : "light");
+      expect(window.frameworkVisualBootstrap?.record).toEqual(isAuto ? auto : undefined);
+      await hydrate();
+      expect(html.dataset.colorScheme).toBe(isAuto ? "dark" : "light");
+      expect(document.querySelector("main")?.textContent).toBe(isAuto ? "auto" : "light");
+      expect(localStorage.getItem(visualBootstrapConfig.storageKey)).toBe(
+        isAuto ? visualRecordKernel.encode(auto) : null,
+      );
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
+
+it.each(["E4 stale cookie", "E5 request in flight"])(
+  "%s hydrates the request snapshot and keeps the newer prepaint",
+  async (scenario) => {
+    const record: VisualRecord = {
+      version: 1,
+      stamp: { t: 1, id: "a" },
+      preferences: { colorScheme: "dark", reducedMotion: "reduce" },
+    };
+    const old = visualRecordKernel.encode(record);
+    writeVisualCookie(window, old);
+    // Capture the E5 request before the peer commits. E4's request starts after its cookie is overwritten.
+    const inFlight = scenario === "E5 request in flight" ? rootData(document.cookie) : undefined;
+    const peer = createVisualManager({ host: window });
+    peer.actions.setDirection("rtl");
+    peer.actions.setColorSchemePreference("light");
+    const current = localStorage.getItem(visualBootstrapConfig.storageKey)!;
+    expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(current);
+    if (!inFlight) writeVisualCookie(window, old);
+    const data = inFlight ?? rootData(document.cookie);
+    await withDocument(tree(data), async (prepaint, hydrate) => {
+      const html = document.documentElement;
+      expect(html.dataset.colorScheme).toBe("dark");
+      expect(html.dataset.reducedMotion).toBe("reduce");
+      expect(document.querySelector("main")?.textContent).toBe("dark");
+      prepaint();
+      expect(html.dataset.colorScheme).toBe("light");
+      expect(document.querySelector("main")?.textContent).toBe("dark");
+      expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(inFlight ? current : old);
+      await hydrate();
+      expect(document.querySelector("main")?.textContent).toBe("light");
+      expect(html.dir).toBe("rtl");
+      expect(html.dataset.colorScheme).toBe("light");
+      expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(current);
+      expect(localStorage.getItem(visualBootstrapConfig.storageKey)).toBe(current);
+      expect(document.head.querySelectorAll("[data-visual-init]")).toHaveLength(1);
+      expect(document.head.querySelectorAll('meta[name="viewport"]')).toHaveLength(1);
+      expect(document.head.querySelectorAll("#window-chrome-safety")).toHaveLength(1);
+    });
+  },
+);

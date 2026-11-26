@@ -73,7 +73,11 @@ it("orders by time, code units and canonical sparse JSON, independently of key o
   for (const [i, first] of ordered.entries()) {
     for (const [j, second] of ordered.entries()) {
       expect(kernel.compare(first, second)).toBe(Math.sign(i - j));
-      for (const third of ordered.slice(Math.max(i, j))) expect(kernel.pick([third, first, second])).toEqual(third);
+      for (const [k, third] of ordered.entries()) {
+        const winner = ordered[Math.max(i, j, k)];
+        expect(kernel.pick([first, second, third])).toEqual(winner);
+        expect(kernel.pick([kernel.pick([first, second]), third, first])).toEqual(winner);
+      }
     }
   }
 });

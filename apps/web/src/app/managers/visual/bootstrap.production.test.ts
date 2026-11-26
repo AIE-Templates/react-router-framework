@@ -8,6 +8,7 @@ import { expect, it } from "vitest";
 
 import { visualCookie } from "~/config/visual-cookie";
 
+import { visualCodec } from "./bootstrap";
 import type { VisualBootstrapRecord } from "./types";
 
 it.each([true, false])("runs the minified production prepaint in a fresh realm (SSR=%s)", async (ssr) => {
@@ -28,13 +29,19 @@ it.each([true, false])("runs the minified production prepaint in a fresh realm (
   const chunk = bundle.output.find((item) => item.type === "chunk");
   if (!chunk) throw new Error("Missing production prepaint module");
   const script: string = runInNewContext(chunk.code + "\nVisual.visualScript()");
-  const raw = visualRecordKernel.encode({ version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "dark" } });
+  const local = {
+    version: 1,
+    stamp: { t: 1, id: "a" },
+    preferences: { direction: "rtl", reducedMotion: "reduce" },
+  } as const;
+  const cookie = { version: 1, stamp: { t: 2, id: "a" }, preferences: { colorScheme: "dark" } } as const;
+  const expected = ssr ? cookie : local;
   const attrs: Record<string, string> = {};
   let cookieReads = 0;
   const document = {
     get cookie() {
       cookieReads++;
-      return visualCookie.name + "=" + encodeURIComponent(raw);
+      return visualCookie.name + "=" + encodeURIComponent(visualRecordKernel.encode(cookie));
     },
     documentElement: {
       setAttribute: (key: string, value: string) => {
@@ -44,16 +51,17 @@ it.each([true, false])("runs the minified production prepaint in a fresh realm (
   };
   const window: {
     document: typeof document;
-    localStorage: { getItem: () => null };
+    localStorage: { getItem: () => string };
     frameworkVisualBootstrap?: VisualBootstrapRecord;
-  } = { document, localStorage: { getItem: () => null } };
+  } = { document, localStorage: { getItem: () => visualRecordKernel.encode(local) } };
   runInNewContext(script, { window, document });
-  expect(window.frameworkVisualBootstrap?.record).toEqual(ssr ? visualRecordKernel.decode(raw).record : undefined);
+  expect(window.frameworkVisualBootstrap?.record).toEqual(expected);
+  expect(window.frameworkVisualBootstrap?.state).toEqual(visualCodec.resolve(expected));
   expect(cookieReads).toBe(ssr ? 1 : 0);
   expect(attrs).toEqual({
     "data-color-scheme": ssr ? "dark" : "light",
     "data-mantine-color-scheme": ssr ? "dark" : "light",
-    dir: "ltr",
-    "data-reduced-motion": "full",
+    dir: ssr ? "ltr" : "rtl",
+    "data-reduced-motion": ssr ? "full" : "reduce",
   });
 });
