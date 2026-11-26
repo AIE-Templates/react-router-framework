@@ -5,6 +5,7 @@ import type { ElectronApplication, Page } from "@playwright/test";
 import { cookieName, DESKTOP_VISUAL_IPC, storageKey, visualRecordKernel } from "@repo/shared";
 
 import { expect, quit, targetProcesses, test, waitForApp } from "./desktop.ts";
+import { visualCookieEnabled } from "./visual-mirror.ts";
 
 async function choose(page: Page, label: string, value: string, option: string) {
   const control = page.getByRole("combobox", { name: label, exact: true });
@@ -13,6 +14,18 @@ async function choose(page: Page, label: string, value: string, option: string) 
     await control.click();
     await page.getByRole("option", { name: option, exact: true }).click();
   }
+}
+
+/** Arm the listener before opening. The constructor option survives later chrome and renderer updates. */
+async function nextChildBackground(app: ElectronApplication, opener: Page) {
+  const parent = await app.browserWindow(opener);
+  return parent.evaluateHandle((win: Electron.BrowserWindow) => ({
+    color: new Promise<string | undefined>((resolve) => {
+      win.webContents.once("did-create-window", (_child, { options }) =>
+        resolve(options.backgroundColor?.toLowerCase()),
+      );
+    }),
+  }));
 }
 
 /** A window-specific handler takes precedence over ipcMain. Keep the application handler installed. */
@@ -61,7 +74,11 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     const settings = await open("Settings");
     await choose(settings, "Color scheme", "light", "Light");
     await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("light");
+    const light = await home.evaluate(() => window.desktop!.readVisual().record);
+    const creation = await nextChildBackground(app, home);
     const editor = await open("Open editor");
+    expect(await creation.evaluate((probe) => probe.color)).toBe("#17191d");
+    await creation.dispose();
     expect(
       await editor.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.resolved.colorScheme),
     ).toBe("dark");
@@ -73,9 +90,25 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     await expect(textArea).toHaveAttribute("wrap", "off");
     await expect(root).toHaveAttribute("data-color-scheme", "dark");
     await expect(home.locator("html")).toHaveAttribute("data-color-scheme", "light");
-    for (const value of ["dark", "light"] as const) {
-      await choose(settings, "Color scheme", value, value === "dark" ? "Dark" : "Light");
-      await expect(home.locator("html")).toHaveAttribute("data-color-scheme", value);
+    expect(await editor.evaluate(() => window.desktop!.readVisual().record)).toBe(light);
+    const editorWindow = await app.browserWindow(editor);
+    const ordinaryWindow = await app.browserWindow(home);
+    for (const [value, option] of [
+      ["dark", "Dark"],
+      ["auto", "System"],
+      ["light", "Light"],
+    ] as const) {
+      await choose(settings, "Color scheme", value, option);
+      await expect
+        .poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource))
+        .toBe(value === "auto" ? "system" : value);
+      const dark =
+        value === "auto" ? await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors) : value === "dark";
+      await expect(home.locator("html")).toHaveAttribute("data-color-scheme", dark ? "dark" : "light");
+      await expect
+        .poll(() => ordinaryWindow.evaluate((win) => win.getBackgroundColor().toLowerCase()))
+        .toBe(dark ? "#17191d" : "#ffffff");
+      expect(await editorWindow.evaluate((win) => win.getBackgroundColor().toLowerCase())).toBe("#17191d");
       await expect(root).toHaveAttribute("data-color-scheme", "dark");
     }
     await editor.reload();
@@ -133,7 +166,8 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       const html = new DOMParser().parseFromString(await response.text(), "text/html").documentElement;
       return [html.dataset.colorScheme, html.dir, html.dataset.reducedMotion];
     });
-    expect(ssr).toEqual(["dark", "rtl", "reduce"]);
+    if (await visualCookieEnabled(chat)) expect(ssr).toEqual(["dark", "rtl", "reduce"]);
+    else expect(ssr).toEqual([undefined, "ltr", undefined]);
     await expect(home.locator(".app-shell")).toHaveAttribute("data-header-mode", "standalone");
     await expect(chat.locator(".app-shell")).toHaveAttribute("data-header-mode", "fused");
     await settings.close();
@@ -304,6 +338,19 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
         await waitForApp(page);
         await expect(retry).toBeVisible();
         expect(await page.evaluate(() => window.desktop!.visualSeed)).toEqual(snapshot);
+        if (trigger === "renderer child") {
+          const creation = await nextChildBackground(app, page);
+          const opened = app.waitForEvent("window");
+          await page.evaluate(() => {
+            window.open("/__e2e/navigation/frame", "_blank", "noopener");
+          });
+          const child = await opened;
+          expect(await creation.evaluate((probe) => probe.color)).toBe("#17191d");
+          await creation.dispose();
+          await child.waitForURL("app://app/__e2e/navigation/frame");
+          expect(await child.evaluate(() => window.desktop!.visualSeed)).toEqual(snapshot);
+          await child.close();
+        }
       } finally {
         await rmdir(mirrorFile);
       }
@@ -336,6 +383,41 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     });
   }
 
+  test("a child opened before native acknowledgement corrects its old construction color before paint", async ({
+    desktop: { app, page },
+  }) => {
+    await choose(page, "Color scheme", "light", "Light");
+    await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("light");
+    const old = await page.evaluate(() => window.desktop!.readVisual().record);
+    const held = await holdNativePush(app, page);
+    try {
+      await choose(page, "Color scheme", "dark", "Dark");
+      await held.evaluate((gate) => gate.wait());
+      const edit = await page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences"));
+      expect(visualRecordKernel.decode(edit).record?.preferences.colorScheme).toBe("dark");
+      expect(await page.evaluate(() => window.desktop!.readVisual().record)).toBe(old);
+      const creation = await nextChildBackground(app, page);
+      const opened = app.waitForEvent("window");
+      await page.evaluate(() => {
+        window.open("/?before-ack", "_blank", "noopener");
+      });
+      const child = await opened;
+      expect(await creation.evaluate((probe) => probe.color)).toBe("#ffffff");
+      await creation.dispose();
+      await waitForApp(child);
+      expect(await child.evaluate(() => window.desktop!.visualSeed?.record)).toBe(old);
+      expect(
+        await child.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.resolved.colorScheme),
+      ).toBe("dark");
+      await expect(child.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+      await expect.poll(() => child.evaluate(() => window.desktop!.readVisual().record)).toBe(edit);
+      await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
+    } finally {
+      await held.evaluate((gate) => gate.restore());
+      await held.dispose();
+    }
+  });
+
   test("a reload before the native acknowledgement recovers the Web command", async ({ desktop: { app, page } }) => {
     const fault = await holdNativePush(app, page);
     try {
@@ -361,23 +443,30 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
   test("cold launch repairs the mirror after exit before native delivery", async ({ launchApp, target }) => {
     const first = await launchApp();
     const key = storageKey("visual-preferences");
+    const systemDark = await first.app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
+    const previous = systemDark ? "light" : "dark";
+    await choose(first.page, "Color scheme", previous, systemDark ? "Light" : "Dark");
+    await expect.poll(() => first.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(previous);
+    const old = await first.page.evaluate(() => window.desktop!.readVisual().record);
+    expect(visualRecordKernel.decode(old).record?.preferences.colorScheme).toBe(previous);
     const held = await holdNativePush(first.app, first.page);
     let wire: string | null;
     let killed = false;
     try {
-      await choose(first.page, "Color scheme", "dark", "Dark");
+      await choose(first.page, "Color scheme", "auto", "System");
       await held.evaluate((gate) => gate.wait());
       wire = await first.page.evaluate((name) => localStorage.getItem(name), key);
-      expect(visualRecordKernel.decode(wire).record?.preferences.colorScheme).toBe("dark");
+      expect(visualRecordKernel.decode(wire).record?.preferences.colorScheme).toBe("auto");
       await first.page.evaluate((name) => {
         document.cookie = name + "=; Path=/; Max-Age=0";
       }, cookieName("visual"));
+      expect(await first.page.evaluate(() => document.cookie)).not.toContain(cookieName("visual") + "=");
       await first.app.evaluate(async ({ session }) => {
         const appSession = session.fromPartition("persist:app");
         appSession.flushStorageData();
         await appSession.cookies.flushStore();
       });
-      expect(await first.page.evaluate(() => window.desktop!.readVisual().record)).toBeNull();
+      expect(await first.page.evaluate(() => window.desktop!.readVisual().record)).toBe(old);
       process.kill(first.pid, "SIGKILL");
       killed = true;
       await expect.poll(() => targetProcesses(target), { timeout: 10000 }).toEqual([]);
@@ -388,9 +477,14 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       }
     }
     const next = await launchApp();
-    expect(await next.page.evaluate(() => window.desktop!.visualSeed?.record)).toBeNull();
+    expect(await next.page.evaluate(() => window.desktop!.visualSeed?.record)).toBe(old);
+    const handoff = await next.page.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap"));
+    expect(handoff.record).toEqual(visualRecordKernel.decode(wire).record);
+    // With auto, Chromium may still expose the old native media value before reconciliation.
     await expect.poll(() => next.page.evaluate(() => window.desktop!.readVisual().record)).toBe(wire);
-    await expect(next.page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+    await expect.poll(() => next.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("system");
+    const dark = await next.app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
+    await expect(next.page.locator("html")).toHaveAttribute("data-color-scheme", dark ? "dark" : "light");
   });
 
   for (const scenario of [

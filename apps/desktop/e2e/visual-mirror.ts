@@ -10,3 +10,12 @@ export async function pushVisual(page: Page, preferences: Partial<VisualPreferen
   if (result !== "ok") throw new Error("Visual mirror push returned " + result);
   return raw;
 }
+
+/** Read the hydrated build's rendering mode, including when a packaged app runs under a different shell environment. */
+export async function visualCookieEnabled(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const ssr: unknown = Reflect.get(window, "__reactRouterContext")?.ssr;
+    if (typeof ssr !== "boolean") throw new Error("Missing React Router build mode");
+    return ssr;
+  });
+}
