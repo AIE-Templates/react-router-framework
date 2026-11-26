@@ -145,10 +145,33 @@ test("DC-03 | script Paths match native on the wire for every printable ASCII ch
       const outcomes: string[] = [];
       for (const [i, path] of paths.entries()) {
         document.cookie = "path" + i + "=ok; Path=" + path;
+        // Chromium applies this document's writes in order, even when the path cookie cannot match /echo.
+        const marker = "pathWrite=" + i;
+        document.cookie = marker + "; Path=/";
+        const controller = new AbortController();
+        const timeout = setTimeout(() => {
+          controller.abort(
+            new Error("Timed out waiting for " + marker + " at " + location.origin + "/echo (Path=" + path + ")"),
+          );
+        }, 5000);
+        try {
+          let echoed: string;
+          do {
+            const response = await fetch("/echo", { signal: controller.signal });
+            echoed = await response.text();
+          } while (!echoed.split("; ").includes(marker));
+        } finally {
+          clearTimeout(timeout);
+        }
         // Chromium's URL parser treats HTTP backslashes as separators; use the same request path on every site.
         const target = new URL("https://cookie.test" + path);
         const result = await fetch(location.origin + target.pathname.replace(/\/$/, "") + "/wire" + target.search);
-        outcomes.push(await result.text());
+        outcomes.push(
+          (await result.text())
+            .split("; ")
+            .filter((cookie) => cookie !== marker)
+            .join("; "),
+        );
       }
       return outcomes;
     }),

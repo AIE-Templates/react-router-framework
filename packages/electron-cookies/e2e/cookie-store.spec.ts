@@ -563,19 +563,23 @@ test("DC-01, CS-11 | natural Max-Age expiry removes the wire cookie and reports 
     "/",
     async (site) => {
       await recordChanges(page);
+      // The jar computes Max-Age with the main process clock, which can differ from the renderer clock.
+      const mainBefore = site === "jar" ? await fixture.app.evaluate(() => Date.now()) : undefined;
       const timing = await page.evaluate(() => {
         const before = Date.now();
         document.cookie = "ephemeral=yes; Max-Age=1";
         return { before, text: document.cookie, after: Date.now() };
       });
+      const after = site === "jar" ? await fixture.app.evaluate(() => Date.now()) : timing.after;
+      const before = mainBefore ?? timing.before;
       expect(timing.text).toBe("ephemeral=yes");
       await expect.poll(() => requestCookie(page)).toBe("");
       expect(await page.evaluate(() => document.cookie)).toBe("");
       const events = await finishChanges(page, site === "jar");
       expect(events.flatMap((e) => e.changed.map((c) => c.name))).toEqual(["ephemeral", "fence"]);
       const expires = events.flatMap((e) => e.changed).find((c) => c.name === "ephemeral")?.expires;
-      expect(expires).toBeGreaterThanOrEqual(timing.before + 1000 - 1);
-      expect(expires).toBeLessThanOrEqual(timing.after + 1000 + 1);
+      expect(expires).toBeGreaterThanOrEqual(before + 1000 - 1);
+      expect(expires).toBeLessThanOrEqual(after + 1000 + 1);
       // Relative expiration timestamps depend on when each site's write started.
       return events.map((e) => ({
         ...e,
