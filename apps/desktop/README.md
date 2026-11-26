@@ -127,7 +127,7 @@ The layout fixture uses named `data-demo-shell` / `data-demo-header` controls an
 
 ### Visual mirror and native appearance
 
-The renderer reconciles complete stamped records from localStorage, the SSR cookie and the native mirror. At document start preload takes one synchronous sample. Live reads return the current record and its pending flag. Every push confirms whether a record reached durable storage. Main reads userData/visual.json before building windows and uses the effective color scheme for nativeTheme, window backgrounds and overlay defaults. A failed write still updates memory. Subsequent pushes, either window creation path and before-quit retry it. See the [desktop visual specification](../../docs/specs/desktop-visual.spec.md).
+The renderer reconciles complete stamped records from localStorage, the SSR cookie and the native mirror. At document start preload takes one synchronous sample. Live reads return the current record and its pending flag. A push of the current record returns `ok` once durable or `failed` if the write is still pending. An older valid record also triggers a retry but returns `ok` even if the newer mirror remains pending. Invalid or denied pushes return `failed`. An IPC exception yields `unavailable`. Main reads userData/visual.json before building windows and uses the effective color scheme for nativeTheme, window backgrounds and overlay defaults. A failed write still updates memory. Subsequent pushes, either window creation path and before-quit retry it. See the [desktop visual specification](../../docs/specs/desktop-visual.spec.md).
 
 ### Fixed window appearance on macOS
 

@@ -7,8 +7,6 @@ export interface ChromePolicy {
   fallbackReason?: string;
   appearance: OverlayAppearance;
   backgroundColor: string;
-  followsSystemTheme: boolean;
-  themePreference: VisualPreferences["colorScheme"];
 }
 
 export function chromeAppearance(dark: boolean): OverlayAppearance & { color: string } {
@@ -32,10 +30,8 @@ export function resolveChromePolicy({
   const base = {
     platform,
     requestedMode,
-    themePreference,
     appearance,
     backgroundColor: appearance.color,
-    followsSystemTheme: themePreference !== "light" && themePreference !== "dark",
   };
   if (requestedMode === "system-decorated") return { ...base, resolvedMode: "system-decorated" };
   if (requestedMode === "custom-controls")

@@ -9,17 +9,17 @@ import { nodeFs } from "./atomic-file.ts";
 import { createVisualMirror } from "./visual-mirror.ts";
 
 const directories: string[] = [];
-const log = { warn: vi.fn<() => void>() };
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "visual-mirror-"));
   directories.push(dir);
+  const log = { warn: vi.fn<() => void>() };
   const fs = {
     ...nodeFs,
-    readFileSync: (path: string) => readFileSync(path, "utf8"),
+    readFileSync: vi.fn<(path: string) => string>((path) => readFileSync(path, "utf8")),
     renameSync: vi.fn<typeof nodeFs.renameSync>((from, to) => nodeFs.renameSync(from, to)),
     sleep: vi.fn<(ms: number) => void>(),
   };
-  return { file: join(dir, "visual.json"), fs, start: () => createVisualMirror(dir, { log, fs }) };
+  return { file: join(dir, "visual.json"), fs, log, start: () => createVisualMirror(dir, { log, fs }) };
 }
 afterEach(() => {
   for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -30,11 +30,12 @@ const raw = (t: number, preferences: Partial<VisualPreferences>) =>
 const older = raw(1, { direction: "rtl" });
 const newer = raw(2, { colorScheme: "dark", reducedMotion: "reduce" });
 it("starts without writing and replaces a corrupt mirror with a complete canonical record", () => {
-  const { file, start } = fixture();
+  const { file, log, start } = fixture();
   expect(start().read()).toEqual({ record: null, pending: false });
   expect(existsSync(file)).toBe(false);
   writeFileSync(file, "invalid");
   const mirror = start();
+  expect(log.warn).not.toHaveBeenCalled();
   expect(mirror.colorScheme()).toBe(VISUAL_DEFAULTS.colorScheme);
   expect(mirror.push(older)).toBe("ok");
   expect(mirror.push(JSON.stringify(JSON.parse(newer), null, 2))).toBe("ok");
@@ -42,6 +43,26 @@ it("starts without writing and replaces a corrupt mirror with a complete canonic
   expect(mirror.push(older)).toBe("ok");
   expect(readFileSync(file, "utf8")).toBe(newer);
   expect(start().read()).toEqual({ record: newer, pending: false });
+});
+it("recovers a busy mirror at startup and preserves the newer file on an older push", () => {
+  const { file, fs, start } = fixture();
+  writeFileSync(file, newer);
+  fs.readFileSync.mockImplementationOnce(() => {
+    throw Object.assign(new Error("file busy"), { code: "EBUSY" });
+  });
+  const mirror = start();
+  expect(fs.sleep).toHaveBeenCalledOnce();
+  expect(mirror.read()).toEqual({ record: newer, pending: false });
+  expect(mirror.push(older)).toBe("ok");
+  expect(readFileSync(file, "utf8")).toBe(newer);
+});
+it("warns when the mirror cannot be read at startup", () => {
+  const { fs, log, start } = fixture();
+  fs.readFileSync.mockImplementationOnce(() => {
+    throw Object.assign(new Error("read error"), { code: "EIO" });
+  });
+  expect(start().read()).toEqual({ record: null, pending: false });
+  expect(log.warn).toHaveBeenCalledOnce();
 });
 it("G10 derives missing choices from product defaults on construction and reset", () => {
   const kernel = createVisualRecordKernel({ ...VISUAL_DEFAULTS, colorScheme: "light" });

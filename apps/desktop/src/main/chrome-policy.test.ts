@@ -33,9 +33,10 @@ describe("chrome policy", () => {
   });
   it("selects theme before construction and leaves decorated windows decorated", () => {
     expect(resolveChromePolicy({ platform: "win32", darkColors: true }).appearance.color).toBe("#17191d");
-    expect(
-      resolveChromePolicy({ platform: "win32", darkColors: true, themePreference: "light" }).appearance.color,
-    ).toBe("#ffffff");
+    const policy = resolveChromePolicy({ platform: "win32", darkColors: true, themePreference: "light" });
+    expect(policy.appearance.color).toBe("#ffffff");
+    expect(policy).not.toHaveProperty("themePreference");
+    expect(policy).not.toHaveProperty("followsSystemTheme");
     expect(chromeWindowOptions(resolveChromePolicy({ platform: "darwin", requestedMode: "system-decorated" }))).toEqual(
       { backgroundColor: "#ffffff" },
     );
