@@ -44,12 +44,8 @@ export {
 
 export {
   type DesktopBridge,
-  type VisualThemePreference,
-  type VisualThemeResult,
-  type VisualThemeSnapshot,
-  isVisualThemeSnapshot,
-  isVisualThemePreference,
-  isVisualThemeResult,
+  type VisualMirrorSnapshot,
+  DESKTOP_VISUAL_IPC,
   DESKTOP_BOOTSTRAP_ARGUMENT,
   DESKTOP_CHROME_IPC,
   desktopBootstrapFromArguments,

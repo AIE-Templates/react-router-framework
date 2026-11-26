@@ -1,11 +1,11 @@
-import type { DesktopBridge, DesktopWindowState, VisualThemeSnapshot } from "@repo/shared";
-import { DESKTOP_CHROME_IPC, DESKTOP_PREFS_IPC } from "@repo/shared";
+import type { DesktopBridge, DesktopWindowState } from "@repo/shared";
+import { DESKTOP_CHROME_IPC, DESKTOP_PREFS_IPC, DESKTOP_VISUAL_IPC } from "@repo/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const wire = vi.hoisted(() => ({
   workerCookies: vi.fn<() => void>(),
   cookies: vi.fn<() => void>(),
-  sendSync: vi.fn<() => unknown>(() => ({ revision: 0, preference: "auto" })),
+  sendSync: vi.fn<() => unknown>(() => ({ record: null, pending: false })),
   expose: vi.fn<(key: string, bridge: DesktopBridge) => void>(),
   invoke: vi.fn<(channel: string, payload: unknown) => Promise<unknown>>(),
   on: vi.fn<(channel: string, callback: (event: unknown, payload: unknown) => void) => void>(),
@@ -119,27 +119,17 @@ describe("sandbox preload chrome bridge", () => {
   });
 });
 
-it("shares one main-issued document token across concurrent visual writes and retries a failed lookup", async () => {
+it("shares the document token for concurrent overlay declarations and retries a failed lookup", async () => {
   const bridge = await load();
-  const pending = deferred();
-  wire.invoke
-    .mockRejectedValueOnce(new Error("temporarily unavailable"))
-    .mockReturnValueOnce(pending.promise)
-    .mockResolvedValue({ status: "unsupported", reason: "native-overlay-appearance-unavailable" });
-  expect(await bridge.syncVisualTheme!("auto")).toEqual({ status: "rejected", reason: "bridge-unavailable" });
   const declaration = { owner: "shell", revision: 1, appearance: null };
-  const writes = [bridge.syncVisualTheme!("dark"), bridge.declareOverlayAppearance(declaration)];
-  expect(wire.invoke.mock.calls.map(([channel]) => channel)).toEqual([
-    DESKTOP_CHROME_IPC.visualDocument,
-    DESKTOP_CHROME_IPC.visualDocument,
-  ]);
-  pending.resolve("document-token");
+  wire.invoke.mockRejectedValueOnce(new Error("unavailable"));
+  expect(await bridge.declareOverlayAppearance(declaration)).toMatchObject({ reason: "bridge-unavailable" });
+  const lookup = deferred();
+  wire.invoke.mockReturnValueOnce(lookup.promise).mockResolvedValue({ status: "unsupported", reason: "unavailable" });
+  const writes = [1, 2].map((revision) => bridge.declareOverlayAppearance({ ...declaration, revision }));
+  expect(wire.invoke.mock.calls.map(([channel]) => channel)).toEqual(Array(2).fill(DESKTOP_CHROME_IPC.visualDocument));
+  lookup.resolve("document-token");
   await Promise.all(writes);
-  expect(wire.invoke).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.visualTheme, {
-    document: "document-token",
-    revision: 2,
-    preference: "dark",
-  });
   expect(wire.invoke).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.declaration, { document: "document-token", declaration });
 });
 
@@ -216,36 +206,31 @@ it("ignores malformed preference subscriptions before registering native callbac
   expect(wire.invoke).not.toHaveBeenCalled();
 });
 
-it("exposes the document seed and subscribes before reading the current revision", async () => {
+it("samples once for prepaint, reads live pending state and classifies the application-level push", async () => {
   const bridge = await load();
-  expect(bridge.visualTheme).toEqual({ revision: 0, preference: "auto" });
-  const first = deferred();
-  wire.invoke.mockReturnValueOnce(first.promise);
-  const listener = vi.fn<(snapshot: VisualThemeSnapshot) => void>();
-  const stop = bridge.subscribeVisualTheme(listener);
-  const [, changed] = wire.on.mock.calls[0];
-  expect(wire.on.mock.invocationCallOrder[0]).toBeLessThan(wire.invoke.mock.invocationCallOrder[0]);
-  changed({}, { revision: 4, preference: "dark" });
-  changed({}, { revision: 5, preference: "bogus" });
-  first.resolve({ revision: 3, preference: "light" });
-  await first.promise;
-  stop();
-  changed({}, { revision: 6, preference: "auto" });
-  expect(listener).toHaveBeenCalledExactlyOnceWith({ revision: 4, preference: "dark" });
-  expect(wire.off).toHaveBeenCalledWith(DESKTOP_CHROME_IPC.visualChanged, changed);
+  expect(bridge.visualSeed).toEqual({ record: null, pending: false });
+  expect(wire.sendSync).toHaveBeenCalledExactlyOnceWith(DESKTOP_VISUAL_IPC.read);
+  wire.sendSync.mockReturnValueOnce({ record: "live", pending: true });
+  expect(bridge.readVisual()).toEqual({ record: "live", pending: true });
+  wire.invoke
+    .mockResolvedValueOnce("ok")
+    .mockResolvedValueOnce("failed")
+    .mockRejectedValueOnce(new Error("IPC"))
+    .mockResolvedValueOnce(null);
+  for (const expected of ["ok", "failed", "unavailable", "unavailable"])
+    expect(await bridge.pushVisual("raw")).toBe(expected);
+  expect(wire.invoke.mock.calls).toEqual(Array.from({ length: 4 }, () => [DESKTOP_VISUAL_IPC.push, "raw"]));
 });
-
-it("preserves the bridge and can reconcile when the document seed is unavailable", async () => {
-  wire.sendSync.mockImplementationOnce(() => {
-    throw new Error("seed unavailable");
-  });
+it("survives an unavailable seed and distinguishes a denied read from an empty mirror", async () => {
+  wire.sendSync
+    .mockImplementationOnce(() => {
+      throw new Error("unavailable");
+    })
+    .mockReturnValueOnce(null);
   const bridge = await load();
-  expect(bridge.visualTheme).toBeNull();
-  wire.invoke.mockResolvedValueOnce({ revision: 3, preference: "dark" });
-  const listener = vi.fn<(snapshot: VisualThemeSnapshot) => void>();
-  const stop = bridge.subscribeVisualTheme(listener);
-  await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ revision: 3, preference: "dark" }));
-  stop();
+  expect(bridge.visualSeed).toBeNull();
+  expect(() => bridge.readVisual()).toThrow("Visual mirror unavailable");
+  expect(bridge.readVisual()).toEqual({ record: null, pending: false });
 });
 
 it("runs only the worker cookie installer without window globals in a service-worker preload", async () => {

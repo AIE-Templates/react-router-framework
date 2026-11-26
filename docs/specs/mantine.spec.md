@@ -7,8 +7,9 @@ render, the color scheme adapter reads the effective preference from the VisualM
 seeded by the request cookie. Each subscription immediately delivers the effective client preference
 and follows subsequent changes. This also picks up changes made before subscription or while effects
 were disconnected. Mantine takes its `defaultColorScheme` from `VISUAL_DEFAULTS.colorScheme`.
-After hydration, a fixed window appearance from VisualManager takes precedence through `forceColorScheme`.
-The window override leaves the shared preference record intact.
+In Electron, prepaint reads the fixed appearance from the window’s immutable preload bootstrap.
+After hydration, Mantine takes `forceColorScheme` from VisualManager for the lifetime of that window.
+The appearance panel still edits the global preference, which synchronizes to the desktop mirror.
 
 The effective preference combines the sparse record with the product defaults and can be `auto`.
 Mantine's `setColorScheme` writes only when its argument differs from that preference, so mounting

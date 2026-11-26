@@ -58,7 +58,7 @@ External sub-frame navigation and redirects are blocked without opening the syst
 pnpm --filter desktop test:e2e demo-visual.spec.ts --grep 'failed appearance save'
 ```
 
-Use the same approach for derived application failures: intercept a specific request or storage/bridge boundary while keeping production components and providers intact. Assert the user-visible failure, absence of incorrect state changes, successful recovery and unexpected page errors. Use deferred gates for delayed/out-of-order responses; arbitrary sleeps are not evidence of correct ordering. Do not add production fault switches or make host tests depend on disposable demo UI. Network interception validates the client's response to a constructed failure, not the real service's reasons for returning it. A separate desktop theme test blocks the temporary file for visual-theme.json, verifies that both windows keep their committed theme, then restores the write path and retries the failed command.
+Use the same approach for derived application failures: intercept a specific request or storage/bridge boundary while keeping production components and providers intact. Assert the user-visible failure, absence of incorrect state changes, successful recovery and unexpected page errors. Use deferred gates for delayed/out-of-order responses; arbitrary sleeps are not evidence of correct ordering. Do not add production fault switches or make host tests depend on disposable demo UI. Network interception validates the client's response to a constructed failure, not the real service's reasons for returning it. The native failure tests obstruct the mirror destination in isolated user data. They verify the new appearance while a write is pending, its status after reload, and recovery on a push, child creation, primary creation or quit.
 
 ### Running checks
 
@@ -109,7 +109,7 @@ The benchmark runner does not build. It runs the unpackaged test bundles, or a p
 
 When deriving an application, set `APP_ID` in `@repo/shared/src/app-identity.ts`, `productName` in this app's `package.json`, and `appId` in `electron-builder.base.yml`. Keep the builder's `productName` equal to package metadata; a test checks this. Change the other distribution placeholders listed above as well.
 
-Electron's default userData is `<appData>/<app.name>`; `app.name` uses `productName` when present, otherwise package `name`. Builder `appId` does not choose that directory. `prefs.json`, `visual-theme.json` and `compile-cache/` retain their filenames within the selected application directory. Development uses `<userData>-dev`; test launches use a fresh `--user-data-dir`.
+Electron's default userData is `<appData>/<app.name>`; `app.name` uses `productName` when present, otherwise package `name`. Builder `appId` does not choose that directory. `prefs.json`, `visual.json` and `compile-cache/` retain their filenames within the selected application directory. Development uses `<userData>-dev`; test launches use a fresh `--user-data-dir`.
 
 Here `~/` resolves to `src` in TypeScript and Vite/Vitest. Native Node `scripts/` and `e2e/` can use standalone `import type { ... } from "~/..."`, which is erased; they cannot use runtime alias imports or inline `import { type X }`, which retains an import statement. Runtime sharing across applications goes through workspace packages or the web build package, not relative source paths.
 
@@ -124,6 +124,10 @@ Runtime window, storage and transport code stays in `src/main`. Benchmark runner
 `DESKTOP_SMOKE=1 pnpm --dir apps/desktop start:test` runs the application suite (bootstrap, transport, styles, window safety and reload/error recovery). It does not require the demo homepage. `DESKTOP_SMOKE=1 DESKTOP_SMOKE_LAYOUT=1 pnpm --dir apps/desktop start:test` additionally runs the template layout fixture matrix against `features/demo`. Template acceptance must explicitly enable this matrix; a requested matrix with missing controls fails rather than silently skipping. The result identifies `suite: application` or `suite: template-layout`. Business projects may delete demo and its route registration and keep the application suite. `test:e2e:host` runs host contracts against the real application root without requiring demo controls; `test:e2e:demo` selects the `@demo` suites in `demo-layout.spec.ts` and `demo-visual.spec.ts`. The full `test:e2e` command includes both and remains required for template acceptance. Derived projects can remove or replace the demo suites without removing host tests.
 
 The layout fixture uses named `data-demo-shell` / `data-demo-header` controls and `data-area-panel-toggle` attributes, independent of control order and translated button labels.
+
+### Visual mirror and native appearance
+
+The renderer reconciles complete stamped records from localStorage, the SSR cookie and the native mirror. At document start preload takes one synchronous sample. Live reads return the current record and its pending flag. Every push confirms whether a record reached durable storage. Main reads userData/visual.json before building windows and uses the effective color scheme for nativeTheme, window backgrounds and overlay defaults. A failed write still updates memory. Subsequent pushes, either window creation path and before-quit retry it. See the [desktop visual specification](../../docs/specs/desktop-visual.spec.md).
 
 ### Fixed window appearance on macOS
 

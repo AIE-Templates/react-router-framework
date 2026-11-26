@@ -21,7 +21,7 @@ Unrecognized or missing `DESKTOP_CHROME_MODE` requests the default. There is no 
 
 These alignment values assume default fonts and 100% page zoom. Electron API units must not be equated with zoomed CSS pixels. Do not rescale WCO/DOM coordinates using display scale or derive viewport coordinates by simply dividing screen DIP by page zoom.
 
-Main reads the application-wide theme from the versioned `visual-theme.json` before creating a window. A committed theme change updates every window. Explicit `dark` or `light` selects colors; `auto`, missing or invalid data follows `nativeTheme`. Generic preferences do not supply the theme. Dark color/symbolColor defaults are `#17191d`/`#f3f4f6`; light defaults are `#ffffff`/`#202124`. Desktop environment/session strings are diagnostic hints, not proof that Chromium uses Wayland. Native theme/button parity is not guaranteed across every Linux or macOS configuration.
+Main derives the application color scheme from the in-memory visual mirror, loaded from `visual.json` before creating windows. Missing fields use the shared product defaults. Explicit light and dark select native colors. Auto follows the system. Mirror updates apply nativeTheme before per-window chrome, including while a disk write is pending. A fixed window retains its creation appearance. Generic preferences do not supply the theme. Dark color/symbolColor defaults are `#17191d`/`#f3f4f6`; light defaults are `#ffffff`/`#202124`. Desktop environment/session strings are diagnostic hints, not proof that Chromium uses Wayland. Native theme/button parity is not guaranteed across every Linux or macOS configuration.
 
 ## Runtime contract (CHR-03)
 

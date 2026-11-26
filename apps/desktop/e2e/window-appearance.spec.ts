@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { buildMacosAddon } from "../scripts/build-macos-addon.ts";
 import { test, expect, waitForApp } from "./desktop.ts";
+import { pushVisual } from "./visual-mirror.ts";
 
 test(
   "macOS editor keeps dark native buttons and anchors each text menu to its event",
@@ -24,8 +25,7 @@ test(
           },
           { addon, editorButton },
         );
-      const setTheme = (value: "light" | "dark") =>
-        home.evaluate((theme) => window.desktop!.syncVisualTheme!(theme), value);
+      const setTheme = (value: "light" | "dark") => pushVisual(home, { colorScheme: value });
       await setTheme("light");
       const opened = app.waitForEvent("window");
       await home.getByRole("link", { name: "Open editor" }).press("Enter");

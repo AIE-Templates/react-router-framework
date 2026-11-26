@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 
+import { visualRecordKernel as records } from "@repo/shared";
 import type { BrowserWindow } from "electron";
 
 import { APP_ORIGIN, isAppUrl } from "~/main/app-url.ts";
@@ -303,16 +304,19 @@ export async function runSmoke(
         v.height >= v.safeTop - 1 &&
         v.contentTop >= v.safeTop - 1,
     );
-    // The error document has no shell appearance owner. Its preload seed records the preference to restore.
+    // Exercise the preload on a document without a shell appearance owner.
+    const original = await js("return window.desktop.readVisual().record");
+    const previous = records.decode(typeof original === "string" ? original : null).record;
+    const dark = {
+      version: 1 as const,
+      stamp: records.nextStamp([previous]),
+      preferences: { ...previous?.preferences, colorScheme: "dark" as const },
+    };
+    const darkRaw = records.encode(dark);
     await check(
-      "visualThemeDark",
-      `return await window.desktop.syncVisualTheme("dark");`,
-      (v) =>
-        isRecord(v) &&
-        v.status === "processed" &&
-        v.background === "applied" &&
-        v.persistence === "saved" &&
-        win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
+      "visualMirrorDark",
+      pushAndRead(darkRaw),
+      (v) => isDurableMirror(v, darkRaw) && win.getBackgroundColor().toLowerCase().startsWith("#17191d"),
     );
     await check(
       "appearanceDoesNotChangeBackground",
@@ -333,11 +337,12 @@ export async function runSmoke(
           ? v.status === "unsupported"
           : v.status === "applied" && isRecord(v.appearance) && v.appearance.color === "#17191d"),
     );
-    await check(
-      "visualThemeRestore",
-      `return await window.desktop.syncVisualTheme(window.desktop.visualTheme.preference);`,
-      (v) => isRecord(v) && v.status === "processed" && v.background === "applied" && v.persistence === "saved",
-    );
+    const restored = records.encode({
+      version: 1,
+      stamp: records.nextStamp([dark]),
+      preferences: previous?.preferences ?? {},
+    });
+    await check("visualMirrorRestore", pushAndRead(restored), (v) => isDurableMirror(v, restored));
 
     await win.loadURL(returnUrl);
     await check("returnFromError", documentHydrationScript, (v) => v === true);
@@ -415,3 +420,8 @@ function validWindowState(value: unknown): boolean {
     typeof value.fullscreen === "boolean"
   );
 }
+
+const pushAndRead = (raw: string) =>
+  `const result = await window.desktop.pushVisual(${JSON.stringify(raw)}); return { result, ...window.desktop.readVisual() };`;
+const isDurableMirror = (value: unknown, raw: string) =>
+  isRecord(value) && value.result === "ok" && value.record === raw && value.pending === false;

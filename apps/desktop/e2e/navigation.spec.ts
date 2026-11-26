@@ -1,6 +1,7 @@
-import { storageKey } from "@repo/shared";
+import { cookieName, storageKey, visualRecordKernel } from "@repo/shared";
 
 import { expect, quit, test, waitForApp } from "./desktop.ts";
+import { pushVisual } from "./visual-mirror.ts";
 
 interface NavigationProbe {
   externalUrls: string[];
@@ -138,18 +139,16 @@ test("a child starts with the committed theme despite stale storage and honors e
   );
   const preference = initial === "#17191d" ? "light" : "dark";
   const stale = preference === "dark" ? "light" : "dark";
-  const commit = await page.evaluate(
-    (useDark) => window.desktop!.syncVisualTheme!(useDark ? "dark" : "light"),
-    preference === "dark",
-  );
-  expect(commit.status).toBe("processed");
-  if (commit.status !== "processed") throw new Error(commit.reason);
-  await page.evaluate(
-    ([key, colorScheme]) => {
-      localStorage.setItem(key, JSON.stringify({ version: 1, preferences: { colorScheme, direction: "rtl" } }));
-    },
-    [storageKey("visual-preferences"), stale],
-  );
+  const raw = await pushVisual(page, { colorScheme: preference, direction: "rtl" });
+  const staleRaw = visualRecordKernel.encode({
+    version: 1,
+    stamp: { t: 0, id: "stale" },
+    preferences: { colorScheme: stale },
+  });
+  await page.evaluate(([key, wire]) => localStorage.setItem(key, wire), [
+    storageKey("visual-preferences"),
+    staleRaw,
+  ] as const);
   const created = app.evaluate(
     ({ BrowserWindow }) =>
       new Promise<{ color: string; x?: number; width?: number }>((resolve) => {
@@ -165,7 +164,7 @@ test("a child starts with the committed theme despite stale storage and honors e
   const child = await opened;
   expect(await created).toEqual({ color: preference === "dark" ? "#17191d" : "#ffffff", x: 80, width: 650 });
   await waitForApp(child);
-  expect(await child.evaluate(() => window.desktop!.visualTheme)).toEqual(commit.snapshot);
+  expect(await child.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: raw, pending: false });
   expect(await child.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.preferences)).toMatchObject({
     colorScheme: preference,
     direction: "rtl",
@@ -176,18 +175,29 @@ test("a child starts with the committed theme despite stale storage and honors e
 
 test("a full relaunch restores the committed desktop theme before hydration", async ({ launchApp }) => {
   const first = await launchApp();
-  expect(await first.page.evaluate(() => window.desktop!.syncVisualTheme!("dark"))).toMatchObject({
-    status: "processed",
-    persistence: "saved",
+  const raw = await pushVisual(first.page, { colorScheme: "dark", direction: "rtl" });
+  await first.page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+  expect(await first.page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences"))).toBe(raw);
+  expect(await first.page.evaluate(() => document.cookie)).toContain(
+    cookieName("visual") + "=" + encodeURIComponent(raw),
+  );
+  // Retire the manager before clearing its replicas. An active document could repair them.
+  await first.page.goto("app://app/__e2e/navigation/frame");
+  await first.app.evaluate(async ({ session }) => {
+    const appSession = session.fromPartition("persist:app");
+    await appSession.clearStorageData({ storages: ["localstorage", "cookies"] });
   });
-  await first.page.evaluate((key) => {
-    localStorage.setItem(key, JSON.stringify({ version: 1, preferences: { colorScheme: "light", direction: "rtl" } }));
-  }, storageKey("visual-preferences"));
+  expect(await first.page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences"))).toBeNull();
+  expect(await first.page.evaluate(() => document.cookie)).not.toContain(cookieName("visual") + "=");
   await quit(first);
 
   const second = await launchApp();
   expect(await second.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
-  expect(await second.page.evaluate(() => window.desktop!.visualTheme?.preference)).toBe("dark");
+  expect(await second.page.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: raw, pending: false });
+  expect(await second.page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences"))).toBe(raw);
+  expect(await second.page.evaluate(() => document.cookie)).toContain(
+    cookieName("visual") + "=" + encodeURIComponent(raw),
+  );
   expect(
     await second.page.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.preferences),
   ).toMatchObject({
@@ -201,7 +211,7 @@ test("a full relaunch restores the committed desktop theme before hydration", as
 test("a window overlay inherits app theme changes and releases to the latest defaults", async ({
   desktop: { app, page },
 }) => {
-  await page.evaluate(() => window.desktop!.syncVisualTheme!("light"));
+  await pushVisual(page, { colorScheme: "light" });
   const opened = app.waitForEvent("window");
   await page.evaluate(() => {
     window.open("/__e2e/navigation/frame", "_blank", "noopener");
@@ -242,8 +252,7 @@ test("a window overlay inherits app theme changes and releases to the latest def
       });
     else expect(declaration.status).toBe("unsupported");
 
-    const theme = await page.evaluate(() => window.desktop!.syncVisualTheme!("dark"));
-    expect(theme).toMatchObject({ status: "processed", persistence: "saved" });
+    await pushVisual(page, { colorScheme: "dark" });
     await expect.poll(() => native.evaluate((win) => win.getBackgroundColor().toLowerCase())).toBe("#17191d");
     if (overlayProbe) {
       expect(await overlayProbe.evaluate((probe) => probe.writes.at(-1))).toMatchObject({

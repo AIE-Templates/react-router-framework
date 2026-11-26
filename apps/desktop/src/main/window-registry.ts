@@ -193,11 +193,11 @@ export function createWindowRegistry(options: RegistryOptions) {
 
   const children = {
     reuse: (url: string) => !!focusExisting(options.keyForUrl(new URL(url))),
-    adopt(win: BrowserWindow, url: string) {
+    adopt(win: BrowserWindow, url: string, fixedAppearance?: "light" | "dark") {
       // Two openers can request the same key before either native child is delivered.
       // Discard the still-hidden duplicate before configuring its preload IPC or showing it.
       if (children.reuse(url)) win.destroy();
-      else adopt(win, url, undefined, options.childAppearance?.(new URL(url)));
+      else adopt(win, url, undefined, fixedAppearance);
     },
   };
 

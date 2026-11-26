@@ -16,7 +16,7 @@ vi.mock("electron", () => ({ nativeTheme: theme }));
 
 import { resolveChromePolicy } from "./chrome-policy.ts";
 import { installWindowChrome } from "./chrome.ts";
-import { createVisualThemeStore } from "./visual-theme.ts";
+import { createVisualMirror } from "./visual-mirror.ts";
 
 class FakeWindow extends EventEmitter {
   focused = false;
@@ -53,17 +53,16 @@ const directories: string[] = [];
 function themeFixture() {
   const directory = mkdtempSync(join(tmpdir(), "window-theme-"));
   directories.push(directory);
-  const store = createVisualThemeStore(directory, { log });
-  return { ...store, save: vi.fn<typeof store.save>((value) => store.save(value)) };
+  return createVisualMirror(directory, { log });
 }
 afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
-function setup(platform = "win32", store = themeFixture()) {
+function setup(platform = "win32", store = themeFixture(), fixedAppearance?: "light" | "dark") {
   const win = new FakeWindow();
   const source = frame();
   const event = { senderFrame: source, allowed: true };
-  const dispose = installWindowChrome(win, resolveChromePolicy({ platform }), trusted, log, store);
+  const dispose = installWindowChrome(win, resolveChromePolicy({ platform }), trusted, log, store, fixedAppearance);
   const invoke = (channel: string, ...args: unknown[]) => win.handlers.get(channel)!(...args);
   const document = invoke(DESKTOP_CHROME_IPC.visualDocument, event);
   const declare = (revision: number, appearance: unknown, sender = event) =>
@@ -201,45 +200,14 @@ describe("window chrome bridge", () => {
     expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
     dispose();
   });
-  it("keeps native theme, background, overlay support and persistence results independent", () => {
-    const { win, event, store, dispose, invoke, document } = setup("darwin");
-    const send = (preference: string, revision: number) =>
-      invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision, preference });
-    expect(send("dark", 1)).toEqual({
-      status: "processed",
-      background: "applied",
-      overlay: "unsupported",
-      persistence: "saved",
-      snapshot: { preference: "dark", revision: 1 },
-    });
-    expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
-    theme.shouldUseDarkColors = false;
-    theme.on.mock.calls.find(([name]) => name === "updated")![1]();
-    expect(win.setBackgroundColor).toHaveBeenCalledTimes(1);
-    store.save.mockReturnValueOnce(false);
-    expect(send("auto", 2)).toEqual({ status: "rejected", reason: "persistence-failed" });
-    expect(win.setBackgroundColor).toHaveBeenCalledExactlyOnceWith("#17191d");
-    expect(send("dark", 1)).toMatchObject({ status: "rejected" });
-    win.webContents.emit("did-navigate", {}, "app://app/");
-    expect(send("dark", 3)).toMatchObject({ status: "rejected" });
-    expect(
-      invoke(DESKTOP_CHROME_IPC.visualTheme, event, {
-        document: invoke(DESKTOP_CHROME_IPC.visualDocument, event),
-        revision: 1,
-        preference: "light",
-      }),
-    ).toMatchObject({ status: "processed" });
-    expect(win.setTitleBarOverlay).not.toHaveBeenCalled();
-    dispose();
-  });
   it.each(["did-navigate", "render-process-gone"])(
     "replaces and releases complete declarations, retiring the owner on %s",
     (retireEvent) => {
-      const { win, event, dispose, invoke, document } = setup();
+      const { win, event, dispose, invoke, document, store } = setup();
       const declare = (owner: string, revision: number, appearance: unknown) =>
         invoke(DESKTOP_CHROME_IPC.declaration, event, { document, declaration: { owner, revision, appearance } });
       expect(declare("shell", 1, { color: "#224466", height: 40 })).toMatchObject({ status: "applied" });
-      invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 1, preference: "dark" });
+      store.push(JSON.stringify({ version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "dark" } }));
       expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#224466", symbolColor: "#f3f4f6", height: 40 });
       expect(declare("shell", 2, { height: 42 })).toMatchObject({ appearance: { color: "#17191d", height: 42 } });
       expect(declare("other", 3, { height: 50 })).toMatchObject({
@@ -274,18 +242,13 @@ describe("window chrome bridge", () => {
 it("keeps the current document live when navigation starts but is cancelled", () => {
   const { win, event, source, dispose, invoke, document } = setup();
   invoke(DESKTOP_CHROME_IPC.subscribe, event, "live");
-  invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 1, preference: "dark" });
   win.webContents.emit("did-start-navigation", {}, "https://example.com", false, true);
-  expect(invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 2, preference: "light" })).toMatchObject({
-    status: "processed",
-  });
+  expect(invoke(DESKTOP_CHROME_IPC.visualDocument, event)).toBe(document);
   win.focused = true;
   win.emit("focus");
   expect(source.send).toHaveBeenCalledOnce();
   win.webContents.emit("did-navigate", {}, "app://app/");
-  expect(invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, revision: 3, preference: "dark" })).toMatchObject({
-    status: "rejected",
-  });
+  expect(invoke(DESKTOP_CHROME_IPC.visualDocument, event)).not.toBe(document);
   dispose();
 });
 
@@ -293,11 +256,9 @@ it("fans out system changes through one native listener and releases each closed
   const windows = Array.from({ length: 12 }, () => setup());
   const [explicit, closed, ...following] = windows;
   try {
-    explicit.invoke(DESKTOP_CHROME_IPC.visualTheme, explicit.event, {
-      document: explicit.document,
-      preference: "light",
-      revision: 1,
-    });
+    explicit.store.push(
+      JSON.stringify({ version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "light" } }),
+    );
     closed.win.emit("closed");
     expect(theme.on).toHaveBeenCalledTimes(1);
     expect(theme.off).not.toHaveBeenCalled();
@@ -313,17 +274,13 @@ it("fans out system changes through one native listener and releases each closed
   expect(theme.off).toHaveBeenCalledExactlyOnceWith("updated", theme.on.mock.calls[0][1]);
 });
 
-it("rejects old theme and declaration messages even before the next document requests its token", () => {
+it("rejects old declarations even before the next document requests its token", () => {
   const { win, event, store, dispose, invoke, document } = setup();
   try {
     expect(invoke(DESKTOP_CHROME_IPC.visualDocument, { ...event, allowed: false })).toBeNull();
     expect(invoke(DESKTOP_CHROME_IPC.visualDocument, event)).toBe(document);
     for (let i = 0; i < 20; i++) {
       win.webContents.emit("did-navigate", {}, "app://app/");
-      expect(invoke(DESKTOP_CHROME_IPC.visualTheme, event, { document, preference: "dark", revision: i + 1 })).toEqual({
-        status: "rejected",
-        reason: "stale-document",
-      });
       expect(
         invoke(DESKTOP_CHROME_IPC.declaration, event, {
           document,
@@ -332,52 +289,30 @@ it("rejects old theme and declaration messages even before the next document req
       ).toEqual({ status: "rejected", reason: "stale-document" });
       expect(invoke(DESKTOP_CHROME_IPC.visualDocument, event)).not.toBe(document);
     }
-    expect(store.save).not.toHaveBeenCalled();
+    expect(store.read().record).toBeNull();
   } finally {
     dispose();
   }
 });
 
-it("commits once before every open window applies and publishes the same revision", () => {
+it("applies mirror changes across windows while a fixed window keeps its own background", () => {
   const store = themeFixture();
   const primary = setup("win32", store);
-  const peer = setup("win32", store);
+  const fixed = setup("win32", store, "light");
   try {
-    const snapshot = DESKTOP_CHROME_IPC.visualSnapshot;
-    expect(peer.invoke(snapshot, { ...peer.event, allowed: false })).toBeNull();
-    for (const window of [primary, peer]) {
-      expect(window.invoke(snapshot, window.event)).toEqual({ preference: "auto", revision: 0 });
-    }
-    const commit = (revision: number, preference: string) =>
-      primary.invoke(DESKTOP_CHROME_IPC.visualTheme, primary.event, {
-        document: primary.document,
-        revision,
-        preference,
-      });
-    peer.declare(1, { height: 42 });
-    commit(1, "dark");
-    for (const window of [primary, peer]) {
-      expect(window.win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
-      expect(window.source.send).toHaveBeenCalledExactlyOnceWith(DESKTOP_CHROME_IPC.visualChanged, {
-        revision: 1,
-        preference: "dark",
-      });
-    }
-    expect(peer.win.setTitleBarOverlay).toHaveBeenLastCalledWith({
+    fixed.declare(1, { height: 42 });
+    store.push(JSON.stringify({ version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "dark" } }));
+    expect(primary.win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
+    expect(fixed.win.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
+    expect(fixed.win.setTitleBarOverlay).toHaveBeenLastCalledWith({
       height: 42,
-      color: "#17191d",
-      symbolColor: "#f3f4f6",
+      color: "#ffffff",
+      symbolColor: "#202124",
     });
-    store.save.mockReturnValueOnce(false);
-    expect(commit(2, "light")).toMatchObject({ reason: "persistence-failed" });
-    expect(peer.source.send).toHaveBeenCalledTimes(1);
-    expect(store.current()).toEqual({ revision: 1, preference: "dark" });
-    expect(commit(3, "light")).toMatchObject({ status: "processed", snapshot: { revision: 2, preference: "light" } });
-    peer.win.emit("closed");
-    commit(4, "auto");
-    expect(peer.source.send).toHaveBeenCalledTimes(2);
+    expect(primary.source.send).not.toHaveBeenCalled();
+    expect(fixed.source.send).not.toHaveBeenCalled();
   } finally {
     primary.dispose();
-    peer.dispose();
+    fixed.dispose();
   }
 });

@@ -1,10 +1,14 @@
 import { EventEmitter } from "node:events";
 
+import { visualRecordKernel } from "@repo/shared";
 import { session } from "electron";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { nodeFs } from "./atomic-file.ts";
 import { createBootProfile } from "./boot-profile.ts";
+import { resolveChromePolicy } from "./chrome-policy.ts";
 import type { RecoveryChoice } from "./recovery.ts";
+import { createVisualMirror } from "./visual-mirror.ts";
 import { createWindowRegistry } from "./window-registry.ts";
 
 const made: FakeWindow[] = [];
@@ -17,16 +21,24 @@ class FakeWindow extends EventEmitter {
   url = "";
   webContents = Object.assign(new EventEmitter(), {
     id: made.length + 1,
-    ipc: new EventEmitter(),
+    ipc: Object.assign(new EventEmitter(), { handle: vi.fn<() => void>(), removeHandler: vi.fn<() => void>() }),
     getURL: () => this.url,
     getOSProcessId: () => (this.crashed ? 0 : this.pid),
     isCrashed: () => this.crashed,
     setWindowOpenHandler: vi.fn<Electron.WebContents["setWindowOpenHandler"]>(),
   });
-  constructor() {
+  options?: Electron.BrowserWindowConstructorOptions;
+  constructor(options?: Electron.BrowserWindowConstructorOptions) {
     super();
+    this.options = options;
     made.push(this);
   }
+  getBounds = () => ({ x: 0, y: 0, width: 1000, height: 800 });
+  isFocused = () => true;
+  isFullScreen = () => false;
+  isMaximized = () => false;
+  setBackgroundColor = vi.fn<(color: string) => void>();
+  setTitleBarOverlay = vi.fn<() => void>();
   isDestroyed = () => this.destroyed;
   isMinimized = () => this.minimized;
   isVisible = () => this.visible && !this.minimized;
@@ -58,14 +70,18 @@ vi.mock("electron", () => ({
     return FakeWindow;
   },
   session: { defaultSession: {} },
+  nativeTheme: new EventEmitter(),
+  screen: { getDisplayMatching: () => ({ workArea: { width: 1200, height: 900 } }) },
 }));
 
-function setup(onReady?: Parameters<typeof createWindowRegistry>[0]["onReady"]) {
+type RegistryOptions = Parameters<typeof createWindowRegistry>[0];
+function setup(onReady?: RegistryOptions["onReady"], chrome?: RegistryOptions["chrome"]) {
   const choices: ((choice: RecoveryChoice) => void)[] = [];
   const askRecovery = vi.fn<Parameters<typeof createWindowRegistry>[0]["askRecovery"]>(
     () => new Promise((resolve) => choices.push(resolve)),
   );
   const registry = createWindowRegistry({
+    chrome,
     session: session.defaultSession,
     profile: createBootProfile(false),
     preloadPath: "",
@@ -363,4 +379,60 @@ it("destroys a closing window whose renderer is gone instead of reloading it, un
   vetoed.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 11 });
   expect(vetoed.destroyed).toBe(false);
   expect(askRecovery).not.toHaveBeenCalled();
+});
+
+const windowRecord = (t: number, colorScheme: "dark" | "light") =>
+  visualRecordKernel.encode({
+    version: 1,
+    stamp: { t, id: "fixture" },
+    preferences: { colorScheme },
+  });
+const failWrite = () => {
+  throw new Error("disk");
+};
+
+it("uses the cold mirror for the first native background and retries pending writes on both creation paths", () => {
+  const open = vi.fn<typeof nodeFs.openSync>(() => 1);
+  const mirror = createVisualMirror("fixture", {
+    log: { warn: vi.fn<() => void>() },
+    fs: {
+      openSync: open,
+      readFileSync: () => windowRecord(1, "dark"),
+      closeSync: () => {},
+      fsyncSync: () => {},
+      rmSync: () => {},
+      writeFileSync: () => {},
+      renameSync: () => {},
+      sleep: () => {},
+    },
+  });
+  const { registry } = setup(undefined, {
+    bootstrap: {
+      protocolVersion: 1,
+      shell: { kind: "desktop", platform: "win32", osVersion: "" },
+      mode: "native-overlay",
+    },
+    visualMirror: mirror,
+    currentPolicy: () => resolveChromePolicy({ platform: "win32", themePreference: mirror.colorScheme() }),
+  });
+  registry.open("app://app/", "primary");
+  expect(made[0].options?.backgroundColor).toBe("#17191d");
+  expect(open).not.toHaveBeenCalled();
+  open.mockImplementationOnce(failWrite);
+  expect(mirror.push(windowRecord(2, "light"))).toBe("failed");
+  registry.open("app://app/next");
+  expect(made[1].options?.backgroundColor).toBe("#ffffff");
+  expect(mirror.read().pending).toBe(false);
+  open.mockImplementationOnce(failWrite);
+  expect(mirror.push(windowRecord(3, "dark"))).toBe("failed");
+  const handler = made[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+  const result = handler({
+    url: "app://app/child",
+    frameName: "",
+    features: "",
+    disposition: "new-window",
+    referrer: { url: "app://app/", policy: "default" },
+  });
+  expect(result).toMatchObject({ action: "allow", overrideBrowserWindowOptions: { backgroundColor: "#17191d" } });
+  expect(mirror.read().pending).toBe(false);
 });

@@ -8,7 +8,7 @@ Run `pnpm dev` at the workspace root for HMR at http://localhost:5173. Build wit
 
 SSR is the default. Set SSR=false for an SPA build; application route exports must be compatible. Server loaders/actions/middleware/headers (except the build-time root loader) and non-root HydrateFallback prevent SPA builds. Client data APIs can work in both modes, with a first-render skeleton followed by browser data loading.
 
-SSR builds read the visual cookie for the initial document and keep it in sync with local storage. SPA builds use local storage alone.
+SSR builds read the visual cookie for the initial document and keep it in sync with local storage. Web SPA builds use local storage. Electron builds also reconcile the native mirror.
 
 ### Development dependency optimization
 
@@ -131,7 +131,7 @@ Mantine’s `setColorScheme` skips writes when the effective preference already 
 
 ## Electron adapters
 
-Electron-specific host contexts and preference helpers live in `~/platform/electron/shell` and `~/platform/electron/preferences`. The visual prepaint adapter reads the fixed window appearance from preload. Features may consume the preference API without implementing host branches. Application code never imports `src/host`; host integration can import the adapters through `~/`.
+Electron-specific host contexts and preference helpers live in `~/platform/electron/shell` and `~/platform/electron/preferences`. The visual adapter supplies the document-start mirror sample and fixed window appearance to prepaint, then discovers the synchronous read and asynchronous push methods on connection. Features may consume the preference API without implementing host branches. Application code never imports `src/host`; host integration can import the adapters through `~/`.
 
 `src/host/desktop-root.integration.test.tsx` covers Electron root host facts with an explicit jsdom environment and real host context. The pure safety/bootstrap fallback rendering test remains beside `root.tsx`.
 
