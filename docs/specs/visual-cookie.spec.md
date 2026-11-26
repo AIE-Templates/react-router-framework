@@ -1,24 +1,9 @@
-# Optional visual cookie mirror
+# SSR visual cookie
 
-Set VITE_VISUAL_COOKIE=true at build time to enable the Web SSR preference mirror. It is disabled
-by default. Rebuild both server and client together when changing this flag. Electron documents
-never activate the Web cookie writer.
+An SSR build uses the cookie named by `cookieName("visual")` to render the request's initial appearance. Its value is the URL-encoded, canonical JSON for the same stamped visual record held in local storage. The cookie is client-writable, scoped to `Path=/`, and uses `SameSite=Lax`, a one-year maximum age, and `Secure` on HTTPS.
 
-The application-prefixed cookie contains only the versioned VisualPreferences record. It is
-client-writable, Path=/, SameSite=Lax, valid for one year and Secure on HTTPS. It contains no identity
-or authorization data. The per-request server reader validates it and returns only the visual seed.
-Registries distribute that seed to the provider; revalidation does not recreate the manager.
+The Fullstack root loader validates the request cookie with `readVisualRequestSeed(request)` and passes the record to `managersInitialState.visual`. A missing or invalid cookie yields the product defaults. React hydrates from that server snapshot. Before paint, the inline script reads the current cookie and local storage and applies the newest valid record. After mount, VisualManager reconciles those sources with its in-memory record and repairs older or missing copies. Defaults alone cause no writes. Record ordering, write verification, and retry behavior follow the [global visual state specification](visual.spec.md).
 
-Local storage wins at client bootstrap; a valid cookie seed fills missing browser preferences.
-Initialization attempts to save the adopted seed once when local storage is missing or malformed;
-future-version records are preserved. Later storage events never trigger initialization writes.
-External deletion or clear restores defaults and updates the cookie without recreating a local record.
-The cookie is an adapter mirror, never a second application command API. Writes are verified and
-reported through useVisualCookieStatus, independently of localStorage persistence. A retry is
-available. Whole reset can replace a future-version cookie; ordinary writes cannot downgrade it.
+In a SPA build, the root loader runs at build time without a user cookie. The browser uses local storage for visual preferences and reports the cookie store as `absent`.
 
-With the adapter enabled, host responses containing HTML and Router .data responses use
-Cache-Control: private, no-store. Static assets retain their existing cache policy. With SSR=false,
-the root loader only runs at build time without a user cookie; the prepaint script/localStorage
-provide the complete experience and the client can still update its mirror. No route headers
-export or server-only module is imported into the client graph.
+The Fullstack host sets `Cache-Control: private, no-store` on dynamic SSR HTML and Router `.data` responses, including requests without a visual cookie. The SPA shell and prerendered files keep their static cache headers. See the [Fullstack host specification](fullstack-host.spec.md).

@@ -8,6 +8,7 @@ import { createRoutesStub, RouterContextProvider } from "react-router";
 import { expect, it, vi } from "vitest";
 
 import { visualCookie } from "~/config/visual-cookie";
+import { cspNonceContext } from "~/lib/csp";
 import { writeVisualCookie } from "~/managers/visual/cookie";
 import { useVisualState } from "~/managers/visual/hooks";
 
@@ -34,12 +35,14 @@ const Stub = createRoutesStub([{ id: "root", path: "/", Component: DocumentRoute
 
 function rootData(header = "") {
   const url = new URL("https://example.test/");
+  const context = new RouterContextProvider();
+  context.set(cspNonceContext, undefined);
   return loader({
     request: new Request(url, { headers: { Cookie: header } }),
     url,
     pattern: "/",
     params: {},
-    context: new RouterContextProvider(),
+    context,
   });
 }
 function tree(data: ReturnType<typeof loader>) {

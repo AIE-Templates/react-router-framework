@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
+import { visualRecordKernel, WEB_SHELL, type VisualRecord } from "@repo/shared";
 import { render, waitFor } from "@testing-library/react";
 import { createRoutesStub, RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { visualCookie } from "~/config/visual-cookie";
 import { Layout, loader } from "~/root";
 
 import { createLoadContext } from "./app";
 import { createTestContext } from "./testing";
 
-function loaderArgs(context: RouterContextProvider): Parameters<typeof loader>[0] {
-  const url = new URL("http://localhost/");
-  return { context, request: new Request(url), url, params: {}, pattern: "/" };
+function loaderArgs(
+  context: RouterContextProvider,
+  request = new Request("http://localhost/"),
+): Parameters<typeof loader>[0] {
+  return { context, request, url: new URL(request.url), params: {}, pattern: "/" };
 }
 
 afterEach(() => {
@@ -22,8 +26,22 @@ afterEach(() => {
 describe("root loader", () => {
   it("reports no nonce without a Content-Security-Policy", () => {
     expect(loader(loaderArgs(createTestContext()))).toEqual({
+      shell: WEB_SHELL,
       nonce: undefined,
       managersInitialState: { visual: undefined },
+    });
+  });
+
+  it("returns the nonce together with the request's visual record", () => {
+    const visual: VisualRecord = { version: 1, stamp: { t: 1, id: "a" }, preferences: { direction: "rtl" } };
+    const request = new Request("http://localhost/", {
+      headers: { Cookie: visualCookie.name + "=" + encodeURIComponent(visualRecordKernel.encode(visual)) },
+    });
+    const context = createLoadContext(request, { cspNonce: "abc123" });
+    expect(loader(loaderArgs(context, request))).toEqual({
+      shell: WEB_SHELL,
+      nonce: "abc123",
+      managersInitialState: { visual },
     });
   });
 });

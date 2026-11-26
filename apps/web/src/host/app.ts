@@ -3,7 +3,6 @@ import type { Hono } from "hono";
 import type { Logger } from "pino";
 import { createRequestHandler, RouterContextProvider } from "react-router";
 
-import { visualCookie } from "~/config/visual-cookie";
 import { apiContext } from "~/lib/api";
 import { cspNonceContext } from "~/lib/csp";
 import { loggerContext } from "~/lib/logger";
@@ -15,6 +14,8 @@ export { logStreamErrors } from "@repo/server";
 const handleRequest = createRequestHandler(() => import("virtual:react-router/server-build"), import.meta.env.MODE);
 
 export interface HostAppOptions {
+  /** Whether React Router serves SSR responses. Defaults to what the build says; tests set it. */
+  ssr?: boolean;
   /**
    * Registers middleware and routes after the API and its JSON 404 and before React Router;
    * `createWebApp()` adds static files and the SPA shell there.
@@ -37,17 +38,23 @@ export interface HostAppOptions {
  * is on, and the SPA shell (root route with HydrateFallback) otherwise, which is also how the shell
  * is prebuilt.
  */
-export function createHostApp({ extend, csp = defaultPolicy() }: HostAppOptions = {}): Hono {
+export function createHostApp({ ssr, extend, csp = defaultPolicy() }: HostAppOptions = {}): Hono {
   const app = createServerApp();
   // Loaders and actions call this app's API in-process, under the request's ID and logger.
   const fetch = createInProcessFetch(app);
-  if (visualCookie.enabled)
-    app.use(async (c, next) => {
-      await next();
-      if (c.res.headers.get("content-type")?.includes("text/html") || c.req.path.endsWith(".data"))
-        c.header("Cache-Control", "private, no-store");
-    });
   extend?.(app);
+  // Only Router responses reach this point. Loaders can use request credentials even without a visual cookie.
+  // The build is imported lazily, like the request handler: tests stub it, and only need it when they
+  // don't pass the mode themselves.
+  let serverRendered: Promise<boolean> | undefined;
+  app.use(async (c, next) => {
+    await next();
+    serverRendered ??=
+      ssr === undefined ? import("virtual:react-router/server-build").then((build) => build.ssr) : Promise.resolve(ssr);
+    if (!(await serverRendered)) return;
+    if (c.res.headers.get("content-type")?.includes("text/html") || c.req.path.endsWith(".data"))
+      c.header("Cache-Control", "private, no-store");
+  });
   if (csp) app.use(cspMiddleware(csp));
   app.all("*", (c) =>
     handleRequest(

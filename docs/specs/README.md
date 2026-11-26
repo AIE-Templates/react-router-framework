@@ -8,7 +8,7 @@ Settled design contracts and rationale.
 
 - [Global visual state](visual.spec.md)
 
-- [Optional visual cookie mirror](visual-cookie.spec.md)
+- [SSR visual cookie](visual-cookie.spec.md)
 - [Mantine integration](mantine.spec.md)
 
 - [Application source structure](structure.spec.md)

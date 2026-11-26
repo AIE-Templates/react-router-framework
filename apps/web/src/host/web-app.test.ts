@@ -28,6 +28,7 @@ for (const [file, contents] of [
   ["index.html", SHELL],
   [".well-known/assetlinks.json", "[]"],
   ["about/index.html", "<p>prerendered</p>"],
+  ["about.data", "prerendered data"],
   ["favicon.ico", "icon"],
   ["assets/app.js", ASSET],
   ["assets/page.html", "<script>alert(1)</script>"],
@@ -81,12 +82,17 @@ describe("static files", () => {
     expect(response.headers.get("x-request-id")).toBeTruthy();
   });
 
-  it("serves other files for an hour and documents with no-cache", async () => {
+  it("serves other files for an hour and revalidates static documents and data in SSR mode", async () => {
     expect((await web.request("/favicon.ico")).headers.get("cache-control")).toBe("public, max-age=3600");
-    // A prerendered page: extensionless path, served from about/index.html.
-    const page = await web.request("/about");
-    expect(await page.text()).toBe("<p>prerendered</p>");
-    expect(page.headers.get("cache-control")).toBe("no-cache");
+    for (const [path, contents] of [
+      ["/index.html", SHELL],
+      ["/about", "<p>prerendered</p>"],
+      ["/about.data", "prerendered data"],
+    ] as const) {
+      const response = await web.request(path);
+      expect(await response.text()).toBe(contents);
+      expect(response.headers.get("cache-control")).toBe("no-cache");
+    }
   });
 
   it("answers revalidation of an unchanged file with 304", async () => {
@@ -260,6 +266,7 @@ describe("without server rendering", () => {
     ] as const) {
       const response = await web.request(path, init);
       expect(response.status).toBe(500);
+      expect(response.headers.has("cache-control")).toBe(false);
       expect(await response.text()).not.toBe(SHELL);
     }
   });
