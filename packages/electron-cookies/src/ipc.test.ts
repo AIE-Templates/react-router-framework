@@ -125,6 +125,27 @@ describe("window cookie IPC", () => {
     },
   );
 
+  it("applies signed Max-Age to server and document writes in the shared jar", async () => {
+    vi.useFakeTimers();
+    const { store, jar, write } = setup();
+    const expiry = Date.now() / 1000 + 600;
+    for (const raw of ["+600", "+0"]) {
+      await jar.storeResponseCookies(new Headers({ "set-cookie": "server=v; Max-Age=" + raw }), {
+        path: "/",
+        headers: new Headers(),
+      });
+      await write("document=v; Max-Age=" + raw);
+      expect(store.cookies.map(({ name, expirationDate }) => [name, expirationDate])).toEqual(
+        raw === "+600"
+          ? [
+              ["server", expiry],
+              ["document", expiry],
+            ]
+          : [],
+      );
+    }
+  });
+
   it("shares server, text and structured writes, preserving domain identity, visibility and path order", async () => {
     const { jar, store, read, write, invoke } = setup();
     await jar.storeResponseCookies(new Headers({ "set-cookie": "id=server; Domain=localhost; Path=/" }), {
@@ -565,7 +586,37 @@ describe("document.cookie outage handling", () => {
     }
   });
 
-  it("allows only one outstanding native refresh per URL across logical timeouts", async () => {
+  it("refreshes 100 query variants with one store read and preserves a newer foreground snapshot", async () => {
+    vi.useFakeTimers();
+    const { store, read, change } = setup();
+    const variants = Array.from({ length: 100 }, (_, i) => url + "?page=" + i);
+    await Promise.all(variants.map((target) => read(target)));
+    store.get.mockClear();
+    const background = deferred<Cookie[]>();
+    store.get.mockReturnValueOnce(background.promise);
+    try {
+      change();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.get).toHaveBeenCalledExactlyOnceWith({ url: storageOrigin + "/dir/page", httpOnly: false });
+      store.get.mockResolvedValueOnce([{ ...note, value: "newer" }]);
+      expect(await read(variants[0])).toBe("lang=newer");
+    } finally {
+      background.resolve([note]);
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    const original = store.get.getMockImplementation()!;
+    store.get.mockRejectedValue(new Error("store unavailable"));
+    try {
+      expect(await Promise.all(variants.map((target) => read(target)))).toEqual(
+        variants.map((_, i) => (i === 0 ? "lang=newer" : "lang=zh")),
+      );
+    } finally {
+      store.get.mockImplementation(original);
+    }
+    expect(await read(variants[0])).toBe("");
+  });
+
+  it("allows only one outstanding native refresh per pathname across logical timeouts", async () => {
     vi.useFakeTimers();
     const { store, read, write, change } = setup();
     await write("lang=zh");
@@ -576,10 +627,11 @@ describe("document.cookie outage handling", () => {
       change();
       await vi.advanceTimersByTimeAsync(0);
       await write("lang=en");
+      expect(await read(url + "?page=2")).toBe("lang=en");
       for (let i = 0; i < 3; i++) {
         change();
         await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
-        expect(store.get).toHaveBeenCalledTimes(2);
+        expect(store.get).toHaveBeenCalledTimes(3);
       }
       // A distinct URL and foreground reads still make progress.
       expect(await read(url + "/other")).toBe("lang=en");
@@ -587,7 +639,7 @@ describe("document.cookie outage handling", () => {
       stuck.resolve([{ ...note, value: "stale" }]);
     }
     await vi.advanceTimersByTimeAsync(1);
-    expect(store.get).toHaveBeenCalledTimes(4);
+    expect(store.get).toHaveBeenCalledTimes(5);
     store.get.mockRejectedValueOnce(new Error("read failed"));
     expect(await read()).toBe("lang=en");
   });

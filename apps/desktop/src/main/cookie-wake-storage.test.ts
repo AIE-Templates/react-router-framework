@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +11,41 @@ vi.mock(import("node:fs"), async (importOriginal) => {
   const fs = { ...(await importOriginal()) };
   vi.spyOn(fs, "readFileSync");
   return fs;
+});
+
+vi.mock(import("node:fs/promises"), async (importOriginal) => {
+  const fs = { ...(await importOriginal()) };
+  vi.spyOn(fs, "rename");
+  return fs;
+});
+
+it("keeps the previous complete index visible until the replacement is renamed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cookie-wake-"));
+  const file = join(dir, "cookie-wake-index.json");
+  const log = { warn: vi.fn<() => void>(), debug: vi.fn<() => void>() };
+  const storage = cookieWakeStorage(dir, log);
+  const previous = [{ scope: "app://app/", name: "old", eligible: true, since: 1 }];
+  const next = [...previous, { ...previous[0], name: "new" }];
+  const { rename: replace } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  try {
+    await storage.write(previous);
+    vi.mocked(rename)
+      .mockClear()
+      .mockImplementationOnce(async (temp, destination) => {
+        expect(destination).toBe(file);
+        expect(temp).not.toBe(file);
+        expect(readFileSync(file, "utf8")).toBe(JSON.stringify(previous));
+        expect(readFileSync(temp, "utf8")).toBe(JSON.stringify(next));
+        await replace(temp, destination);
+      });
+    await storage.write(next);
+    expect(storage.read()).toEqual(next);
+    expect(readdirSync(dir)).toEqual(["cookie-wake-index.json"]);
+    expect(rename).toHaveBeenCalledOnce();
+  } finally {
+    vi.mocked(rename).mockReset();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 it.each(["EACCES", "EIO", "EISDIR"])("preserves the wake index for the rest of the launch after %s", async (code) => {

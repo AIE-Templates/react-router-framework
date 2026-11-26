@@ -40,6 +40,18 @@ function splitPair(segment: string): [string, string] {
   return equals < 0 ? [trimWsp(segment), ""] : [trimWsp(segment.slice(0, equals)), trimWsp(segment.slice(equals + 1))];
 }
 
+function parseMaxAge(raw: string): number | undefined {
+  const prefix = /^[+-]?\d+/.exec(raw)?.[0];
+  if (!prefix) return undefined;
+  if (prefix.length !== raw.length) {
+    // Chromium also uses StringToInt64's best-effort result if it reached either limit.
+    const value = BigInt(prefix);
+    if (value > -(1n << 63n) && value < (1n << 63n) - 1n) return undefined;
+  }
+  // All values outside the exact Number range already exceed the cookie lifetime bounds.
+  return Number(prefix);
+}
+
 /** Parse the information that Electron's structured cookie API cannot recover from its fields. */
 export function parseSetCookie(header: string, { requestPath, now, serverDate }: ParseContext): ParsedSetCookie {
   const [pair, ...attributes] = header.split(";");
@@ -66,7 +78,7 @@ export function parseSetCookie(header: string, { requestPath, now, serverDate }:
         break;
       }
       case "max-age":
-        maxAge = /^-?\d+$/.test(raw) ? Number(raw) : undefined;
+        maxAge = parseMaxAge(raw);
         break;
       case "domain":
         domain = raw || undefined;

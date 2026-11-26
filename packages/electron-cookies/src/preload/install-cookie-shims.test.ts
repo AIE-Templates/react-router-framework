@@ -23,6 +23,9 @@ const malformed = "Cookie was malformed and could not be stored, due to problem(
 
 afterEach(() => document.body.replaceChildren());
 
+// Native Web IDL getters accept branded instances from any window.
+const handlers = new WeakMap<object, EventListener | null>();
+
 function install(installation: CookieInstallation = { cookieApi: true, fetch: true, creationUrl }) {
   const frame = document.createElement("iframe");
   frame.src = installation.creationUrl ?? creationUrl;
@@ -50,22 +53,25 @@ function install(installation: CookieInstallation = { cookieApi: true, fetch: tr
   // jsdom has no CookieStore binding. Supply a stable native-shaped singleton
   // and exercise the original getter, its prototype, and the serialized patches.
   class NativeStore extends page.EventTarget {
-    #handler: EventListener | null = null;
     get onchange() {
-      return this.#handler;
+      if (!handlers.has(this)) throw new TypeError("Illegal invocation");
+      return handlers.get(this) ?? null;
     }
     set onchange(value: EventListener | null) {
-      if (this.#handler) this.removeEventListener("change", this.#handler);
-      this.#handler = value;
+      const previous = this.onchange;
+      if (previous) this.removeEventListener("change", previous);
+      handlers.set(this, value);
       if (value) this.addEventListener("change", value);
     }
     get() {
-      throw new TypeError("Illegal invocation");
+      if (!handlers.has(this)) throw new TypeError("Illegal invocation");
+      return null;
     }
   }
   const native = NativeStore.prototype.get;
   Object.assign(NativeStore.prototype, { getAll: native, set: native, delete: native });
   const singleton = new NativeStore();
+  handlers.set(singleton, null);
   const accessor = () => singleton;
   if (installation.cookieApi) {
     Object.defineProperty(page, "cookieStore", { configurable: true, get: accessor });
@@ -116,6 +122,70 @@ describe("serialized main-world cookie installer", () => {
     expect(page.document.cookie).toBe("");
     expect(page.document.cookie).toBe("string=中文");
     expect(bridge.getCookie.mock.calls).toEqual([[creationUrl], [creationUrl]]);
+  });
+
+  it("routes borrowed document accessors through the receiving document's creation URL", () => {
+    const caller = install();
+    const url = location.origin + "/owner/page";
+    const owner = install({ cookieApi: true, fetch: true, creationUrl: url });
+    owner.page.history.pushState({}, "", "/elsewhere");
+    owner.bridge.getCookie.mockReturnValue("theme=blue");
+    const cookie = Object.getOwnPropertyDescriptor(caller.page.Document.prototype, "cookie")!;
+    expect(Reflect.apply(cookie.get!, owner.page.document, [])).toBe("theme=blue");
+    Reflect.apply(cookie.set!, owner.page.document, ["theme=red"]);
+    expect(owner.bridge.getCookie).toHaveBeenCalledExactlyOnceWith(url);
+    expect(owner.bridge.setCookie).toHaveBeenCalledExactlyOnceWith(url, "theme=red");
+    expect(caller.bridge.getCookie).not.toHaveBeenCalled();
+    expect(caller.bridge.setCookie).not.toHaveBeenCalled();
+  });
+
+  it("routes all four borrowed CookieStore methods through the receiving store's creation URL", async () => {
+    const caller = install();
+    const url = location.origin + "/owner/page";
+    const owner = install({ cookieApi: true, fetch: true, creationUrl: url });
+    owner.page.history.pushState({}, "", "/elsewhere");
+    owner.bridge.getAll.mockResolvedValue({ ok: true, value: [sample] });
+    const proto = caller.page.CookieStore.prototype;
+    expect(await proto.get.call(owner.store, { url, name: "a" })).toEqual(sample);
+    expect(await proto.getAll.call(owner.store)).toEqual([sample]);
+    await Reflect.apply(proto.set, owner.store, ["a", "b"]);
+    await proto.delete.call(owner.store, { name: "a" });
+    expect(owner.bridge.getAll.mock.calls).toEqual([
+      [url, "a"],
+      [url, undefined],
+    ]);
+    expect(owner.bridge.set.mock.calls).toEqual([
+      [url, sample],
+      [url, { ...sample, value: "", expires: 0 }],
+    ]);
+    expect(caller.bridge.getAll).not.toHaveBeenCalled();
+    expect(caller.bridge.set).not.toHaveBeenCalled();
+  });
+
+  it("keeps native bindings for unshimmed receivers and rejects lookalikes", () => {
+    const caller = install();
+    const native = install({ cookieApi: false, fetch: false, creationUrl: null });
+    const key = Symbol.for("@repo/electron-cookies/receiver-methods");
+    // Even a genuine lookup copied onto a branded native receiver cannot grant it jar access.
+    Object.defineProperty(native.page.document, key, Object.getOwnPropertyDescriptor(caller.page.document, key)!);
+    Object.defineProperty(native.accessor(), key, Object.getOwnPropertyDescriptor(caller.store, key)!);
+    const cookie = Object.getOwnPropertyDescriptor(caller.page.Document.prototype, "cookie")!;
+    try {
+      Reflect.apply(cookie.set!, native.page.document, ["native=visible"]);
+      expect(Reflect.apply(cookie.get!, native.page.document, [])).toBe("native=visible");
+    } finally {
+      native.page.document.cookie = "native=; Max-Age=0";
+    }
+    expect(Reflect.apply(caller.store.get, native.accessor(), ["a"])).toBeNull();
+    const fake = Object.create(Object.getPrototypeOf(caller.store));
+    for (const method of ["get", "getAll", "set", "delete"] as const) {
+      expect(() => Reflect.apply(caller.store[method], fake, ["a"])).toThrow("Illegal invocation");
+    }
+    expect(() => Reflect.apply(cookie.set!, {}, ["a=b"])).toThrow(/Document/);
+    expect(caller.bridge.getCookie).not.toHaveBeenCalled();
+    expect(caller.bridge.setCookie).not.toHaveBeenCalled();
+    expect(caller.bridge.getAll).not.toHaveBeenCalled();
+    expect(caller.bridge.set).not.toHaveBeenCalled();
   });
 
   it("DC-11 delegates other documents and invalid receivers to the original accessors", () => {

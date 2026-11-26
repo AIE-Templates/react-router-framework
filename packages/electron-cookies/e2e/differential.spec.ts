@@ -292,6 +292,46 @@ test("SRV-01 | future Expires and Max-Age including the 400-day ceiling", async 
   });
 });
 
+test("SRV-01/DC-03 | signed Max-Age in Set-Cookie and document.cookie matches native expiry", async ({ fixture }) => {
+  const inputs = [
+    ["positive", "+600", 600],
+    ["zero", "+0", 0],
+    ["doubleSign", "+-1", null],
+    ["space", " 600", 600],
+    ["overflow", "99999999999999999999", 400 * 86400],
+    ["underflow", "-99999999999999999999", 0],
+    ["limitSuffix", "+9223372036854775807x", 400 * 86400],
+    ["belowLimitSuffix", "9223372036854775806x", null],
+  ] as const;
+  await compareNative(fixture, "/", async (site) => {
+    const observations = [];
+    for (const source of ["server", "document"]) {
+      const fields = inputs.map(([name, raw]) => source + name + "=v; Secure; Path=/; Max-Age=" + raw);
+      await fixture.set(inputs.map(([name]) => source + name + "=seed; Secure; Path=/"));
+      const before = Date.now() / 1000;
+      if (source === "server") await fixture.set(fields);
+      else
+        await fixture.page.evaluate((lines) => {
+          for (const line of lines) document.cookie = line;
+        }, fields);
+      const after = Date.now() / 1000;
+      const rows = await fixture.stored(site);
+      for (const [name, , seconds] of inputs) {
+        const row = rows.find((cookie) => cookie.name === source + name);
+        if (seconds === 0) expect(row).toBeUndefined();
+        else if (seconds === null) expect(row).toMatchObject({ value: "v", session: true });
+        else {
+          expect(row?.value).toBe("v");
+          expect(row?.expirationDate).toBeGreaterThanOrEqual(before + seconds - 1);
+          expect(row?.expirationDate).toBeLessThanOrEqual(after + seconds + 1);
+        }
+        observations.push({ source, name, value: row?.value, session: row?.session });
+      }
+    }
+    return observations;
+  });
+});
+
 test("SRV-04 | equal-path order when a downgrade precedes a new sibling in the same response", async ({ fixture }) => {
   await compareNative(
     fixture,

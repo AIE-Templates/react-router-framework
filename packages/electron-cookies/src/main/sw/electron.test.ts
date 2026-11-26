@@ -29,7 +29,7 @@ function ipcPort() {
     },
   });
 }
-function setup(timeouts: Pick<CookieWorkerIpcOptions, "wakeTimeoutMs" | "taskTimeoutMs"> = {}) {
+function setup(timeouts: Pick<CookieWorkerIpcOptions, "wakeTimeoutMs" | "taskTimeoutMs" | "quitTimeoutMs"> = {}) {
   const ipc = ipcPort();
   const end = vi.fn<() => void>();
   const worker = {
@@ -114,6 +114,86 @@ function setup(timeouts: Pick<CookieWorkerIpcOptions, "wakeTimeoutMs" | "taskTim
 }
 
 afterEach(() => vi.useRealTimers());
+
+it.each([undefined, 50])(
+  "bounds quit with a stalled write and starts no later writes (quitTimeoutMs=%s)",
+  async (quitTimeoutMs) => {
+    vi.useFakeTimers();
+    const h = setup({ quitTimeoutMs });
+    const release = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await release.promise;
+      await persist(records);
+    });
+    const subscribe = { kind: "subscribe", subscriptions: [{ name: "new" }] };
+    try {
+      const active = h.worker.ipc.invoke(channels.acquire, {}, scope, subscribe);
+      const queued = h.ipc.invoke(channels.acquire, h.frameEvent, "doc", origin + "/other/", subscribe);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.storage.write).toHaveBeenCalledOnce();
+      const [snapshot] = h.storage.write.mock.calls[0];
+      const finished = vi.fn<() => void>();
+      const quit = h.adapter.quitAll().then(finished);
+      await expect(active).rejects.toThrow("owner destroyed");
+      await expect(queued).rejects.toThrow("owner destroyed");
+      const deadline = quitTimeoutMs ?? 2_000;
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+      expect(finished).not.toHaveBeenCalled();
+      expect(h.log.warn).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(finished).toHaveBeenCalledOnce();
+      await quit;
+      await h.adapter.quitAll();
+      expect(h.log.warn).toHaveBeenCalledExactlyOnceWith(
+        { timeoutMs: deadline },
+        expect.stringMatching(/wake index.*timed out/i),
+      );
+      expect(h.disk().map((r) => r.name)).toEqual(["x"]);
+      await expect(h.worker.ipc.invoke(channels.acquire, {}, scope, subscribe)).rejects.toThrow("closed");
+      release.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.disk()).toEqual(snapshot);
+      expect(h.storage.write).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      release.resolve();
+      await h.adapter.quitAll();
+    }
+  },
+);
+
+it("persists subscription cleanup when the stalled write finishes before the quit deadline", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const release = deferred<void>();
+  const persist = h.storage.write.getMockImplementation()!;
+  h.storage.write.mockImplementationOnce(async (records) => {
+    await release.promise;
+    await persist(records);
+  });
+  try {
+    const grant = h.worker.ipc.invoke(channels.acquire, {}, scope, {
+      kind: "subscribe",
+      subscriptions: [{ name: "new" }],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.storage.write).toHaveBeenCalledOnce();
+    const quit = h.adapter.quitAll();
+    await expect(grant).rejects.toThrow("owner destroyed");
+    release.resolve();
+    await quit;
+    expect(h.disk()).toEqual([
+      expect.objectContaining({ name: "x", eligible: true }),
+      expect.objectContaining({ name: "new", eligible: false }),
+    ]);
+    expect(h.log.warn).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    release.resolve();
+    await h.adapter.quitAll();
+  }
+});
 
 it("uses the Electron script URL on scoped IPC, shares jar writes and rejects foreign/stopped workers", async () => {
   const h = setup();

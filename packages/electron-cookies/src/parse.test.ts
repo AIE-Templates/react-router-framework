@@ -111,6 +111,22 @@ describe("parseSetCookie", () => {
       expect(set("a=1; Max-Age=1.5").expirationDate).toBeUndefined();
     });
 
+    it.each([
+      ["+600", now / 1000 + 600],
+      ["+0", 1],
+      ["+-1", undefined],
+      [" +600\t", now / 1000 + 600],
+      ["+ 600", undefined],
+      ["99999999999999999999", now / 1000 + MAX_AGE_S],
+      ["-99999999999999999999", 1],
+      ["9223372036854775806x", undefined],
+      ["+9223372036854775807x", now / 1000 + MAX_AGE_S],
+      ["-9223372036854775808x", 1],
+      ["99999999999999999999x", now / 1000 + MAX_AGE_S],
+    ] as const)("matches Chromium's signed Max-Age conversion for %j", (raw, expiry) => {
+      expect(set("a=1; Max-Age=" + raw).expirationDate).toBe(expiry);
+    });
+
     it("sets the expiry from Max-Age, which wins over Expires in any order", () => {
       expect(set("a=1; Max-Age=3600").expirationDate).toBe(now / 1000 + 3600);
       expect(set("a=1; Max-Age=60; Expires=Wed, 28 Oct 2026 13:00:00 GMT").expirationDate).toBe(now / 1000 + 60);
