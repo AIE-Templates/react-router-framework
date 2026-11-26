@@ -2,12 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  VISUAL_DEFAULTS,
-  visualRecordKernel as records,
-  type VisualPreferences,
-  type VisualMirrorSnapshot,
-} from "@repo/shared";
+import { visualRecordKernel as records, type VisualPreferences, type VisualMirrorSnapshot } from "@repo/shared";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, onTestFinished, vi } from "vitest";
 
 import { visualCookie } from "~/config/visual-cookie";
@@ -82,31 +77,69 @@ it.each(["web", "desktop"] as const)(
     expect(push).not.toHaveBeenCalled();
   },
 );
-it("G4–G7 persist explicit defaults, delete individual fields and publish a timestamped whole reset", () => {
-  const manager = tab();
-  const { actions } = manager;
-  function saved(preferences: Partial<VisualPreferences>) {
-    const record = records.decode(local()).record!;
-    expect(record.preferences).toEqual(preferences);
-    expect(manager.getSnapshot().preferences).toEqual(preferences);
-    expect(cookie()).toBe(records.encode(record));
-    return record.stamp.t;
+
+it.each(["missing", "invalid", "divergent"])("E11/E18 interleave two connects with %s replicas", (scenario) => {
+  const divergent = scenario === "divergent";
+  const winner = raw(2, { direction: "rtl" });
+  if (divergent) {
+    localStorage.setItem(key, raw(1, { reducedMotion: "full" }));
+    writeVisualCookie(window, winner);
+  } else if (scenario === "invalid") localStorage.setItem(key, "{}");
+  const write = vi.spyOn(Storage.prototype, "setItem");
+  const writeCookie = vi.spyOn(document, "cookie", "set");
+  const second = createVisualManager({ host: window });
+  // The first connect already read local. Finish the second connect before the first selects a winner.
+  const header = document.cookie;
+  const gate = vi.spyOn(document, "cookie", "get").mockImplementationOnce(() => {
+    releases.push(second.connect());
+    return header;
+  });
+  try {
+    const first = tab();
+    expect(second.getStatus().initialized).toBe(true);
+    expect(first.getSnapshot()).toEqual(second.getSnapshot());
+    expect(first.getSnapshot().preferences).toEqual(divergent ? { direction: "rtl" } : {});
+    expect(local()).toBe(divergent ? winner : scenario === "invalid" ? "{}" : null);
+    expect(cookie()).toBe(divergent ? winner : null);
+    signal();
+    restore();
+    first.actions.retry();
+    expect(write).toHaveBeenCalledTimes(divergent ? 1 : 0);
+    expect(writeCookie).not.toHaveBeenCalled();
+  } finally {
+    gate.mockRestore();
   }
-  actions.setReducedMotionPreference("reduce");
-  saved({ reducedMotion: "reduce" });
-  actions.setColorSchemePreference(VISUAL_DEFAULTS.colorScheme);
-  saved({ colorScheme: "auto", reducedMotion: "reduce" });
-  actions.setDirection("rtl");
-  const before = saved({ colorScheme: "auto", direction: "rtl", reducedMotion: "reduce" });
-  actions.resetColorSchemePreference();
-  expect(saved({ direction: "rtl", reducedMotion: "reduce" })).toBeGreaterThan(before);
-  actions.resetReducedMotionPreference();
-  saved({ direction: "rtl" });
-  actions.resetDirection();
-  const empty = saved({});
-  actions.resetVisualPreferences();
-  expect(saved({})).toBeGreaterThan(empty);
 });
+
+it("resets individual direction and motion choices and stamps even a repeated whole reset", () => {
+  const manager = tab();
+  manager.actions.setDirection("rtl");
+  manager.actions.setReducedMotionPreference("reduce");
+  manager.actions.resetReducedMotionPreference();
+  expect(records.decode(local()).record?.preferences).toEqual({ direction: "rtl" });
+  manager.actions.resetDirection();
+  const empty = records.decode(local()).record!;
+  expect(empty.preferences).toEqual({});
+  manager.actions.resetVisualPreferences();
+  expect(records.decode(local()).record!.stamp.t).toBeGreaterThan(empty.stamp.t);
+  expect(cookie()).toBe(local());
+});
+it("A2 preserves an invalid SPA record until the first user edit and never touches the cookie", () => {
+  localStorage.setItem(key, "{}");
+  const getCookie = vi.spyOn(document, "cookie", "get");
+  const setCookie = vi.spyOn(document, "cookie", "set");
+  const write = vi.spyOn(Storage.prototype, "setItem");
+  const manager = tab(spa);
+  expect(manager.getSnapshot().preferences).toEqual({});
+  expect(local()).toBe("{}");
+  expect(write).not.toHaveBeenCalled();
+  manager.actions.setDirection("rtl");
+  expect(write).toHaveBeenCalledOnce();
+  expect(records.decode(local()).record?.preferences).toEqual({ direction: "rtl" });
+  expect(getCookie).not.toHaveBeenCalled();
+  expect(setCookie).not.toHaveBeenCalled();
+});
+
 it("E1/E13 reads the latest observable record before committing without backfilling intermediate values", () => {
   const first = tab();
   const second = tab();
@@ -165,8 +198,40 @@ it.each(["local", "cookie"] as const)(
     expect(manager.getSnapshot().preferences).toEqual({ direction: "ltr" });
   },
 );
+it("E2 converges after two overlapping non-empty field edits based on the same snapshot", () => {
+  const a = tab();
+  const b = tab();
+  const now = vi.spyOn(Date, "now").mockReturnValue(10);
+  const writes = vi.spyOn(Storage.prototype, "setItem");
+  const oldCookie = document.cookie;
+  // B already sampled local. A completes both writes while B's cookie read is returning its old snapshot.
+  const gate = vi.spyOn(document, "cookie", "get").mockImplementationOnce(() => {
+    a.actions.setDirection("rtl");
+    now.mockReturnValue(11);
+    return oldCookie;
+  });
+  try {
+    b.actions.setReducedMotionPreference("reduce");
+    const commits = writes.mock.calls.map(([, value]) => records.decode(value).record);
+    expect(commits).toMatchObject([
+      { stamp: { t: 10 }, preferences: { direction: "rtl" } },
+      { stamp: { t: 11 }, preferences: { reducedMotion: "reduce" } },
+    ]);
+    expect(a.getSnapshot().preferences).toEqual({ direction: "rtl" });
+    expect(b.getSnapshot().preferences).toEqual({ reducedMotion: "reduce" });
+    const winner = writes.mock.calls[1][1];
+    signal();
+    expect(a.getSnapshot().preferences).toEqual({ reducedMotion: "reduce" });
+    expect(a.getSnapshot()).toEqual(b.getSnapshot());
+    expect([local(), cookie()]).toEqual([winner, winner]);
+    expect(writes).toHaveBeenCalledTimes(2);
+  } finally {
+    gate.mockRestore();
+  }
+});
+
 it.each([true, false])(
-  "E2/E14 simultaneous reset and field edit converge when winner remains observable: %s",
+  "E14 simultaneous reset and field edit converge when winner remains observable: %s",
   (survives) => {
     const b = tab(spa);
     const a = tab(spa);
@@ -189,8 +254,9 @@ it.each([true, false])(
     }
   },
 );
-it("E3/E4 repairs an interrupted stale backfill, including SSR while its cookie is behind", () => {
+it.each(["local", "memory"])("E3/E4 repairs a stale backfill when the winner survives in %s", (survivor) => {
   const a = tab();
+  const closeA = releases.at(-1)!;
   a.actions.setDirection("rtl");
   const old = cookie()!;
   document.cookie = visualCookie.name + "=; Max-Age=0; Path=/";
@@ -200,30 +266,64 @@ it("E3/E4 repairs an interrupted stale backfill, including SSR while its cookie 
     setter(value);
   });
   try {
-    tab();
+    tab(); // B resumes its pending repair after A commits.
     releases.pop()!();
+    const current = local()!;
+    expect(records.decode(current).record?.preferences).toEqual({ direction: "rtl", colorScheme: "dark" });
     expect(cookie()).toBe(old);
-    const current = local();
-    expect(current).not.toBe(old);
-    const handoff = visualCodec.read(visualBootstrapConfig, window);
-    expect(handoff.record).toEqual(records.decode(current).record);
-    // Now only A's memory retains the maximum; a freshly opened document cannot observe it yet.
-    localStorage.setItem(key, old);
-    expect(visualCodec.read(visualBootstrapConfig, window).record).toEqual(records.decode(old).record);
-    restore();
-    expect(local()).toBe(current);
-    expect(cookie()).toBe(current);
+    if (survivor === "local") closeA();
+    else localStorage.setItem(key, old);
+    const observable = records.decode(survivor === "local" ? current : old).record!;
+    window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window);
+    expect(window.frameworkVisualBootstrap.record).toEqual(observable);
+    const reopened = tab();
+    expect(reopened.getSnapshot().preferences).toEqual(observable.preferences);
+    if (survivor === "memory") restore();
+    expect(reopened.getSnapshot().preferences).toEqual({ direction: "rtl", colorScheme: "dark" });
+    expect([local(), cookie()]).toEqual([current, current]);
   } finally {
     gate.mockRestore();
   }
 });
-it("E5/E6/E11 keeps a stale request seed out of live selection and new tabs agree before any event", () => {
+
+it("E3 loses a closed SPA tab's commit if an interrupted backfill overwrites its last replica", () => {
+  const old = raw(1, { direction: "rtl" });
+  localStorage.setItem(key, old);
+  tab(spa); // B keeps the old record in memory and handles the storage event first.
+  const closeB = releases.at(-1)!;
+  const a = tab(spa);
+  const closeA = releases.at(-1)!;
+  localStorage.removeItem(key);
+  let lastReplica: string | null = null;
+  const write = localStorage.setItem.bind(localStorage);
+  const gate = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce((k, v) => {
+    a.actions.setColorSchemePreference("dark");
+    lastReplica = local();
+    closeA();
+    write(k, v);
+  });
+  try {
+    signal();
+    closeB();
+    const winner = records.decode(lastReplica).record!;
+    expect(winner.preferences).toEqual({ direction: "rtl", colorScheme: "dark" });
+    expect(winner.stamp.t).toBeGreaterThan(1);
+    expect(local()).toBe(old);
+    expect(tab(spa).getSnapshot().preferences).toEqual({ direction: "rtl" });
+    expect(local()).toBe(old);
+  } finally {
+    gate.mockRestore();
+  }
+});
+it("E5/E6 keeps a stale request seed out of live selection and new tabs agree before any event", () => {
   const original = raw(1, { direction: "ltr" });
   writeVisualCookie(window, original);
   const initialRecord = records.decode(cookie()).record;
   const a = tab();
   a.actions.setDirection("rtl");
   const newer = cookie()!;
+  releases.pop()!(); // Refresh immediately after the command, before any storage event.
+  expect(tab().getSnapshot().preferences).toEqual({ direction: "rtl" });
   localStorage.setItem(key, original);
   window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window);
   const b = createVisualManager({ host: window, initialRecord });
@@ -246,15 +346,22 @@ it("E12/E15/E16 reconciles whole records on pageshow and only visible visibility
   restore();
   expect(local()).toBe(b);
   expect(cookie()).toBe(b);
-  localStorage.setItem(key, raw(6, {}));
+  const peer = tab();
+  peer.actions.resetVisualPreferences();
+  const newest = local();
+  writeVisualCookie(window, b);
   const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
   try {
     document.dispatchEvent(new Event("visibilitychange"));
     expect(manager.getSnapshot().preferences).toEqual({ reducedMotion: "full" });
+    expect(cookie()).toBe(b);
     visibility.mockReturnValue("visible");
     document.dispatchEvent(new Event("visibilitychange"));
     expect(manager.getSnapshot().preferences).toEqual({});
-    expect(cookie()).toBe(local());
+    expect(cookie()).toBe(newest);
+    localStorage.setItem(key, a); // Manual regression to an older stamp.
+    restore();
+    expect([local(), cookie()]).toEqual([newest, newest]);
   } finally {
     visibility.mockRestore();
   }
@@ -277,28 +384,29 @@ it.each(["retry", "pageshow"])("recovers local quota failure on %s without produ
   expect(local()).toBe(target);
   expect(manager.getStatus().storage.local).toBe("ok");
 });
-it.each(["access", "read"] as const)(
-  "E17 distinguishes local %s failures from a full quota and probes again on restore",
-  (boundary) => {
-    const manager = tab();
-    const fault =
-      boundary === "access" ? vi.spyOn(window, "localStorage", "get") : vi.spyOn(Storage.prototype, "getItem");
-    fault.mockImplementation(() => {
-      throw new Error("blocked");
-    });
-    try {
-      manager.actions.setDirection("rtl");
-      expect(manager.getStatus().storage).toEqual({ local: "unavailable", cookie: "ok", native: "absent" });
-      signal();
-      expect(fault).toHaveBeenCalledOnce();
-    } finally {
-      fault.mockRestore();
-    }
-    restore();
-    expect(manager.getStatus().storage.local).toBe("ok");
-    expect(local()).toBe(cookie());
-  },
-);
+it.each([
+  ["access", "retry"],
+  ["read", "pageshow"],
+] as const)("E17 distinguishes local %s failure from a full quota and probes again on %s", (boundary, trigger) => {
+  const manager = tab();
+  const fault =
+    boundary === "access" ? vi.spyOn(window, "localStorage", "get") : vi.spyOn(Storage.prototype, "getItem");
+  fault.mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  try {
+    manager.actions.setDirection("rtl");
+    expect(manager.getStatus().storage).toEqual({ local: "unavailable", cookie: "ok", native: "absent" });
+    signal();
+    expect(fault).toHaveBeenCalledOnce();
+  } finally {
+    fault.mockRestore();
+  }
+  if (trigger === "retry") manager.actions.retry();
+  else restore();
+  expect(manager.getStatus().storage.local).toBe("ok");
+  expect(local()).toBe(cookie());
+});
 it.each([true, false])("E19 retains other tabs' fields with local blocked and SSR=%s", (ssr) => {
   const fault = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
     throw new Error("blocked");
@@ -308,6 +416,12 @@ it.each([true, false])("E19 retains other tabs' fields with local blocked and SS
     const b = tab(ssr ? {} : spa);
     a.actions.setDirection("rtl");
     b.actions.setColorSchemePreference("dark");
+    expect(a.getSnapshot().preferences).toEqual({ direction: "rtl" });
+    expect(a.getStatus().storage.local).toBe("unavailable");
+    expect(b.getStatus().storage.local).toBe("unavailable");
+    expect(records.decode(cookie()).record?.preferences).toEqual(
+      ssr ? { direction: "rtl", colorScheme: "dark" } : undefined,
+    );
     expect(b.getSnapshot().preferences).toEqual(
       ssr ? { direction: "rtl", colorScheme: "dark" } : { colorScheme: "dark" },
     );
@@ -374,26 +488,59 @@ it("applies the connected manager's appearance to the document", () => {
   expect(document.documentElement.dir).toBe("ltr");
 });
 it("resolves system changes while auto and releases both media subscriptions", () => {
-  const listeners = new Set<() => void>();
-  let matches = false;
-  vi.stubGlobal("matchMedia", () => ({
-    get matches() {
-      return matches;
-    },
-    addEventListener: (_: string, cb: () => void) => listeners.add(cb),
-    removeEventListener: (_: string, cb: () => void) => listeners.delete(cb),
-  }));
+  const dark = { matches: false, listeners: new Set<() => void>() };
+  const motion = { matches: false, listeners: new Set<() => void>() };
+  vi.stubGlobal("matchMedia", (query: string) => {
+    const media =
+      query === "(prefers-color-scheme: dark)"
+        ? dark
+        : query === "(prefers-reduced-motion: reduce)"
+          ? motion
+          : undefined;
+    if (!media) throw new Error("Unexpected media query: " + query);
+    return {
+      get matches() {
+        return media.matches;
+      },
+      addEventListener: (_: string, cb: () => void) => media.listeners.add(cb),
+      removeEventListener: (_: string, cb: () => void) => media.listeners.delete(cb),
+    };
+  });
   const manager = tab();
-  matches = true;
-  listeners.forEach((cb) => cb());
-  expect(manager.getSnapshot().resolved).toEqual({ colorScheme: "dark", direction: "ltr", reducedMotion: true });
+  function toggle(media: typeof dark) {
+    media.matches = !media.matches;
+    media.listeners.forEach((cb) => cb());
+  }
+  function resolved(colorScheme: "light" | "dark", reducedMotion: boolean) {
+    expect(manager.getSnapshot().resolved).toEqual({ colorScheme, direction: "ltr", reducedMotion });
+  }
+  resolved("light", false);
+  toggle(dark);
+  resolved("dark", false);
+  toggle(motion);
+  resolved("dark", true);
   expect(manager.getSnapshot().preferences).toEqual({});
   manager.actions.setColorSchemePreference("light");
+  toggle(motion);
+  resolved("light", false);
+  toggle(motion);
+  resolved("light", true);
   manager.actions.setReducedMotionPreference("full");
-  listeners.forEach((cb) => cb());
-  expect(manager.getSnapshot().resolved).toMatchObject({ colorScheme: "light", reducedMotion: false });
+  resolved("light", false);
+  toggle(dark);
+  toggle(motion);
+  resolved("light", false);
+  manager.actions.setColorSchemePreference("dark");
+  manager.actions.setReducedMotionPreference("reduce");
+  resolved("dark", true);
+  toggle(dark);
+  toggle(motion);
+  toggle(dark);
+  toggle(motion);
+  resolved("dark", true);
   releases.pop()!();
-  expect(listeners.size).toBe(0);
+  expect(dark.listeners.size).toBe(0);
+  expect(motion.listeners.size).toBe(0);
 });
 
 it("loses a Web-only edit on refresh when both writes fail", () => {
@@ -535,7 +682,7 @@ it("E11 interleaves two window connections before the first repairs its stale lo
   expect(writeCookie).toHaveBeenCalledOnce();
   expect(push).not.toHaveBeenCalled();
 });
-it("E20/E21 repairs from the pending native mirror and confirms it only on explicit retry", async () => {
+it("E20/E21 repairs stale backfills from a peer's pending native mirror and confirms it only on explicit retry", async () => {
   const value = raw(5, { direction: "rtl" });
   const stale = raw(2, { direction: "ltr" });
   let mirror = stale;
@@ -564,6 +711,27 @@ it("E20/E21 repairs from the pending native mirror and confirms it only on expli
   await Promise.resolve();
   expect(push).toHaveBeenCalledExactlyOnceWith(value);
   expect(peer.getStatus().storage.native).toBe("ok");
+});
+it("E20/E21 repairs from the pending native mirror and confirms it only on explicit retry", async () => {
+  const value = raw(5, { direction: "rtl" });
+  localStorage.setItem(key, raw(3, { direction: "ltr" }));
+  writeVisualCookie(window, raw(2, { colorScheme: "light" }));
+  let pending = true;
+  const push = vi.fn<(value: string) => Promise<"ok">>(async () => {
+    pending = false;
+    return "ok" as const;
+  });
+  const manager = tab({ nativeSource: nativeSource(() => ({ record: value, pending }), push) });
+  expect(local()).toBe(value);
+  expect(cookie()).toBe(value);
+  signal();
+  restore();
+  expect(push).not.toHaveBeenCalled();
+  expect(manager.getStatus().storage.native).toBe("failed");
+  manager.actions.retry();
+  await Promise.resolve();
+  expect(push).toHaveBeenCalledExactlyOnceWith(value);
+  expect(manager.getStatus().storage.native).toBe("ok");
 });
 it("re-probes native read and push transport failures without blocking the Web stores", async () => {
   const read = vi
