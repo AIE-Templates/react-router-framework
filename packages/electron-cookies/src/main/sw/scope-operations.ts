@@ -143,10 +143,12 @@ export class ScopeOperations {
       this.#logger.warn({ timeoutMs }, "Finalizing cookie wake index timed out");
       finished.resolve();
     });
-    void Promise.all(this.#tails.values()).then(() => {
-      cancelTimeout();
-      return finished.resolve();
-    });
+    void Promise.all(this.#tails.values())
+      .then(() => this.#index.flushForQuit())
+      .then(() => {
+        cancelTimeout();
+        return finished.resolve();
+      });
     return this.#quit;
   }
 }

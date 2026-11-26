@@ -586,6 +586,23 @@ describe("document.cookie outage handling", () => {
     }
   });
 
+  it("refreshes only paths in scope, including when a matching cookie becomes HttpOnly", async () => {
+    vi.useFakeTimers();
+    const { store, read, change } = setup();
+    const paths = ["/settings", "/settings/page", "/settings-old", "/catalog", "/"];
+    await Promise.all(paths.map((path) => read(origin + path)));
+    store.get.mockClear();
+    change({ ...note, path: "/unused" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.get).not.toHaveBeenCalled();
+    change({ ...note, path: "/settings", httpOnly: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.get.mock.calls.map(([filter]) => filter.url)).toEqual([
+      storageOrigin + "/settings",
+      storageOrigin + "/settings/page",
+    ]);
+  });
+
   it("refreshes 100 query variants with one store read and preserves a newer foreground snapshot", async () => {
     vi.useFakeTimers();
     const { store, read, change } = setup();

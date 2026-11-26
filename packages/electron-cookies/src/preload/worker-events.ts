@@ -30,6 +30,7 @@ export function installWorkerEvents(bridge: WorkerEventBridge): void {
   const { startsWith, endsWith } = String.prototype;
   const { some, filter } = Array.prototype;
   const report = globalThis.reportError.bind(globalThis);
+  const enqueueMicrotask = globalThis.queueMicrotask.bind(globalThis);
   const resolve = Promise.resolve.bind(Promise);
   const { then } = Promise.prototype;
   const events = new Map<string, () => void>();
@@ -54,8 +55,11 @@ export function installWorkerEvents(bridge: WorkerEventBridge): void {
       }
     }
     function settled() {
-      pending--;
-      acknowledge();
+      // Other reactions to this promise may add another lifetime promise before the decrement.
+      enqueueMicrotask(() => {
+        pending--;
+        acknowledge();
+      });
     }
     track(eventId, finish);
     try {

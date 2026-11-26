@@ -87,6 +87,7 @@ function setup(target = scope) {
     self,
     location: self.location,
     EventTarget,
+    queueMicrotask,
     AbortSignal,
     TextEncoder,
     Headers,
@@ -339,6 +340,33 @@ describe("serialized service-worker preload", () => {
     expect(listener).not.toHaveBeenCalled();
     h.send("D");
     await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+  });
+
+  it.each(["fulfilled", "rejected"])("allows a %s lifetime promise's reaction to extend the event", async (outcome) => {
+    const h = setup();
+    // A cross-realm promise would add an assimilation microtask before the worker's reaction.
+    const first: ReturnType<typeof deferred<void>> = runInContext("Promise.withResolvers()", h.realm);
+    const last = deferred<void>();
+    const dispatched = deferred<InstanceType<typeof h.ChangeEvent>>();
+    h.self.addEventListener("cookiechange", (event) => {
+      if (!(event instanceof h.ChangeEvent)) throw new Error("wrong event interface");
+      event.waitUntil(first.promise);
+      dispatched.resolve(event);
+    });
+    h.send("A");
+    const event = await dispatched.promise;
+    const extend = () => event.waitUntil(last.promise);
+    const extension = first.promise.then(extend, extend);
+    if (outcome === "fulfilled") first.resolve();
+    else first.reject(new Error("first extension rejected"));
+    try {
+      await extension;
+      expect(h.ipc.send.mock.calls).toEqual([[channels.started, "A"]]);
+    } finally {
+      last.resolve();
+    }
+    await vi.waitFor(() => expect(h.ipc.send).toHaveBeenLastCalledWith(channels.ack, "A"));
+    expect(() => extend()).toThrow(expect.objectContaining({ name: "InvalidStateError" }));
   });
 
   it("SW-11/12 ACKs only after the last appended promise settles, including rejection", async () => {

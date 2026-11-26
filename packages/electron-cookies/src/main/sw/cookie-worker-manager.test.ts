@@ -194,6 +194,105 @@ describe("wake index and subscription ownership", () => {
     expect(h.storage.write).toHaveBeenCalledTimes(3);
   });
 
+  it("bounds queued index writes and discards a late subscribe before accepting a retry", async () => {
+    const h = setup([seed("existing")]);
+    const release = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await release.promise;
+      await persist(records);
+    });
+    const failed = vi.fn<(error: Error) => void>();
+    const attempt = (target: string) => h.manager.acquire(target, subscribe, "frame").catch(failed);
+    const attempts = [attempt(scope), attempt(otherScope)];
+    try {
+      await tick(5_000);
+      expect(failed).toHaveBeenCalledTimes(2);
+      expect(failed.mock.calls[0][0].message).toMatch(/timed out/i);
+      attempts.push(attempt(scope));
+      await tick();
+      expect(failed).toHaveBeenCalledTimes(3);
+      expect(h.storage.write).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+      await tick();
+      await Promise.all(attempts);
+    }
+    expect(h.disk()).toEqual([seed("existing")]);
+    h.change("after late write");
+    await tick();
+    expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    const grant = await h.manager.acquire(otherScope, subscribe, "retry");
+    await h.manager.complete(grant.operationId, true);
+    expect(h.disk()).toEqual([seed("existing"), { ...seed("x", otherScope), since: Date.now() }]);
+    await h.manager.quitAll();
+  });
+
+  it("skips index writes for a registration with no hints and repairs a committed unregister", async () => {
+    const h = setup([seed()]);
+    const empty = await h.manager.acquire(otherScope, unregister, "frame");
+    await h.manager.complete(empty.operationId, true);
+    expect(h.storage.write).not.toHaveBeenCalled();
+    const existing = await h.manager.acquire(scope, unregister, "frame");
+    h.storage.write.mockRejectedValueOnce(new Error("disk unavailable"));
+    await h.manager.complete(existing.operationId, true);
+    await tick();
+    expect(h.logger.warn).toHaveBeenCalledOnce();
+    expect(h.storage.write).toHaveBeenCalledTimes(2);
+    expect(h.disk()).toEqual([]);
+    h.change();
+    expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    await h.manager.quitAll();
+  });
+
+  it("keeps a concurrent unregister when an earlier subscribe write finishes", async () => {
+    const h = setup([seed("removed", otherScope)]);
+    const remove = await h.manager.acquire(otherScope, unregister, "other frame");
+    const release = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await release.promise;
+      await persist(records);
+    });
+    const grant = h.manager.acquire(scope, subscribe, "frame");
+    await tick();
+    const removed = h.manager.complete(remove.operationId, true);
+    try {
+      h.manager.onChange({ changed: [cookie("removed", "/")], deleted: [], time: Date.now() });
+      expect(h.startWorkerForScope).not.toHaveBeenCalled();
+      expect(h.storage.write).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+    }
+    await h.manager.complete((await grant).operationId, true);
+    await removed;
+    expect(h.disk()).toEqual([{ ...seed(), since: 1_000 }]);
+    await h.manager.quitAll();
+  });
+
+  it("retries a failed unsubscribe cleanup on clean quit after the disk recovers", async () => {
+    const h = setup([seed()]);
+    const grant = await h.manager.acquire(scope, unsubscribe, "frame");
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockRejectedValue(new Error("disk unavailable"));
+    try {
+      await h.manager.complete(grant.operationId, true);
+      await tick();
+      expect(h.storage.write).toHaveBeenCalledTimes(2);
+      expect(h.disk()).toEqual([seed()]);
+      h.change();
+      expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    } finally {
+      h.storage.write.mockImplementation(persist);
+    }
+    await h.manager.quitAll();
+    expect(h.disk()).toEqual([]);
+    const restarted = new CookieWorkerManager(h.options);
+    restarted.onChange({ changed: [x], deleted: [], time: Date.now() });
+    expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    await restarted.quitAll();
+  });
+
   it("SW-09: a failed wildcard wakes but cannot authorize an event older than the first successful subscribe", async () => {
     const h = setup();
     const old = await h.manager.acquire(scope, { kind: "subscribe", subscriptions: [{}] }, "frame");

@@ -22,7 +22,7 @@ export interface Scheduler {
 
 export interface WakeLogger {
   warn(
-    fields: { scope: string; operationId?: string; eventId?: string } | { timeoutMs: number },
+    fields: { scope: string; operationId?: string; eventId?: string } | { timeoutMs: number } | { scopeCount: number },
     message: string,
   ): void;
 }

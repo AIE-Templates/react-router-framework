@@ -41,7 +41,7 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
 
   constructor(options: CookieWorkerOptions<Item>) {
     this.#options = options;
-    this.#index = new WakeIndex(options.storage);
+    this.#index = new WakeIndex(options.storage, options.scheduler, options.logger);
     this.#operations = new ScopeOperations(this.#index, options.scheduler, options.logger, (scope) =>
       this.#cancelScope(scope),
     );

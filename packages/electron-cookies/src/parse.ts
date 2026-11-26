@@ -130,6 +130,11 @@ export function defaultPath(requestPath: string): string {
   return last <= 0 ? "/" : requestPath.slice(0, last);
 }
 
+/** Cookie Path matching includes the directory boundary. */
+export function cookiePathMatches(pathname: string, cookiePath: string): boolean {
+  return pathname === cookiePath || pathname.startsWith(cookiePath.endsWith("/") ? cookiePath : cookiePath + "/");
+}
+
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 const weekday = /^(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)$/i;

@@ -1,5 +1,6 @@
 import type { Cookie, Cookies, IpcMain, IpcMainEvent, IpcMainInvokeEvent, WebContents, WebFrameMain } from "electron";
 
+import { cookiePathMatches } from "./parse.ts";
 import type { ScriptCookies } from "./script-cookies.ts";
 import { cookieIpcChannels, type CookiePush, type CookieReply, type DocumentCookieSetReply } from "./shared.ts";
 import { createCookieSnapshots } from "./snapshots.ts";
@@ -125,7 +126,7 @@ export function installCookieIpc({
   });
   changes.on("changed", (_event, cookie, cause) => {
     if (cookie.domain?.replace(/^\./, "") !== script.storageHost) return;
-    snapshots.storageChanged();
+    snapshots.storageChanged(cookie.path ?? "/");
     const items = publicChange(script, cookie, cause);
     if (!items) return;
     const row = items.changed[0] ?? items.deleted[0];
@@ -136,7 +137,7 @@ export function installCookieIpc({
           continue;
         }
         const path = new URL(creationUrl).pathname;
-        if (path !== row.path && !path.startsWith(row.path.endsWith("/") ? row.path : row.path + "/")) continue;
+        if (!cookiePathMatches(path, row.path)) continue;
         frame.send(channels.changed, {
           documentId,
           ...items,

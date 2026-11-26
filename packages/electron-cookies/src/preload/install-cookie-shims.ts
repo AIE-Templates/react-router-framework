@@ -424,7 +424,7 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
     });
   }
   if (windowBridge) {
-    registerReceiver(store, operations);
+    registerReceiver(store, { ...operations, listen });
     const onchange = getOwnPropertyDescriptor(prototype, "onchange")!;
     const ownerKey = Symbol.for("@repo/electron-cookies/window-change-listener");
     const addListener = new NativeProxy(add, {
@@ -467,7 +467,9 @@ export function installCookieShims(bridge: CookieShimBridge | WorkerStoreBridge)
       ...onchange,
       set(this: CookieStore, value: unknown) {
         apply(onchange.set!, this, [value]);
-        if (this === store && apply(onchange.get!, this, [])) listen();
+        if (!apply(onchange.get!, this, [])) return;
+        if (this === store) listen();
+        else borrowedBinding(this, "listen", onchange.get!)?.();
       },
     });
     defineProperty(getOwnPropertyDescriptor(prototype, "onchange")!.set!, ownerKey, {
