@@ -1,10 +1,15 @@
 import { DirectionProvider, MantineProvider, useDirection, mergeThemeOverrides } from "@mantine/core";
-import { useEffect, useLayoutEffect, useMemo, useState, type PropsWithChildren } from "react";
+import { VISUAL_DEFAULTS } from "@repo/shared";
+import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type PropsWithChildren } from "react";
 
 import { useVisualManager, useVisualState } from "~/managers/visual/hooks";
 
 import { createMantineColorSchemeManager } from "./color-scheme-manager";
 import { visualTheme, visualVariables } from "./theme";
+
+// Core's prepaint script and connected manager own both root scheme attributes.
+// Mantine's mount effects would otherwise replay the SSR scheme over the prepaint result.
+const getMantineRootElement = () => undefined;
 
 const useClientLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 function DirectionBridge() {
@@ -26,6 +31,12 @@ function DirectionBridge() {
 export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ nonce?: string }>) {
   const manager = useVisualManager();
   const [colorSchemeManager] = useState(() => createMantineColorSchemeManager(manager));
+  // Fixed window appearance is supplied by the client host after the SSR request.
+  const fixedAppearance = useSyncExternalStore(
+    manager.subscribeStatus,
+    () => manager.fixedAppearance,
+    () => undefined,
+  );
   // The first component render matches SSR; DirectionBridge adopts client state before paint.
   const { resolved } = useVisualState();
   const theme = useMemo(() => {
@@ -49,11 +60,12 @@ export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ n
   return (
     <DirectionProvider initialDirection={resolved.direction} detectDirection={false}>
       <MantineProvider
+        getRootElement={getMantineRootElement}
         theme={theme}
         cssVariablesResolver={visualVariables}
         colorSchemeManager={colorSchemeManager}
-        forceColorScheme={manager.fixedAppearance}
-        defaultColorScheme="auto"
+        forceColorScheme={fixedAppearance}
+        defaultColorScheme={VISUAL_DEFAULTS.colorScheme}
         getStyleNonce={nonce ? () => nonce : undefined}
       >
         <DirectionBridge />

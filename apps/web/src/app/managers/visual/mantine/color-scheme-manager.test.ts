@@ -15,6 +15,7 @@ it("breaks Mantine's subscribe/set feedback loop and releases replaced subscript
   notify.mockClear();
   visual.actions.setColorSchemePreference("dark");
   expect(notify).toHaveBeenCalledExactlyOnceWith("dark");
+  expect(manager.get("auto")).toBe("dark");
   visual.actions.setDirection("rtl");
   expect(notify).toHaveBeenCalledTimes(1);
   manager.clear();
