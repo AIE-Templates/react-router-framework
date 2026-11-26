@@ -8,6 +8,8 @@ Run `pnpm dev` at the workspace root for HMR at http://localhost:5173. Build wit
 
 SSR is the default. Set SSR=false for an SPA build; application route exports must be compatible. Server loaders/actions/middleware/headers (except the build-time root loader) and non-root HydrateFallback prevent SPA builds. Client data APIs can work in both modes, with a first-render skeleton followed by browser data loading.
 
+SSR HTML documents and React Router `.data` responses can contain a request-specific visual cookie snapshot. Configure the deployment or reverse proxy to prevent shared caches from reusing either response across requests, for example with `Cache-Control: private` or a cache bypass for requests carrying cookies. The Core root loader cannot set document and data cache headers for this dual SSR/SPA template. Static SPA files use build-time defaults and can be cached normally.
+
 Use the configured start command to serve the build through react-router-serve. Run Docker builds from the workspace root.
 
 ### Development dependency optimization
