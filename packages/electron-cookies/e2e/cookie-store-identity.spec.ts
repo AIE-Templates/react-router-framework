@@ -77,12 +77,13 @@ test("worker CookieStore identity, global descriptor, prototype read and cookiec
   expect(results[1]).toEqual(results[0]);
 });
 
-for (const source of ["EventTarget.prototype", "document", "child document"] as const) {
+for (const source of ["EventTarget.prototype", "document", "child document", "child onchange setter"] as const) {
   test(`CS-11 | first change listener borrowed from ${source} receives the mutation`, async ({ fixture }) => {
     await compareNative(fixture, "/", async () => {
       const result = await fixture.page.evaluate(async (from) => {
         let target: EventTarget = from === "EventTarget.prototype" ? EventTarget.prototype : document;
-        if (from === "child document") {
+        let onchange: PropertyDescriptor | undefined;
+        if (from === "child document" || from === "child onchange setter") {
           const frame = document.createElement("iframe");
           const loaded = new Promise<void>((resolve) =>
             frame.addEventListener("load", () => resolve(), { once: true }),
@@ -91,17 +92,17 @@ for (const source of ["EventTarget.prototype", "document", "child document"] as 
           document.body.append(frame);
           await loaded;
           target = frame.contentDocument!;
+          if (from === "child onchange setter") {
+            onchange = Object.getOwnPropertyDescriptor(frame.contentWindow!.window.CookieStore.prototype, "onchange");
+          }
         }
-        const changed = new Promise<string[]>((resolve) =>
-          target.addEventListener.call(
-            cookieStore,
-            "change",
-            (event) => {
-              if (event instanceof CookieChangeEvent) resolve(event.changed.map((cookie) => cookie.name!));
-            },
-            { once: true },
-          ),
-        );
+        const changed = new Promise<string[]>((resolve) => {
+          const listener = (event: Event) => {
+            if (event instanceof CookieChangeEvent) resolve(event.changed.map((cookie) => cookie.name!));
+          };
+          if (from === "child onchange setter") onchange!.set!.call(cookieStore, listener);
+          else target.addEventListener.call(cookieStore, "change", listener, { once: true });
+        });
         await cookieStore.set("borrowed", "first");
         return { own: Object.hasOwn(CookieStore.prototype, "addEventListener"), names: await changed };
       }, source);

@@ -80,7 +80,7 @@ function setup(timeouts: Pick<CookieWorkerIpcOptions, "wakeTimeoutMs" | "taskTim
     jar,
     storage,
     log,
-    isAppUrl: (value: string) => value.startsWith(origin + "/"),
+    isAppUrl: vi.fn<(value: string) => boolean>((value) => value.startsWith(origin + "/")),
     ownsSender: (contents: unknown) => contents === sender,
     prefix: "fixture",
   };
@@ -110,6 +110,7 @@ function setup(timeouts: Pick<CookieWorkerIpcOptions, "wakeTimeoutMs" | "taskTim
     end,
     ipc,
     frameEvent,
+    isAppUrl: options.isAppUrl,
   };
 }
 
@@ -422,21 +423,118 @@ it("retries stalled wakes at the configured timeout and delivers the next change
   }
 });
 
-it("uses the configured event timeout and ignores a later ACK for the expired task", async () => {
+it.each([true, false])("uses the event timeout and ignores a later ACK (started=%s)", async (started) => {
   vi.useFakeTimers();
   const h = setup({ taskTimeoutMs: 250 });
   try {
     h.change("inserted");
     await vi.advanceTimersByTimeAsync(0);
     const { eventId } = h.worker.send.mock.calls[0][1];
-    h.worker.ipc.emit(channels.started, {}, eventId);
+    if (started) h.worker.ipc.emit(channels.started, {}, eventId);
     await vi.advanceTimersByTimeAsync(249);
     expect(h.end).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(h.worker.send).toHaveBeenLastCalledWith(channels.finish, eventId);
+    const dropWarning = [{ scope, eventId }, expect.stringContaining("Dropping")];
+    expect(h.log.warn.mock.calls).toEqual(started ? [] : [dropWarning]);
     h.worker.ipc.emit(channels.ack, {}, eventId);
     expect(h.end).toHaveBeenCalledOnce();
   } finally {
     await h.adapter.quitAll();
   }
 });
+
+it("rejects a foreign frame origin in an owned webContents", async () => {
+  const h = setup();
+  try {
+    const foreign = { ...h.frameEvent, senderFrame: { ...h.frameEvent.senderFrame, origin: "null" } };
+    await expect(h.ipc.invoke(channels.acquire, foreign, "doc", scope, { kind: "unregister" })).rejects.toThrow(
+      "Invalid subscription sender",
+    );
+    const grant = await h.ipc.invoke(channels.acquire, h.frameEvent, "doc", scope, { kind: "unregister" });
+    expect(grant).toHaveProperty("operationId");
+  } finally {
+    await h.adapter.quitAll();
+  }
+});
+
+it("rejects a foreign registration scope from an authorized frame", async () => {
+  const h = setup();
+  try {
+    const acquire = (target: string) =>
+      h.ipc.invoke(channels.acquire, h.frameEvent, "doc", target, { kind: "unregister" });
+    await expect(acquire(h.foreign.scope)).rejects.toThrow("Invalid registration scope");
+    expect(await acquire(scope)).toHaveProperty("operationId");
+  } finally {
+    await h.adapter.quitAll();
+  }
+});
+
+it("rechecks the started worker scope against host policy after the native await", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const waking = deferred<typeof h.worker>();
+  h.workers.startWorkerForScope.mockReturnValueOnce(waking.promise);
+  try {
+    h.change("inserted");
+    expect(h.workers.startWorkerForScope).toHaveBeenCalledOnce();
+    h.isAppUrl.mockReturnValue(false);
+    waking.resolve(h.worker);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.worker.startTask).not.toHaveBeenCalled();
+    h.isAppUrl.mockReset();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.worker.send).toHaveBeenCalledOnce();
+  } finally {
+    waking.resolve(h.worker);
+    await h.adapter.quitAll();
+  }
+});
+
+it.each(["subscribe", "unsubscribe"] as const)(
+  "bounds a stalled %s write and admits a retry after reconciliation",
+  async (kind) => {
+    vi.useFakeTimers();
+    const h = setup();
+    const release = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await release.promise;
+      await persist(records);
+    });
+    const acquire = (target: string, operation: string) =>
+      h.ipc.invoke(channels.acquire, h.frameEvent, "doc", target, {
+        kind: operation,
+        subscriptions: [{ name: operation === "subscribe" ? "new" : "x" }],
+      });
+    try {
+      const complete = (grant: unknown) => {
+        expect.assert(grant && typeof grant === "object" && "operationId" in grant);
+        return h.ipc.invoke(channels.complete, h.frameEvent, "doc", grant.operationId, true);
+      };
+      const pending = kind === "subscribe" ? acquire(scope, kind) : complete(await acquire(scope, kind));
+      const result = pending.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(0);
+      const otherScope = origin + "/other/";
+      const queued = acquire(otherScope, "subscribe").catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(h.storage.write).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      const timeout = new Error("Cookie wake index write timed out. Retry later.");
+      expect(await result).toEqual(kind === "subscribe" ? timeout : undefined);
+      expect(await queued).toEqual(timeout);
+      await expect(acquire(otherScope, "subscribe")).rejects.toThrow("still pending");
+      expect(h.storage.write).toHaveBeenCalledOnce();
+      release.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.disk().map((r) => r.name)).toEqual(kind === "subscribe" ? ["x"] : []);
+      await complete(await acquire(otherScope, "subscribe"));
+      expect(h.disk().map((r) => r.scope)).toEqual(kind === "subscribe" ? [scope, otherScope] : [otherScope]);
+      h.change("inserted", { name: "new" });
+      expect(h.workers.startWorkerForScope.mock.calls).not.toContainEqual([scope]);
+    } finally {
+      release.resolve();
+      await h.adapter.quitAll();
+    }
+  },
+);

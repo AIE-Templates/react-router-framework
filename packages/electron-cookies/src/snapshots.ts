@@ -1,3 +1,4 @@
+import { cookiePathMatches } from "./parse.ts";
 import type { ScriptCookies } from "./script-cookies.ts";
 import { abandonOn, STORE_TIMEOUT_MS, storeDeadline } from "./store.ts";
 
@@ -81,8 +82,9 @@ export function createCookieSnapshots(script: ScriptCookies) {
       touch(url, entry);
       return entry.value;
     },
-    storageChanged() {
+    storageChanged(cookiePath: string) {
       for (const entry of entries.values()) {
+        if (!cookiePathMatches(entry.pathname, cookiePath)) continue;
         entry.sequence++;
         entry.dirty = true;
       }

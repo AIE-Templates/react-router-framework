@@ -18,7 +18,7 @@ export function installSubscriptionShims(bridge: SubscriptionBridge): void {
   const { defineProperty, getOwnPropertyDescriptor, getPrototypeOf } = Object;
   const { apply } = Reflect;
   const { toWellFormed } = String.prototype;
-  const { startsWith } = String.prototype;
+  const { startsWith, indexOf, slice } = String.prototype;
   const { canParse } = NativeURL;
   const href = getOwnPropertyDescriptor(NativeURL.prototype, "href")!.get!;
   const registrations = new WeakMap<CookieStoreManager, ServiceWorkerRegistration>();
@@ -39,7 +39,18 @@ export function installSubscriptionShims(bridge: SubscriptionBridge): void {
   });
 
   async function run<T>(target: string, operation: SubscriptionOperation, native: () => Promise<T>) {
-    const { operationId } = await bridge.acquire(target, operation);
+    let operationId: string;
+    try {
+      ({ operationId } = await bridge.acquire(target, operation));
+    } catch (error) {
+      // Electron wraps errors from ipcMain.handle and only preserves their message.
+      const message = error && typeof error === "object" && "message" in error && error.message;
+      if (typeof message === "string") {
+        const offset: number = apply(indexOf, message, ["Cookie subscription limit exceeded: "]);
+        if (offset >= 0) throw new NativeTypeError(apply(slice, message, [offset]));
+      }
+      throw error;
+    }
     let success = false;
     try {
       const value = await native();

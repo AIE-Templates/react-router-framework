@@ -76,7 +76,6 @@ function setup(
     desktop,
     cookies: createCookieJar({
       store,
-      scheme: APP_SCHEME,
       host: APP_HOST,
       origin: APP_ORIGIN,
       storageOrigin: COOKIE_JAR_ORIGIN,
@@ -148,6 +147,20 @@ describe("registerAppProtocol with the cookie jar", () => {
     await handle(`${APP_ORIGIN}/login`, { method: "POST", body: "x" });
     await handle(`${APP_ORIGIN}/next`, { headers: { cookie: "forged=1" } });
     expect(seen).toEqual([null, "sid=1"]);
+  });
+
+  it("uses Electron's initiator when forwarding a POST with no Origin", async () => {
+    const upstream = vi.fn<Handler>(async () => new Response());
+    const { handle } = setup(upstream);
+    for (const initiator of ["null", "https://site", APP_ORIGIN, undefined]) {
+      await handle(APP_ORIGIN + "/submit", { method: "POST" }, initiator);
+    }
+    expect(upstream.mock.calls.map(([{ headers }]) => [headers.get("origin"), headers.get("sec-fetch-site")])).toEqual([
+      [null, null],
+      [null, null],
+      [INTERNAL_ORIGIN, "same-origin"],
+      [INTERNAL_ORIGIN, "same-origin"],
+    ]);
   });
 
   it.each([

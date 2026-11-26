@@ -56,7 +56,6 @@ function setup() {
   const jar = createCookieJar({
     store,
     storageOrigin,
-    scheme: "xxx-app",
     host: "site",
     origin,
     upstreamHost: "localhost",
@@ -109,6 +108,37 @@ function setup() {
 afterEach(() => vi.useRealTimers());
 
 describe("window cookie IPC", () => {
+  it("rejects document writes carrying HttpOnly before calling the store", async () => {
+    const { write, read, store } = setup();
+    expect(await write("lang=zh; HttpOnly")).toBe("rejected");
+    expect(store.set).not.toHaveBeenCalled();
+    expect(await write("lang=zh")).toBe("stored");
+    expect(await read()).toBe("lang=zh");
+  });
+
+  it("filters HttpOnly records from both script APIs when the store returns them", async () => {
+    const { store, read, invoke } = setup();
+    const records = [note, { ...note, name: "hidden", httpOnly: true }];
+    store.get.mockResolvedValueOnce(records).mockResolvedValueOnce(records);
+    expect(await read()).toBe("lang=zh");
+    expect(await invoke(channels.getAll, url)).toEqual({
+      ok: true,
+      value: [expect.objectContaining({ name: "lang", value: "zh" })],
+    });
+  });
+
+  it("ignores detached registrations before observing their sender", () => {
+    const { event, frame, register, change } = setup();
+    frame.detached = true;
+    register();
+    expect(event.sender.listenerCount("destroyed")).toBe(0);
+    event.senderFrame = makeFrame();
+    register();
+    expect(event.sender.listenerCount("destroyed")).toBe(1);
+    change();
+    expect(event.senderFrame.send).toHaveBeenCalledOnce();
+  });
+
   it.each(["/group;v=1", "/" + "a".repeat(1024)])(
     "derives an empty structured path from the document URL for set and delete (case %#)",
     async (directory) => {
@@ -199,6 +229,7 @@ describe("window cookie IPC", () => {
     const sender = event.sender;
     for (const [senderFrame, contents, target] of [
       [null, sender, url],
+      [{ ...frame, isDestroyed: () => true }, sender, url],
       [{ ...frame, origin: "null" }, sender, url],
       [{ ...frame, origin: "https://site" }, sender, url],
       [frame, Object.assign(new EventEmitter(), { session: {} }), url],
@@ -584,6 +615,23 @@ describe("document.cookie outage handling", () => {
       older.resolve([]);
       newer.resolve([]);
     }
+  });
+
+  it("refreshes only paths in scope, including when a matching cookie becomes HttpOnly", async () => {
+    vi.useFakeTimers();
+    const { store, read, change } = setup();
+    const paths = ["/settings", "/settings/page", "/settings-old", "/catalog", "/"];
+    await Promise.all(paths.map((path) => read(origin + path)));
+    store.get.mockClear();
+    change({ ...note, path: "/unused" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.get).not.toHaveBeenCalled();
+    change({ ...note, path: "/settings", httpOnly: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.get.mock.calls.map(([filter]) => filter.url)).toEqual([
+      storageOrigin + "/settings",
+      storageOrigin + "/settings/page",
+    ]);
   });
 
   it("refreshes 100 query variants with one store read and preserves a newer foreground snapshot", async () => {

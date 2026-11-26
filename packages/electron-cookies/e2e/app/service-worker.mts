@@ -8,6 +8,7 @@ export type WorkerCommand = { record?: boolean } & (
         | "startup"
         | "events"
         | "append"
+        | "append-on-settlement"
         | "release-first"
         | "release-last"
         | "late"
@@ -48,17 +49,17 @@ self.oncookiechange = (event) => {
   propertyEvents.push(...event.changed.map((cookie) => cookie.name), ...event.deleted.map((cookie) => cookie.name));
 };
 let held: ExtendableCookieChangeEvent | undefined;
+let firstLifetime: Promise<void> | undefined;
 let releaseFirst: (() => void) | undefined;
 let releaseLast: (() => void) | undefined;
 self.addEventListener("cookiechange", (event) => {
   const first = event.changed[0]?.name;
   if (first === "held" || first === "A") {
     held = event;
-    event.waitUntil(
-      new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      }),
-    );
+    firstLifetime = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    event.waitUntil(firstLifetime);
   }
   if (first === "B") releaseFirst?.();
   const change: WorkerChange = {
@@ -130,13 +131,22 @@ async function run(command: WorkerCommand) {
       return cookies.getSubscriptions();
     case "subscriptions":
       return cookies.getSubscriptions();
-    case "append": {
-      if (!held) throw new Error("Missing held event");
-      held.waitUntil(
-        new Promise<void>((resolve) => {
-          releaseLast = resolve;
-        }),
-      );
+    case "append":
+    case "append-on-settlement": {
+      if (!held || !firstLifetime || !releaseFirst) throw new Error("Missing held event");
+      const event = held;
+      const append = () =>
+        event.waitUntil(
+          new Promise<void>((resolve) => {
+            releaseLast = resolve;
+          }),
+        );
+      if (command.kind === "append-on-settlement") {
+        const result = firstLifetime.then(append);
+        releaseFirst();
+        return result;
+      }
+      append();
       return;
     }
     case "release-first":

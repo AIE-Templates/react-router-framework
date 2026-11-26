@@ -14,6 +14,7 @@ import {
   flushForQuit,
   installCookieIpc,
   installCookieWorkerIpc,
+  stripCookieMarkers,
   type CookieIpcOptions,
 } from "../../src/main.ts";
 import { OMIT_COOKIES_HEADER } from "../../src/shared.ts";
@@ -175,6 +176,12 @@ const serve: RequestListener = (req, res) => {
   } else if (url.pathname === "/worker.js") {
     res.setHeader("Content-Type", "application/javascript");
     res.end(workerScript);
+  } else if (url.pathname === "/module-worker.js") {
+    res.setHeader("Content-Type", "application/javascript");
+    res.end('postMessage("ready")');
+  } else if (url.pathname === "/manifest.webmanifest") {
+    res.setHeader("Content-Type", "application/manifest+json");
+    res.end(JSON.stringify({ name: "Credential comparison", start_url: "/" }));
   } else {
     // Returning the latin1 representation as UTF-8 text preserves every byte for Playwright.
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -244,7 +251,6 @@ async function start() {
   const jar = createCookieJar({
     scheme,
     host,
-    origin,
     storageOrigin,
     upstreamHost,
     store: ses.cookies,
@@ -265,7 +271,7 @@ async function start() {
     const cookieRequest = { path: url.pathname, headers: request.headers, initiatorOrigin: request.initiatorOrigin };
     try {
       const headers = new Headers(request.headers);
-      headers.delete(OMIT_COOKIES_HEADER);
+      stripCookieMarkers(headers);
       headers.delete("host");
       headers.delete("cookie");
       const cookie = await jar.cookieHeader(cookieRequest, signal);

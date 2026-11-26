@@ -3,6 +3,7 @@ import type { IpcMainInvokeEvent, ServiceWorkerMain, ServiceWorkers } from "elec
 import { invokeCookieStore, publicChange, type CookieIpcOptions } from "../../ipc.ts";
 import { cookieIpcChannels, type SubscriptionOperation, type WorkerCookieItem } from "../../shared.ts";
 import { CookieWorkerManager, type WakeStorage } from "./cookie-worker-manager.ts";
+import { checkSubscriptionCount } from "./wake-index.ts";
 
 export interface CookieWorkerIpcOptions extends CookieIpcOptions {
   serviceWorkers: Pick<ServiceWorkers, "on" | "getAllRunning" | "getWorkerFromVersionID" | "startWorkerForScope">;
@@ -25,6 +26,7 @@ function validateOperation(scope: string, input: unknown): SubscriptionOperation
     !Array.isArray(input.subscriptions)
   )
     throw new TypeError("Invalid subscription operation");
+  checkSubscriptionCount(input.subscriptions.length);
   const subscriptions = input.subscriptions.map((entry: unknown) => {
     if (!entry || typeof entry !== "object") throw new TypeError("Invalid subscription");
     const name = "name" in entry ? entry.name : undefined;

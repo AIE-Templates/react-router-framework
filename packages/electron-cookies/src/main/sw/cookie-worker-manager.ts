@@ -41,7 +41,7 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
 
   constructor(options: CookieWorkerOptions<Item>) {
     this.#options = options;
-    this.#index = new WakeIndex(options.storage);
+    this.#index = new WakeIndex(options.storage, options.scheduler, options.logger);
     this.#operations = new ScopeOperations(this.#index, options.scheduler, options.logger, (scope) =>
       this.#cancelScope(scope),
     );
@@ -138,10 +138,17 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
         // Select the oldest retained change after the wake, including after a retry.
         const event = lane.queue.shift()!;
         const items = this.#index.eligibleItems(scope, event);
-        if (!items.changed.length && !items.deleted.length) return;
+        if (!items.changed.length && !items.deleted.length) {
+          this.#index.wakeSucceeded(scope);
+          return;
+        }
         const outcome = await this.#send(worker, items);
-        if (outcome !== "retry" || this.#lanes.get(scope) !== lane) return;
-        // An inactive worker did not dispatch this event. It is still the oldest.
+        if (this.#lanes.get(scope) !== lane) return;
+        if (outcome === "done") {
+          this.#index.wakeSucceeded(scope);
+          return;
+        }
+        // Dispatch never started. Requeue the event unless newer changes filled the backlog.
         if (lane.queue.length < MAX_QUEUED_CHANGES) lane.queue.unshift(event);
         else this.#warnOverflow(scope, lane);
       }
@@ -151,6 +158,7 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
           { scope },
           "Cookie change worker unavailable after three retries; dropping queued changes",
         );
+        await this.#operations.exhausted(scope, revision);
         return;
       }
       await new Promise<void>((resolve) => {
@@ -187,6 +195,8 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
         if (!this.#deliveries.delete(eventId)) return;
         cancelTimeout();
         if (reason === "timeout") {
+          if (delivery.start)
+            this.#options.logger.warn({ scope, eventId }, "Dropping cookie event after dispatch timeout");
           try {
             worker.finish(eventId);
           } catch {
@@ -198,7 +208,8 @@ export class CookieWorkerManager<Item extends CookieItem = CookieItem> {
         } catch {
           this.#options.logger.warn({ scope, eventId }, "Unable to end cookie event task");
         }
-        dispatched.resolve(reason === "inactive" ? "retry" : "done");
+        const retry = delivery.start && (reason === "inactive" || reason === "destroyed" || reason === "failed");
+        dispatched.resolve(retry ? "retry" : "done");
       },
     };
     this.#deliveries.set(eventId, delivery);

@@ -194,6 +194,105 @@ describe("wake index and subscription ownership", () => {
     expect(h.storage.write).toHaveBeenCalledTimes(3);
   });
 
+  it("bounds queued index writes and discards a late subscribe before accepting a retry", async () => {
+    const h = setup([seed("existing")]);
+    const release = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await release.promise;
+      await persist(records);
+    });
+    const failed = vi.fn<(error: Error) => void>();
+    const attempt = (target: string) => h.manager.acquire(target, subscribe, "frame").catch(failed);
+    const attempts = [attempt(scope), attempt(otherScope)];
+    try {
+      await tick(5_000);
+      expect(failed).toHaveBeenCalledTimes(2);
+      expect(failed.mock.calls[0][0].message).toMatch(/timed out/i);
+      attempts.push(attempt(scope));
+      await tick();
+      expect(failed).toHaveBeenCalledTimes(3);
+      expect(h.storage.write).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+      await tick();
+      await Promise.all(attempts);
+    }
+    expect(h.disk()).toEqual([seed("existing")]);
+    h.change("after late write");
+    await tick();
+    expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    const grant = await h.manager.acquire(otherScope, subscribe, "retry");
+    await h.manager.complete(grant.operationId, true);
+    expect(h.disk()).toEqual([seed("existing"), { ...seed("x", otherScope), since: Date.now() }]);
+    await h.manager.quitAll();
+  });
+
+  it("skips index writes for a registration with no hints and repairs a committed unregister", async () => {
+    const h = setup([seed()]);
+    const empty = await h.manager.acquire(otherScope, unregister, "frame");
+    await h.manager.complete(empty.operationId, true);
+    expect(h.storage.write).not.toHaveBeenCalled();
+    const existing = await h.manager.acquire(scope, unregister, "frame");
+    h.storage.write.mockRejectedValueOnce(new Error("disk unavailable"));
+    await h.manager.complete(existing.operationId, true);
+    await tick();
+    expect(h.logger.warn).toHaveBeenCalledOnce();
+    expect(h.storage.write).toHaveBeenCalledTimes(2);
+    expect(h.disk()).toEqual([]);
+    h.change();
+    expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    await h.manager.quitAll();
+  });
+
+  it("keeps a concurrent unregister when an earlier subscribe write finishes", async () => {
+    const h = setup([seed("removed", otherScope)]);
+    const remove = await h.manager.acquire(otherScope, unregister, "other frame");
+    const release = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await release.promise;
+      await persist(records);
+    });
+    const grant = h.manager.acquire(scope, subscribe, "frame");
+    await tick();
+    const removed = h.manager.complete(remove.operationId, true);
+    try {
+      h.manager.onChange({ changed: [cookie("removed", "/")], deleted: [], time: Date.now() });
+      expect(h.startWorkerForScope).not.toHaveBeenCalled();
+      expect(h.storage.write).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+    }
+    await h.manager.complete((await grant).operationId, true);
+    await removed;
+    expect(h.disk()).toEqual([{ ...seed(), since: 1_000 }]);
+    await h.manager.quitAll();
+  });
+
+  it("retries a failed unsubscribe cleanup on clean quit after the disk recovers", async () => {
+    const h = setup([seed()]);
+    const grant = await h.manager.acquire(scope, unsubscribe, "frame");
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockRejectedValue(new Error("disk unavailable"));
+    try {
+      await h.manager.complete(grant.operationId, true);
+      await tick();
+      expect(h.storage.write).toHaveBeenCalledTimes(2);
+      expect(h.disk()).toEqual([seed()]);
+      h.change();
+      expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    } finally {
+      h.storage.write.mockImplementation(persist);
+    }
+    await h.manager.quitAll();
+    expect(h.disk()).toEqual([]);
+    const restarted = new CookieWorkerManager(h.options);
+    restarted.onChange({ changed: [x], deleted: [], time: Date.now() });
+    expect(h.startWorkerForScope).not.toHaveBeenCalled();
+    await restarted.quitAll();
+  });
+
   it("SW-09: a failed wildcard wakes but cannot authorize an event older than the first successful subscribe", async () => {
     const h = setup();
     const old = await h.manager.acquire(scope, { kind: "subscribe", subscriptions: [{}] }, "frame");
@@ -771,33 +870,219 @@ describe("active worker delivery and event lifetime", () => {
     expect(h.worker.finish).toHaveBeenCalledTimes(1);
   });
 
-  it("SW-12: send failure releases once; worker destruction and quit release only outstanding tasks", async () => {
+  it.each(["destroyed", "send throws"])(
+    "retries the oldest unstarted change on the shared schedule (%s)",
+    async (fault) => {
+      const h = setup([seed()]);
+      const replacement = workerPort(8);
+      h.startWorkerForScope.mockResolvedValueOnce(h.worker).mockResolvedValue(replacement);
+      if (fault === "send throws")
+        h.worker.send.mockImplementationOnce(() => {
+          throw new Error("send failed");
+        });
+      replacement.send.mockImplementation(({ eventId }) => h.manager.ack({ versionId: 8, eventId }));
+      try {
+        h.change("first");
+        h.change("second");
+        await tick();
+        if (fault === "destroyed") h.manager.workerDestroyed(7);
+        expect(h.worker.ends[0]).toHaveBeenCalledOnce();
+        await tick(99);
+        expect(replacement.send).not.toHaveBeenCalled();
+        await tick(1);
+        expect(replacement.send.mock.calls.map(([e]) => e.changed[0].value)).toEqual(["first", "second"]);
+        expect(replacement.send.mock.calls[0][0].eventId).not.toBe(h.ref().eventId);
+      } finally {
+        await h.manager.quitAll();
+      }
+    },
+  );
+
+  it("does not resend a started change after worker destruction", async () => {
     const h = setup([seed()]);
-    h.worker.send.mockImplementationOnce(() => {
-      throw new Error("send failed");
-    });
-    h.change("failed");
-    h.change("sent");
+    h.change("started");
     await tick();
-    expect(h.worker.ends[0]).toHaveBeenCalledTimes(1);
-    expect(h.worker.ends[1]).not.toHaveBeenCalled();
-    h.manager.workerDestroyed(8);
-    expect(h.worker.ends[1]).not.toHaveBeenCalled();
+    h.manager.started(h.ref());
     h.manager.workerDestroyed(7);
-    h.manager.ack(h.ref(1));
-    expect(h.worker.ends[1]).toHaveBeenCalledTimes(1);
     const replacement = workerPort(8);
     h.startWorkerForScope.mockResolvedValue(replacement);
-    h.change("replacement");
+    h.change("next");
+    await tick(2_100);
+    expect(replacement.send.mock.calls.map(([e]) => e.changed[0].value)).toEqual(["next"]);
+    expect(h.worker.ends[0]).toHaveBeenCalledOnce();
+    await h.manager.quitAll();
+  });
+
+  it("keeps the started task alive through a late NACK until ACK", async () => {
+    const h = setup([seed()]);
+    h.change();
     await tick();
-    h.change("queued at quit");
+    h.manager.started(h.ref());
+    h.manager.nack(h.ref());
+    await tick(2_100);
+    expect(h.worker.ends[0]).not.toHaveBeenCalled();
+    expect(h.worker.send).toHaveBeenCalledOnce();
+    h.manager.ack(h.ref());
+    expect(h.worker.ends[0]).toHaveBeenCalledOnce();
+    await h.manager.quitAll();
+  });
+  it("quit releases outstanding tasks and cancels queued deliveries", async () => {
+    const h = setup([seed()]);
+    h.change("sent");
+    h.change("queued");
+    await tick();
+    h.manager.workerDestroyed(8);
+    expect(h.worker.ends[0]).not.toHaveBeenCalled();
     await h.manager.quitAll();
     await h.manager.quitAll();
     h.change("after quit");
     await tick(300_000);
-    expect(replacement.ends[0]).toHaveBeenCalledTimes(1);
-    expect(replacement.send).toHaveBeenCalledTimes(1);
-    expect(replacement.finish).not.toHaveBeenCalled();
+    expect(h.worker.ends[0]).toHaveBeenCalledOnce();
+    expect(h.worker.send).toHaveBeenCalledOnce();
+    expect(h.worker.finish).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
+});
+
+const names = (start: number, length: number) => Array.from({ length }, (_, i) => ({ name: String(start + i) }));
+
+describe("wake index limits and stale scopes", () => {
+  it("bounds operation size, UTF-8 name bytes and distinct subscriptions per scope", async () => {
+    const h = setup();
+    const acquire = (subscriptions: { name: string }[], kind: "subscribe" | "unsubscribe" = "subscribe") =>
+      h.manager.acquire(scope, { kind, subscriptions }, "frame");
+    const fullName = "é".repeat(2048);
+    try {
+      for (const kind of ["subscribe", "unsubscribe"] as const) {
+        await expect(acquire(names(0, 129), kind)).rejects.toThrow(TypeError);
+        await expect(acquire([{ name: fullName + "x" }], kind)).rejects.toThrow(TypeError);
+      }
+      expect(h.storage.write).not.toHaveBeenCalled();
+      for (const batch of [[{ name: fullName }, ...names(0, 127)], names(127, 128), names(0, 128)]) {
+        const grant = await acquire(batch);
+        await h.manager.complete(grant.operationId, true);
+      }
+      expect(h.disk()).toHaveLength(256);
+      await expect(acquire(names(255, 1))).rejects.toThrow(TypeError);
+      expect(h.storage.write).toHaveBeenCalledTimes(3);
+      await h.manager.complete((await acquire([{ name: fullName }], "unsubscribe")).operationId, true);
+      await h.manager.complete((await acquire(names(255, 1))).operationId, true);
+      expect(h.disk().at(-1)?.name).toBe("255");
+    } finally {
+      await h.manager.quitAll();
+    }
+  });
+
+  it("reserves distinct scope capacity across concurrent acquires and releases it after unregister", async () => {
+    const restored = Array.from({ length: 127 }, (_, i) => seed("x", scope + i));
+    const h = setup(restored);
+    const gate = deferred<void>();
+    const persist = h.storage.write.getMockImplementation()!;
+    h.storage.write.mockImplementationOnce(async (records) => {
+      await gate.promise;
+      await persist(records);
+    });
+    try {
+      const last = h.manager.acquire(scope, subscribe, 7);
+      await tick();
+      await expect(h.manager.acquire(otherScope, subscribe, 8)).rejects.toThrow(TypeError);
+      gate.resolve();
+      await h.manager.complete((await last).operationId, true);
+      await expect(h.manager.acquire(otherScope, subscribe, 8)).rejects.toThrow(TypeError);
+      await h.manager.complete((await h.manager.acquire(scope, unregister, 7)).operationId, true);
+      await h.manager.complete((await h.manager.acquire(otherScope, subscribe, 8)).operationId, true);
+      expect(h.disk()).toHaveLength(128);
+    } finally {
+      gate.resolve();
+      await h.manager.quitAll();
+    }
+  });
+
+  it("bounds restored hints before matching changes or writing the next snapshot", async () => {
+    const h = setup([
+      ...Array.from({ length: 257 }, (_, i) => seed(String(i))),
+      seed("é".repeat(2049), otherScope),
+      ...Array.from({ length: 128 }, (_, i) => seed("other" + i, otherScope + i)),
+    ]);
+    try {
+      for (const name of ["256", "é".repeat(2049), "other127"])
+        h.manager.onChange({ time: Date.now(), changed: [cookie(name, "/")], deleted: [] });
+      expect(h.startWorkerForScope).not.toHaveBeenCalled();
+      expect(h.logger.warn).toHaveBeenCalledWith({ discarded: 3 }, expect.any(String));
+      await h.manager.complete(
+        (await h.manager.acquire(scope, { kind: "unsubscribe", subscriptions: [] }, 7)).operationId,
+        true,
+      );
+      expect(h.disk()).toHaveLength(256 + 127);
+    } finally {
+      await h.manager.quitAll();
+    }
+  });
+
+  it("persists dormancy after three consecutive exhausted wakes until a confirmed subscribe", async () => {
+    const h = setup([seed(), seed("y")]);
+    const exhaust = async () => {
+      for (let i = 0; i < 4; i++) h.startWorkerForScope.mockRejectedValueOnce(new Error("unavailable"));
+      h.change();
+      await tick(2_100);
+    };
+    await exhaust();
+    await exhaust();
+    h.change("recovered");
+    await tick();
+    h.manager.ack(h.ref());
+    await tick();
+    await exhaust();
+    await exhaust();
+    expect(h.storage.write).not.toHaveBeenCalled();
+    const held = await h.manager.acquire(scope, unsubscribe, 7);
+    await exhaust();
+    const attempts = h.startWorkerForScope.mock.calls.length;
+    h.change();
+    expect(h.startWorkerForScope).toHaveBeenCalledTimes(attempts);
+    await h.manager.complete(held.operationId, false);
+    await tick();
+    expect(h.disk()).toEqual([
+      { ...seed(), dormant: true },
+      { ...seed("y"), dormant: true },
+    ]);
+    h.change();
+    expect(h.startWorkerForScope).toHaveBeenCalledTimes(attempts);
+    await h.manager.quitAll();
+    const restarted = new CookieWorkerManager(h.options);
+    const change = () => restarted.onChange({ time: Date.now(), changed: [y], deleted: [] });
+    try {
+      change();
+      const failed = await restarted.acquire(scope, subscribe, 7);
+      change();
+      await restarted.complete(failed.operationId, false);
+      change();
+      expect(h.startWorkerForScope).toHaveBeenCalledTimes(attempts);
+      const granted = await restarted.acquire(scope, subscribe, 7);
+      change();
+      expect(h.startWorkerForScope).toHaveBeenCalledTimes(attempts);
+      await restarted.complete(granted.operationId, true);
+      expect(h.disk()).toEqual([seed(), seed("y")]);
+      change();
+      await tick();
+      expect(h.worker.send.mock.calls.at(-1)?.[0].changed).toEqual([y]);
+    } finally {
+      await restarted.quitAll();
+    }
+  });
+});
+
+it("warns when 128 newer waiting changes displace a destroyed worker's unstarted event", async () => {
+  const h = setup([seed()]);
+  h.change("oldest");
+  await tick();
+  for (let i = 0; i < 128; i++) h.change(String(i));
+  h.worker.send.mockImplementation(({ eventId }) => h.manager.ack({ versionId: 7, eventId }));
+  h.manager.workerDestroyed(7);
+  await tick(100);
+  expect(h.logger.warn).toHaveBeenCalledExactlyOnceWith({ scope }, expect.stringContaining("dropping oldest"));
+  expect(h.worker.send.mock.calls.slice(1).map(([event]) => event.changed[0].value)).toEqual(
+    Array.from({ length: 128 }, (_, i) => String(i)),
+  );
+  await h.manager.quitAll();
 });

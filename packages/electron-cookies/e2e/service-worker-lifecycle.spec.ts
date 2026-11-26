@@ -1,3 +1,6 @@
+import { mkdir, rmdir } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { WorkerGate } from "./app/worker-controls.ts";
 import { compareNative, expect, type Fixture, test } from "./fixture.ts";
 import {
@@ -274,6 +277,27 @@ test("SW-12e | losing a granted unregister frame leaves the live registration wa
   expect(await command(page, { kind: "events" })).toMatchObject([{ changed: [{ value: "restored" }] }]);
 });
 
+test("SW-09 | unregister keeps Chromium's result when wake-index cleanup cannot write", async ({ fixture }) => {
+  const { page } = fixture;
+  const temporaryFile = join(await fixture.app.evaluate(({ app }) => app.getPath("userData")), "wake-index.json.new");
+  for (const subscribed of [false, true]) {
+    await register(page);
+    if (subscribed) await windowSubscriptions(page, "subscribe", "old");
+    await mkdir(temporaryFile);
+    try {
+      expect(
+        await page.evaluate(async (s) => (await navigator.serviceWorker.getRegistration(s))!.unregister(), scope),
+      ).toBe(true);
+      expect(await page.evaluate(async (s) => !!(await navigator.serviceWorker.getRegistration(s)), scope)).toBe(false);
+    } finally {
+      await rmdir(temporaryFile);
+    }
+  }
+  await register(page);
+  await windowSubscriptions(page, "subscribe", "current");
+  expect(await index(fixture)).toEqual([expect.objectContaining({ name: "current", eligible: true })]);
+});
+
 test("SW-10 | during update only the active version handles cookiechange", async ({ fixture }) => {
   const { page } = fixture;
   await register(page);
@@ -318,6 +342,26 @@ test("SW-11/12/12c | append waitUntil after dispatch; only the last settlement r
   await command(page, { kind: "release-last" });
   await expect.poll(() => deliveryState(fixture)).toEqual({ wakes: 1, pending: 0 });
   expect(await command(page, { kind: "late" })).toBe("InvalidStateError");
+});
+
+test("SW-11 | a settlement reaction can append a cookiechange lifetime promise", async ({ fixture }) => {
+  await compareNative(fixture, "/", async () => {
+    const { page } = fixture;
+    await register(page);
+    await observe(page);
+    await windowSubscriptions(page, "subscribe", "held");
+    await write(page, "held", "pending");
+    await waitForChanges(page, 1);
+    try {
+      await command(page, { kind: "append-on-settlement" });
+      expect(await command(page, { kind: "late" })).toBe("accepted");
+    } finally {
+      await command(page, { kind: "release-last" });
+    }
+    const after = await command(page, { kind: "late" });
+    expect(after).toBe("InvalidStateError");
+    return after;
+  });
 });
 
 test("SW-12 (slow) | waitUntil keeps the same worker alive across idle termination", async ({ fixture }) => {

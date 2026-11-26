@@ -38,8 +38,9 @@ export class ScopeOperations {
     return result;
   }
 
-  acquire(scope: string, operation: Operation, ownerId: OwnerId): Promise<{ operationId: string }> {
-    if (this.#quit) return Promise.reject(new Error("Cookie worker manager closed"));
+  async acquire(scope: string, operation: Operation, ownerId: OwnerId): Promise<{ operationId: string }> {
+    if (this.#quit) throw new Error("Cookie worker manager closed");
+    this.#index.checkOperation(scope, this.#tails, operation.kind === "unregister" ? [] : operation.subscriptions);
     const operationId = crypto.randomUUID();
     const grant = deferred<{ operationId: string }>();
     const released = deferred<void>();
@@ -62,7 +63,7 @@ export class ScopeOperations {
           await this.#index.subscribe(scope, operation.subscriptions, this.#scheduler.now());
           if (!this.#requests.has(operationId)) {
             // The owner disappeared during persistence and never received a grant.
-            await this.#index.finishSubscribe(scope, true);
+            await this.#index.finishSubscribe(scope, "failure");
             return;
           }
         }
@@ -88,7 +89,7 @@ export class ScopeOperations {
   async #apply(scope: string, operation: Operation, result: Outcome): Promise<void> {
     switch (operation.kind) {
       case "subscribe":
-        await this.#index.finishSubscribe(scope, result === "failure");
+        await this.#index.finishSubscribe(scope, result);
         if (result === "expired") await this.#index.editSubscriptions(scope, operation.subscriptions, "pin");
         break;
       case "unsubscribe":
@@ -121,6 +122,11 @@ export class ScopeOperations {
     }
   }
 
+  exhausted(scope: string, revision: number): Promise<void> {
+    if (!this.#index.recordExhaustion(scope, revision)) return Promise.resolve();
+    return this.#enqueue(scope, () => this.#index.persistDormancy(scope));
+  }
+
   missingRegistration(scope: string, revision: number): Promise<void> {
     return this.#enqueue(scope, async () => {
       if (this.#quit) return;
@@ -143,10 +149,12 @@ export class ScopeOperations {
       this.#logger.warn({ timeoutMs }, "Finalizing cookie wake index timed out");
       finished.resolve();
     });
-    void Promise.all(this.#tails.values()).then(() => {
-      cancelTimeout();
-      return finished.resolve();
-    });
+    void Promise.all(this.#tails.values())
+      .then(() => this.#index.flushForQuit())
+      .then(() => {
+        cancelTimeout();
+        return finished.resolve();
+      });
     return this.#quit;
   }
 }

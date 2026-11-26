@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { type CookieJar, CookieStoreTimeoutError } from "@repo/electron-cookies/main";
+import { type CookieJar, CookieStoreTimeoutError, stripCookieMarkers } from "@repo/electron-cookies/main";
 import { type PortFetch, PortClosedError } from "@repo/port-fetch";
 import type { DesktopRequest } from "@repo/shared";
 import type { WebRequestFilter } from "electron";
@@ -104,9 +104,11 @@ export function registerAppProtocol(
       const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
       const headers = shapeRequestHeaders(request.headers, {
         method: request.method,
+        initiatorOrigin: request.initiatorOrigin,
         desktop: desktop(entry?.contentsId),
         internalOrigin,
       });
+      stripCookieMarkers(headers);
       const cookieRequest = { path: pathname, headers: request.headers, initiatorOrigin: request.initiatorOrigin };
       const cookie = await cookies.cookieHeader(cookieRequest, signal);
       signal.throwIfAborted();
