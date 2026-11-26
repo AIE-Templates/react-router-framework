@@ -14,12 +14,25 @@ test("rejects relocated layer-owned files on branches without that layer", () =>
     ["starter/base", "apps/web/src/app/styles/naming.test.ts", "Core"],
     ["app/base/core", "apps/web/src/app/managers/visual/persistence/cookie.ts", "Fullstack"],
     ["app/static/mantine", "apps/web/src/app/features/account/account.server.ts", "Fullstack"],
+    ["app/base/core", "packages/shared/src/preferences.ts", "Electron"],
     ["app/fullstack/core", "apps/web/src/app/managers/visual/mantine/theme.ts", "Mantine"],
     ["platform/electron/core", "apps/web/src/app/features/demo/home.module.scss", "Mantine"],
     ["app/fullstack/mantine", "apps/web/src/app/platform/electron/context.ts", "Electron"],
   ];
   for (const [branch, path, layer] of cases)
     assert.equal(ownedFileViolation(branch, path), `${layer}-owned file`, `${branch}: ${path}`);
+});
+
+test("keeps shared visual cookie handling and records in Core", () => {
+  for (const path of [
+    "apps/web/src/app/config/visual-cookie.ts",
+    "apps/web/src/app/managers/visual/cookie.ts",
+    "apps/web/src/app/managers/visual/request-seed.ts",
+    "packages/shared/src/visual-record.ts",
+  ]) {
+    assert.equal(ownedFileViolation("app/base/core", path), undefined, path);
+    assert.equal(ownedFileViolation("starter/base", path), "Core-owned file", path);
+  }
 });
 
 test("allows valid compositions and starter global styles", () => {

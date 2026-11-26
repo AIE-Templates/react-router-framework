@@ -37,7 +37,7 @@ graph TD
 | `starter/fullstack` | `starter/base` | Hono host, `@repo/server` BFF, CSP, logging, graceful shutdown, Docker | Source |
 | `app/base/core` | `starter/base` | UI-agnostic app foundation (`@repo/shared`, `AppRoot`, layouts, visual preferences) | Source |
 | `app/static/core` | `starter/static`, `app/base/core` | Static runtime + App Core | Integration |
-| `app/fullstack/core` | `starter/fullstack`, `app/base/core` | Fullstack runtime + App Core + optional visual cookie mirror | Integration |
+| `app/fullstack/core` | `starter/fullstack`, `app/base/core` | Fullstack runtime + App Core with host and CSP wiring for Core visual preferences | Integration |
 | `app/base/mantine` | `app/base/core` | Mantine provider, styles, Core visual theme adapter | Source |
 | `app/static/mantine` | `app/static/core`, `app/base/mantine` | Static runtime + App Core + Mantine | Integration |
 | `app/fullstack/mantine` | `app/fullstack/core`, `app/base/mantine` | Fullstack runtime + App Core + Mantine | Integration |
@@ -48,8 +48,8 @@ graph TD
 
 - **`starter/base`**: Universal workspace tooling, base styles, and default SSR/SPA-capable app skeleton.
 - **`starter/static`**: Disables server rendering via `ssr: false` without deleting base files that remain shared.
-- **`starter/fullstack`**: Owns `packages/server`, `apps/web/src/host`, `apps/web/server.ts`, `entry.server.tsx`, `apps/web/src/app/lib/api.ts`, CSP nonce wiring, and server-side visual cookie helpers.
-- **`app/base/core`**: Must not depend on Hono, Electron, or any UI component library. Routes use client data APIs (`clientLoader`/`clientAction`) so Core works identically in SSR and static SPA builds.
+- **`starter/fullstack`**: Owns `packages/server`, `apps/web/src/host`, `apps/web/server.ts`, `entry.server.tsx`, `apps/web/src/app/lib/api.ts`, and CSP nonce wiring.
+- **`app/base/core`**: Must not depend on Hono, Electron, or any UI component library. Feature routes use client data APIs (`clientLoader`/`clientAction`). Core owns the visual cookie configuration, shared cookie reads and writes, and the request-seed reader used by the root loader.
 - **`@repo/shared`**: Core owns `Shell`, `WindowChromeBridge`, and window bootstrap/appearance contracts. Electron extends the same package with `desktop-headers.ts`, `preferences.ts`, `desktop-protocol.ts`, IPC channels, and `shellFromEnv()`. Pure web branches must never contain Electron host protocol files or symbols.
 - **`app/base/mantine`**: Integrates Mantine as a derived consumer of Core's visual state via a custom `colorSchemeManager` and CSS layer ordering; never duplicates Core's localStorage authority or prepaint script.
 - **`platform/electron/core`**: Embeds the Hono host in the Electron utility process (`app://` via `@repo/port-fetch`). Owns `apps/desktop`, `packages/channel`, `packages/port-fetch`, `bench/transport`, and `apps/web/src/app/platform/electron`.
@@ -59,7 +59,7 @@ graph TD
 ## Shared File Conventions
 
 - **`AppRoot` and `AppUiProvider`**: `AppRoot` wires `EnvironmentContext.Provider` → `ManagersRegistry` → `VisualManagerRegistry` → `VisualManagerProvider`. `AppUiProvider` is a transparent slot inside `<body>` on Core and hosts the UI library provider on Mantine.
-- **`root.tsx`**: Each layer touches only its own seam—Fullstack adds the root loader and CSP nonce; Core adds the prepaint script, visual attributes, and `AppUiProvider`; Electron maps `shell` and `desktop` loader seeds into `AppRoot` and mounts `DesktopVisualSync` inside `AppRoot`.
+- **`root.tsx`**: Core seeds visual preferences in the root loader and adds the prepaint script, visual attributes, and `AppUiProvider`. Fullstack wires the CSP nonce into the root. Electron maps `shell` and `desktop` loader seeds into `AppRoot` and mounts `DesktopVisualSync` inside `AppRoot`.
 - **Visual preferences and CSP**: Core injects a self-contained prepaint inline script in `<head>`. Fullstack passes the per-request CSP nonce in SSR mode and authorizes static/prerendered inline scripts by `sha256` hash (so the script must remain deterministic at build time). Mantine appends `data-mantine-color-scheme` via `visual-integration.ts`.
 - **Package manifests (`package.json`)**: Layer-specific root scripts use layer suffixes (`*:server`, `*:desktop`, e.g. `dev:server`, `build:desktop`, `package:desktop`). Dependency maps are kept alphabetically sorted; textual conflicts are resolved by `cascade/package-merge.ts`.
 - **Docs (`README.md`, `AGENTS.md`, `docs/specs/`)**: Template branches ship only `docs/specs/*.spec.md` under `docs/` and keep self-contained root `README.md` / `AGENTS.md`. Layers prefer adding dedicated `##` sections to minimize merge conflicts.

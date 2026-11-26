@@ -11,7 +11,7 @@ Multi-branch starter repository for React Router Framework applications. Each te
 | `starter/fullstack` | SSR / SPA | Minimal | Web | Hono API & BFF (`@repo/server`), CSP nonces/hashes, structured logging, CSRF, graceful shutdown, Docker |
 | `app/base/core` | SSR / SPA | Core CSS | Web | `@repo/shared`, `AppRoot`, environment runtime, application shells, fused header layouts, CRM and editor demos, visual preferences & prepaint script |
 | `app/static/core` | Static SPA | Core CSS | Web | `starter/static` + `app/base/core` |
-| `app/fullstack/core` | SSR / SPA | Core CSS | Web | `starter/fullstack` + `app/base/core` + optional visual cookie mirror |
+| `app/fullstack/core` | SSR / SPA | Core CSS | Web | `starter/fullstack` + `app/base/core` with host and CSP wiring for Core visual preferences |
 | `app/base/mantine` | SSR / SPA | Mantine | Web | `app/base/core` + Mantine provider, CSS layers, Core visual theme adapter |
 | `app/static/mantine` | Static SPA | Mantine | Web | `app/static/core` + `app/base/mantine` |
 | `app/fullstack/mantine` | SSR / SPA | Mantine | Web | `app/fullstack/core` + `app/base/mantine` |

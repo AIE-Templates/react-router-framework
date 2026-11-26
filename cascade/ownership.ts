@@ -8,7 +8,7 @@ export function ownedFileViolation(branch: string, path: string): string | undef
     return "Non-spec docs file";
   if (!electron && /^(apps\/desktop\/|packages\/(channel|port-fetch)\/|bench\/transport\/|packages\/shared\/src\/(desktop-|preferences|shell.test))/.test(path))
     return "Electron-owned file";
-  if (!fullstack && (/^(packages\/server\/|apps\/web\/(src\/host\/|server\.ts$|src\/app\/(entry\.server\.tsx$|lib\/|managers\/[^/]+\/persistence\/|config\/visual-cookie\.ts$|providers\/document-nonce\.ts$)))/.test(path) || /\.server\.ts$/.test(path)))
+  if (!fullstack && (/^(packages\/server\/|apps\/web\/(src\/host\/|server\.ts$|src\/app\/(entry\.server\.tsx$|lib\/|managers\/[^/]+\/persistence\/|providers\/document-nonce\.ts$)))/.test(path) || /\.server\.ts$/.test(path)))
     return "Fullstack-owned file";
   if (!core && /^(packages\/shared\/|apps\/web\/src\/app\/((providers|layouts|window-chrome|managers|config|testing)\/|components\/appearance-settings\.tsx$|styles\/(tokens|shell|ui|naming\.test)\.))/.test(path))
     return "Core-owned file";
