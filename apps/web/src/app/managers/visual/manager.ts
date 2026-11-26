@@ -32,14 +32,12 @@ export function createVisualManager({
   host,
   nativeSource,
   config = visualBootstrapConfig,
-  applyToDocument = true,
 }: {
   initialRecord?: VisualRecord;
   initialShell?: Shell["kind"];
   host?: Window;
   nativeSource?: NativeVisualSource;
   config?: typeof visualBootstrapConfig;
-  applyToDocument?: boolean;
 } = {}) {
   const server = freeze(visualCodec.resolve(initialRecord));
   const handoff = host?.[config.bootstrapKey];
@@ -77,7 +75,7 @@ export function createVisualManager({
     const next = visualCodec.resolve(record, host, fixedAppearance);
     if (JSON.stringify(next) !== JSON.stringify(state)) {
       state = freeze(next);
-      if (connections && host && applyToDocument) visualCodec.apply(config, state, host.document.documentElement);
+      if (connections && host) visualCodec.apply(config, state, host.document.documentElement);
       changes.notify();
     }
     publishStatus();
@@ -119,8 +117,10 @@ export function createVisualManager({
     if (!native || storage.native === "unavailable") return undefined;
     try {
       const mirror = native.read();
+      const observed = records.decode(mirror.record).record;
+      if (latestPush && !records.behind(observed, latestPush.record)) latestPush = undefined;
       storage.native = mirror.pending ? "failed" : "ok";
-      return records.decode(mirror.record).record;
+      return observed;
     } catch {
       storage.native = "unavailable";
       return undefined;
@@ -211,9 +211,15 @@ export function createVisualManager({
       if (trigger === "connect" || storage.native === "unavailable") connectNative();
     }
     const observed = observe();
-    for (const store of ["local", "cookie"] as const) {
-      repairWeb(store, observed[store], trigger === "retry" && previous[store] === "ok");
-    }
+    const selected = record;
+    let beforeRepair: VisualRecord | undefined;
+    // A later store can reveal a newer winner after an earlier store was checked.
+    do {
+      beforeRepair = record;
+      for (const store of ["local", "cookie"] as const) {
+        repairWeb(store, observed[store], trigger === "retry" && record === selected && previous[store] === "ok");
+      }
+    } while (record !== beforeRepair);
     if (
       record &&
       available("native") &&
@@ -256,7 +262,7 @@ export function createVisualManager({
   function attach(window: Window) {
     initialized = true;
     reconcile("connect");
-    if (applyToDocument) visualCodec.apply(config, state, window.document.documentElement);
+    visualCodec.apply(config, state, window.document.documentElement);
     const onStorage = (event: StorageEvent) => {
       if (event.key === config.storageKey || event.key === null) reconcile("event");
     };
