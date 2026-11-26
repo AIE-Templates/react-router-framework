@@ -226,7 +226,8 @@ export async function compareNative<T>(
   fixture: Fixture,
   path: string,
   observe: (site: Site) => Promise<T>,
-  expectedJar: (native: T) => T = (native) => native,
+  // The result goes to toEqual, so it may contain asymmetric matchers.
+  expectedJar: (native: T) => unknown = (native) => native,
 ) {
   const results = new Map<Site, T>();
   for (const site of ["localhost", "https", "jar"] as const) {
