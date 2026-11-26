@@ -45,6 +45,8 @@ export interface CookiePush {
   deleted: DeletedCookie[];
 }
 
+export type DocumentCookieSetReply = "stored" | "rejected" | "unknown" | null;
+
 export type CookieReply<T> = { ok: true; value: T } | { ok: false; error: CookieIpcError };
 
 export type WorkerCookieItem = DeletedCookie & Partial<Pick<WindowCookie, "value" | "expires">>;

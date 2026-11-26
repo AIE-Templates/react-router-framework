@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 
 import type { WorkerChange, WorkerCommand } from "./app/service-worker.mts";
 import { expect, type Fixture } from "./fixture.ts";
@@ -121,6 +121,20 @@ export function index(fixture: Fixture) {
 export function running(fixture: Fixture) {
   return fixture.app.evaluate(() => globalThis.cookieFixture.workers.running());
 }
+
+export async function detachWorkerDebuggers(context: BrowserContext) {
+  // Playwright 1.64 auto-attaches to workers, but only exposes them on its public Chromium context.
+  // Detach its actual Electron worker sessions before measuring Chromium's idle termination.
+  const connection: { toImpl(context: BrowserContext): { serviceWorkers(): object[] } } = Reflect.get(
+    context,
+    "_connection",
+  );
+  for (const worker of connection.toImpl(context).serviceWorkers()) {
+    const session: { detach(): Promise<void> } = Reflect.get(worker, "_session");
+    await session.detach();
+  }
+}
+
 export function write(page: Page, name: string, value: string) {
   return page.evaluate((cookie) => cookieStore.set(cookie.name, cookie.value), { name, value });
 }

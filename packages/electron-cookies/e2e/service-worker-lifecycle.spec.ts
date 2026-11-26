@@ -2,6 +2,7 @@ import type { WorkerGate } from "./app/worker-controls.ts";
 import { compareNative, expect, type Fixture, test } from "./fixture.ts";
 import {
   command,
+  detachWorkerDebuggers,
   index,
   observe,
   register,
@@ -317,6 +318,41 @@ test("SW-11/12/12c | append waitUntil after dispatch; only the last settlement r
   await command(page, { kind: "release-last" });
   await expect.poll(() => deliveryState(fixture)).toEqual({ wakes: 1, pending: 0 });
   expect(await command(page, { kind: "late" })).toBe("InvalidStateError");
+});
+
+test("SW-12 (slow) | waitUntil keeps the same worker alive across idle termination", async ({ fixture }) => {
+  test.setTimeout(150_000);
+  const { page } = fixture;
+  await observe(page);
+  const held = await register(page);
+  const control = await register(page, "control", "active", "/control/");
+  await windowSubscriptions(page, "subscribe", "held");
+  await detachWorkerDebuggers(page.context());
+
+  await write(page, "held", "pending");
+  expect(await waitForChanges(page, 1)).toMatchObject([{ changed: [{ name: "held", value: "pending" }] }]);
+  const workers = await running(fixture);
+  const heldWorker = workers.find((worker) => worker.scope === held.scope);
+  expect(heldWorker).toBeDefined();
+  expect(workers).toContainEqual(expect.objectContaining({ scope: control.scope }));
+  expect(await deliveryState(fixture)).toEqual({ wakes: 1, pending: 1 });
+
+  // Allow a full 30 s idle delay plus a 30 s timer tick, even if the control stops sooner.
+  // Only the main process is polled until both conditions hold.
+  const started = performance.now();
+  const idlePoll = { timeout: 75_000, intervals: [1000] };
+  await expect
+    .poll(async () => ({ workers: await running(fixture), pastIdleWindow: performance.now() - started >= 65_000 }), {
+      ...idlePoll,
+      message: "Only the held worker should still be running past the idle window",
+    })
+    .toEqual({ workers: [heldWorker], pastIdleWindow: true });
+  expect(await deliveryState(fixture)).toEqual({ wakes: 1, pending: 1 });
+  // A restarted instance has no held event. A finished event rejects a new waitUntil.
+  expect(await command(page, { kind: "late" })).toBe("accepted");
+  await command(page, { kind: "release-first" });
+  await expect.poll(() => deliveryState(fixture)).toEqual({ wakes: 1, pending: 0 });
+  await expect.poll(() => running(fixture), idlePoll).toEqual([]);
 });
 
 test.describe("short native task timeout", () => {

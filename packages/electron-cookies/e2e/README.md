@@ -45,6 +45,6 @@ The HTTPS ordinary domain supplies the reference for domain cookies, since local
 | `requests.spec.ts`                 | SRV-08/09. Non-2xx Set-Cookie, FormData, Blob and streamed bodies, keepalive, XHR, forms, images, scripts and EventSource.                                                                                                          |
 | `cookie-store-identity.spec.ts`    | CS-11/13, SW-12c. Native CookieStore identity in windows and workers, event trust, listeners borrowed from other realms.                                                                                                            |
 | `service-worker.spec.ts`           | SW-01–07, SW-14, SRV-07/09 (worker). Script-URL reads, URL resolution, subscriptions and cookiechange contents against a native worker.                                                                                             |
-| `service-worker-lifecycle.spec.ts` | SW-08–13. Wake after stop and restart, hard kills, re-registration, updates, waitUntil keepalive and timeouts, notification ordering, lost unregister holders.                                                                      |
+| `service-worker-lifecycle.spec.ts` | SW-08–13. Wake after stop and restart, hard kills, re-registration, updates, waitUntil keepalive across a real idle-termination window (slow, about 90 s) and timeouts, notification ordering, lost unregister holders.             |
 
 DC-19 exercises the real desktop capability bridge and first-paint IPC in `apps/desktop/e2e/storage.spec.ts`.
