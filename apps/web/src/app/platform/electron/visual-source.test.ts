@@ -1,11 +1,12 @@
 import { runInNewContext } from "node:vm";
 
-import { visualRecordKernel } from "@repo/shared";
+import { visualRecordKernel, type DesktopBridge } from "@repo/shared";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { STORAGE_KEYS } from "~/config/storage";
 import { visualCookie } from "~/config/visual-cookie";
 import { visualBootstrapConfig, visualScript } from "~/managers/visual/bootstrap";
+import { readVisualCookie } from "~/managers/visual/cookie";
 import { createVisualManager } from "~/managers/visual/manager";
 
 import { desktopVisualPrepaint, desktopVisualSource } from "./visual-source";
@@ -30,19 +31,39 @@ it("ignores a URL appearance without a desktop bootstrap", () => {
 
 it.each(["dark", "light"] as const)("keeps fixed %s across prepaint, hydration and global changes", (fixed) => {
   const opposite = fixed === "dark" ? "light" : "dark";
-  Object.defineProperty(window, "desktop", { configurable: true, value: { bootstrap: { fixedAppearance: fixed } } });
   const key = STORAGE_KEYS.visualPreferences;
   const global = { colorScheme: opposite, direction: "rtl", reducedMotion: "reduce" } as const;
   const raw = visualRecordKernel.encode({ version: 1, stamp: { t: 1, id: "a" }, preferences: global });
+  let mirror = raw;
+  const pushVisual = vi.fn<DesktopBridge["pushVisual"]>(async (wire) => {
+    mirror = wire;
+    return "ok";
+  });
+  Object.defineProperty(window, "desktop", {
+    configurable: true,
+    value: {
+      bootstrap: { fixedAppearance: fixed },
+      visualSeed: { record: raw, pending: false },
+      readVisual: () => ({ record: mirror, pending: false }),
+      pushVisual,
+    },
+  });
   localStorage.setItem(key, raw);
 
   runInNewContext(visualScript(desktopVisualPrepaint), { window, document });
   expect(document.documentElement.dataset.colorScheme).toBe(fixed);
   expect(localStorage.getItem(key)).toBe(raw);
-  const manager = createVisualManager({ host: window });
+  const manager = createVisualManager({ host: window, nativeSource: desktopVisualSource });
   expect(manager.getSnapshot().resolved).toEqual({ colorScheme: fixed, direction: "rtl", reducedMotion: true });
   const disconnect = manager.connect();
   try {
+    expect(pushVisual).not.toHaveBeenCalled();
+    manager.actions.setDirection("ltr");
+    expect(manager.getSnapshot().resolved).toEqual({ colorScheme: fixed, direction: "ltr", reducedMotion: true });
+    expect(visualRecordKernel.decode(mirror).record?.preferences).toEqual({ ...global, direction: "ltr" });
+    expect(localStorage.getItem(key)).toBe(mirror);
+    expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(mirror);
+    manager.actions.setDirection("rtl");
     manager.actions.setColorSchemePreference(fixed);
     manager.actions.setColorSchemePreference(opposite);
     expect(manager.getSnapshot().resolved.colorScheme).toBe(fixed);
@@ -92,3 +113,49 @@ it.each([true, false])(
     }
   },
 );
+
+it("E19 hands successive SPA edits between windows through the live bridge alone", async () => {
+  let record: string | null = null;
+  const readVisual = vi.fn<DesktopBridge["readVisual"]>(() => ({ record, pending: false }));
+  const pushVisual = vi.fn<DesktopBridge["pushVisual"]>(async (value: string) => {
+    record = value;
+    return "ok" as const;
+  });
+  Object.defineProperty(window, "desktop", { configurable: true, value: { readVisual, pushVisual } });
+  const config = { ...visualBootstrapConfig, cookieName: undefined };
+  const options = { host: window, config, nativeSource: desktopVisualSource };
+  const a = createVisualManager(options);
+  const b = createVisualManager(options);
+  const blocked = vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  const readCookie = vi.spyOn(Document.prototype, "cookie", "get");
+  const writeCookie = vi.spyOn(Document.prototype, "cookie", "set");
+  const closeA = a.connect();
+  const closeB = b.connect();
+  try {
+    expect(b.getStatus().storage).toEqual({ local: "unavailable", cookie: "absent", native: "ok" });
+    expect(pushVisual).not.toHaveBeenCalled();
+    a.actions.setDirection("rtl");
+    await Promise.resolve();
+    expect(b.getSnapshot().preferences).toEqual({});
+    readVisual.mockClear();
+    b.actions.setReducedMotionPreference("reduce");
+    await Promise.resolve();
+    expect(readVisual).toHaveBeenCalledOnce();
+    const both = { direction: "rtl", reducedMotion: "reduce" };
+    expect(b.getSnapshot().preferences).toEqual(both);
+    expect(visualRecordKernel.decode(record).record?.preferences).toEqual(both);
+    window.dispatchEvent(new Event("pageshow"));
+    expect(a.getSnapshot().preferences).toEqual(both);
+    expect(pushVisual).toHaveBeenCalledTimes(2);
+    expect(readCookie).not.toHaveBeenCalled();
+    expect(writeCookie).not.toHaveBeenCalled();
+  } finally {
+    blocked.mockRestore();
+    readCookie.mockRestore();
+    writeCookie.mockRestore();
+    closeA();
+    closeB();
+  }
+});

@@ -1,7 +1,8 @@
+import type { Page } from "@playwright/test";
 import { cookieName, storageKey, visualRecordKernel } from "@repo/shared";
 
-import { expect, quit, test, waitForApp } from "./desktop.ts";
-import { pushVisual } from "./visual-mirror.ts";
+import { expect, quit, targetProcesses, test, waitForApp, type Launched } from "./desktop.ts";
+import { pushVisual, visualCookieEnabled } from "./visual-mirror.ts";
 
 interface NavigationProbe {
   externalUrls: string[];
@@ -173,39 +174,79 @@ test("a child starts with the committed theme despite stale storage and honors e
   await expect(page.locator("html")).toHaveAttribute("data-color-scheme", preference);
 });
 
+async function expectVisualCookie(page: Page, raw: string | null) {
+  const actual = await page.evaluate(
+    (name) => document.cookie.split(/;\s*/).find((entry) => entry.startsWith(name + "=")),
+    cookieName("visual"),
+  );
+  expect(actual).toBe(raw === null ? undefined : cookieName("visual") + "=" + encodeURIComponent(raw));
+}
+
+const visualKey = storageKey("visual-preferences");
+
+async function expectWebReplicas(page: Page, raw: string | null, ssr: boolean) {
+  expect(await page.evaluate((key) => localStorage.getItem(key), visualKey)).toBe(raw);
+  await expectVisualCookie(page, ssr ? raw : null);
+}
+
+async function expectRestoredTheme({ app, page }: Launched, raw: string, ssr: boolean) {
+  expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
+  expect(await page.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: raw, pending: false });
+  await expectWebReplicas(page, raw, ssr);
+  expect(await page.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap"))).toMatchObject({
+    record: visualRecordKernel.decode(raw).record,
+    state: { resolved: { colorScheme: "dark", direction: "rtl" } },
+  });
+  await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+}
+
 test("a full relaunch restores the committed desktop theme before hydration", async ({ launchApp }) => {
   const first = await launchApp();
+  const ssr = await visualCookieEnabled(first.page);
+  await expectWebReplicas(first.page, null, ssr);
+  expect(await first.page.evaluate(() => window.desktop!.readVisual())).toEqual({ record: null, pending: false });
   const raw = await pushVisual(first.page, { colorScheme: "dark", direction: "rtl" });
   await first.page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
-  expect(await first.page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences"))).toBe(raw);
-  expect(await first.page.evaluate(() => document.cookie)).toContain(
-    cookieName("visual") + "=" + encodeURIComponent(raw),
-  );
+  await expectWebReplicas(first.page, raw, ssr);
+
   // Retire the manager before clearing its replicas. An active document could repair them.
   await first.page.goto("app://app/__e2e/navigation/frame");
-  await first.app.evaluate(async ({ session }) => {
-    const appSession = session.fromPartition("persist:app");
-    await appSession.clearStorageData({ storages: ["localstorage", "cookies"] });
-  });
-  expect(await first.page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences"))).toBeNull();
-  expect(await first.page.evaluate(() => document.cookie)).not.toContain(cookieName("visual") + "=");
+  await first.app.evaluate(({ session }) =>
+    session.fromPartition("persist:app").clearStorageData({ storages: ["localstorage", "cookies"] }),
+  );
+  await expectWebReplicas(first.page, null, ssr);
+  await quit(first);
+  await expectRestoredTheme(await launchApp(), raw, ssr);
+});
+
+test("a crash with stale Web replicas restores the newer native record before hydration", async ({
+  launchApp,
+  target,
+}) => {
+  const first = await launchApp();
+  const ssr = await visualCookieEnabled(first.page);
+  const old = await pushVisual(first.page, { colorScheme: "light", direction: "ltr" });
+  await first.page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+  await expectWebReplicas(first.page, old, ssr);
+  // A clean shutdown makes the older Chromium copies durable.
   await quit(first);
 
-  const second = await launchApp();
-  expect(await second.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
-  expect(await second.page.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: raw, pending: false });
-  expect(await second.page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences"))).toBe(raw);
-  expect(await second.page.evaluate(() => document.cookie)).toContain(
-    cookieName("visual") + "=" + encodeURIComponent(raw),
-  );
-  expect(
-    await second.page.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.preferences),
-  ).toMatchObject({
-    colorScheme: "dark",
-    direction: "rtl",
-  });
-  await expect(second.page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
-  await expect(second.page.locator("html")).toHaveAttribute("dir", "rtl");
+  const writer = await launchApp();
+  await writer.page.goto("app://app/__e2e/navigation/frame");
+  // This document has no VisualManager. Advance only N to model loss of the latest Chromium writes.
+  const raw = await pushVisual(writer.page, { colorScheme: "dark", direction: "rtl" });
+  await expectWebReplicas(writer.page, old, ssr);
+  if (ssr) {
+    const scheme = await writer.page.evaluate(async () => {
+      const html = await (await fetch("/", { headers: { Accept: "text/html" } })).text();
+      return new DOMParser().parseFromString(html, "text/html").documentElement.dataset.colorScheme;
+    });
+    expect(scheme).toBe("light");
+  }
+  process.kill(writer.pid, "SIGKILL");
+  await expect.poll(() => targetProcesses(target), { timeout: 10000 }).toEqual([]);
+  await expectRestoredTheme(await launchApp(), raw, ssr);
 });
 
 test("a window overlay inherits app theme changes and releases to the latest defaults", async ({

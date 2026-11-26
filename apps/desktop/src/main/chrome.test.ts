@@ -295,24 +295,37 @@ it("rejects old declarations even before the next document requests its token", 
   }
 });
 
-it("applies mirror changes across windows while a fixed window keeps its own background", () => {
-  const store = themeFixture();
-  const primary = setup("win32", store);
-  const fixed = setup("win32", store, "light");
-  try {
-    fixed.declare(1, { height: 42 });
-    store.push(JSON.stringify({ version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "dark" } }));
-    expect(primary.win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
-    expect(fixed.win.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
-    expect(fixed.win.setTitleBarOverlay).toHaveBeenLastCalledWith({
-      height: 42,
-      color: "#ffffff",
-      symbolColor: "#202124",
-    });
-    expect(primary.source.send).not.toHaveBeenCalled();
-    expect(fixed.source.send).not.toHaveBeenCalled();
-  } finally {
-    primary.dispose();
-    fixed.dispose();
-  }
-});
+it.each(["light", "dark"] as const)(
+  "applies global scheme changes while a fixed %s window keeps its own background and overlay",
+  (appearance) => {
+    const store = themeFixture();
+    const primary = setup("win32", store);
+    const fixed = setup("win32", store, appearance);
+    let t = 0;
+    try {
+      fixed.declare(1, { height: 42 });
+      // Explicit light, explicit dark, then auto on a light system.
+      for (const [colorScheme, background] of [
+        ["light", "#ffffff"],
+        ["dark", "#17191d"],
+        ["auto", "#ffffff"],
+      ] as const) {
+        expect(
+          store.push(JSON.stringify({ version: 1, stamp: { t: ++t, id: "a" }, preferences: { colorScheme } })),
+        ).toBe("ok");
+        expect(primary.win.setBackgroundColor).toHaveBeenLastCalledWith(background);
+        expect(fixed.win.setBackgroundColor).toHaveBeenLastCalledWith(appearance === "dark" ? "#17191d" : "#ffffff");
+        expect(fixed.win.setTitleBarOverlay).toHaveBeenLastCalledWith({
+          height: 42,
+          color: appearance === "dark" ? "#17191d" : "#ffffff",
+          symbolColor: appearance === "dark" ? "#f3f4f6" : "#202124",
+        });
+      }
+      expect(primary.source.send).not.toHaveBeenCalled();
+      expect(fixed.source.send).not.toHaveBeenCalled();
+    } finally {
+      primary.dispose();
+      fixed.dispose();
+    }
+  },
+);
