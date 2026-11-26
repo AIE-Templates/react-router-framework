@@ -15,16 +15,18 @@ export function fakeCookieStore() {
     cookies,
     disk,
     get: vi.fn<CookieStore["get"]>(async ({ url }) => {
-      const path = new URL(url).pathname;
+      const path = url && new URL(url).pathname;
       return cookies
         .filter(
           (c) =>
             (c.expirationDate === undefined || c.expirationDate * 1000 > Date.now()) &&
-            (path === c.path || path.startsWith(c.path.endsWith("/") ? c.path : c.path + "/")),
+            (!path || path === c.path || path.startsWith(c.path.endsWith("/") ? c.path : c.path + "/")),
         )
+        .map((c) => ({ ...c, domain: c.domain ? "." + c.domain : new URL(c.url).hostname, hostOnly: !c.domain }))
         .toSorted((a, b) => b.path.length - a.path.length);
     }),
-    set: vi.fn<CookieStore["set"]>(async (details) => {
+    set: vi.fn<CookieStore["set"]>(async (input) => {
+      const details = { ...input, path: input.path || new URL(input.url).pathname.replace(/\/[^/]*$/, "") || "/" };
       const at = cookies.findIndex(
         (c) => c.name === details.name && c.path === details.path && c.domain === details.domain,
       );

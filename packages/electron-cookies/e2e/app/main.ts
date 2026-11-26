@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { app, BrowserWindow, ipcMain, protocol, session, type Session } from "electron";
 
 import {
-  CookieStoreTimeoutError,
+  CookieStoreLookupError,
   createCookieJar,
   flushForQuit,
   installCookieIpc,
@@ -41,6 +41,7 @@ export interface Reply {
   /** HTTP field bytes in Node's latin1 representation. */
   cookies: string[];
   date?: string;
+  clearSiteData?: string;
 }
 
 const replies = new Map<string, Reply>();
@@ -98,6 +99,7 @@ const serve: RequestListener = (req, res) => {
     wire.set(key, requests);
     received.set(key, req.headers.cookie ?? "");
     res.setHeader("Set-Cookie", reply.cookies);
+    if (reply.clearSiteData) res.setHeader("Clear-Site-Data", reply.clearSiteData);
     if (reply.date) res.setHeader("Date", reply.date);
   }
   if (url.searchParams.has("status")) res.statusCode = Number(url.searchParams.get("status"));
@@ -249,6 +251,7 @@ async function start() {
     warn: (data: unknown, message: string) => process.stderr.write(message + " " + JSON.stringify(data) + "\n"),
   };
   const jar = createCookieJar({
+    secureScheme: privileges.secure,
     scheme,
     host,
     storageOrigin,
@@ -302,7 +305,7 @@ async function start() {
       });
     } catch (error) {
       if (signal.aborted) return Response.error();
-      if (error instanceof CookieStoreTimeoutError) return new Response(error.message, { status: 503 });
+      if (error instanceof CookieStoreLookupError) return new Response(error.message, { status: 503 });
       throw error;
     }
   });

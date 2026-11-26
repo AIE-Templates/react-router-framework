@@ -5,7 +5,7 @@ import { installSubscriptionShims } from "./subscriptions.ts";
 
 const scope = "app://app/area/";
 
-function setup() {
+function setup(initial: readonly WakeRecord[] = [{ scope, name: "x", eligible: true, since: 0 }]) {
   const native = {
     subscribe: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     unsubscribe: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -33,7 +33,7 @@ function setup() {
   }
   vi.stubGlobal("CookieStoreManager", Cookies);
   vi.stubGlobal("ServiceWorkerRegistration", Registration);
-  let disk: readonly WakeRecord[] = [{ scope, name: "x", eligible: true, since: 0 }];
+  let disk = initial;
   const write = vi.fn<(records: readonly WakeRecord[]) => Promise<void>>(async (records) => {
     disk = records;
   });
@@ -88,6 +88,21 @@ it.each(["unregister", "unsubscribe"] as const)(
     }
   },
 );
+
+it("allows native unsubscribe and unregister on an unindexed scope at capacity", async () => {
+  const h = setup(Array.from({ length: 128 }, (_, i) => ({ scope: scope + i, eligible: true, since: 0 })));
+  try {
+    await h.registration.cookies.unsubscribe(Array.from({ length: 129 }, () => ({ name: "x".repeat(4097) })));
+    expect(h.native.unsubscribe).toHaveBeenCalledOnce();
+    await expect(h.registration.unregister()).resolves.toBe(true);
+    expect(h.native.unregister).toHaveBeenCalledOnce();
+    await expect(h.registration.cookies.subscribe([{ name: "x" }])).rejects.toThrow(TypeError);
+    expect(h.native.subscribe).not.toHaveBeenCalled();
+    expect(h.write).not.toHaveBeenCalled();
+  } finally {
+    await h.manager.quitAll();
+  }
+});
 
 it("surfaces acquire quota errors as TypeError and storage errors before native subscribe", async () => {
   const h = setup();

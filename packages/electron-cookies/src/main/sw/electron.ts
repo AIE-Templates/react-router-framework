@@ -26,7 +26,7 @@ function validateOperation(scope: string, input: unknown): SubscriptionOperation
     !Array.isArray(input.subscriptions)
   )
     throw new TypeError("Invalid subscription operation");
-  checkSubscriptionCount(input.subscriptions.length);
+  if (kind === "subscribe") checkSubscriptionCount(input.subscriptions.length);
   const subscriptions = input.subscriptions.map((entry: unknown) => {
     if (!entry || typeof entry !== "object") throw new TypeError("Invalid subscription");
     const name = "name" in entry ? entry.name : undefined;

@@ -382,6 +382,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     upstream = server.fetch;
   }
   const cookies = createCookieJar({
+    secureScheme: true,
     store: appSession.cookies,
     scheme: APP_SCHEME,
     host: APP_HOST,

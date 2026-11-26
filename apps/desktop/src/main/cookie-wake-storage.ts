@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { CookieLogger, WakeRecord, WakeStorage } from "@repo/electron-cookies/main";
 
 import { isAppUrl } from "./app-url.ts";
-import { writeAtomicFile } from "./atomic-file.ts";
+import { withFileRetry, writeAtomicFile } from "./atomic-file.ts";
 
 function isWakeRecord(value: unknown): value is WakeRecord {
   if (!value || typeof value !== "object") return false;
@@ -32,7 +32,7 @@ export function cookieWakeStorage(directory: string, log: CookieLogger): WakeSto
       if (persistenceDisabled) return [];
       let data: Buffer;
       try {
-        data = readFileSync(file);
+        data = withFileRetry(() => readFileSync(file));
       } catch (err) {
         if (err instanceof Error && "code" in err && err.code === "ENOENT") return [];
         persistenceDisabled = true;

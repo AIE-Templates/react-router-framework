@@ -76,7 +76,7 @@ export class WakeIndex {
     if (discarded) logger.warn({ discarded }, "Discarding restored wake hints over the cookie subscription limits");
   }
 
-  checkOperation(
+  checkSubscribe(
     scope: string,
     activeScopes: ReadonlyMap<string, unknown>,
     subscriptions: readonly Subscription[],
@@ -235,7 +235,9 @@ export class WakeIndex {
   }
 
   editSubscriptions(scope: string, subscriptions: readonly Subscription[], action: "remove" | "pin"): Promise<void> {
-    const records = (this.#records.get(scope) ?? []).flatMap((r) => {
+    const current = this.#records.get(scope);
+    if (!current) return Promise.resolve();
+    const records = current.flatMap((r) => {
       if (!subscriptions.some((s) => sameSubscription(scope, r, s))) return [r];
       if (action === "pin") return [{ ...r, pinned: true }];
       return r.pinned ? [r] : [];

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { type CookieJar, CookieStoreTimeoutError, stripCookieMarkers } from "@repo/electron-cookies/main";
+import { type CookieJar, CookieStoreLookupError, stripCookieMarkers } from "@repo/electron-cookies/main";
 import { type PortFetch, PortClosedError } from "@repo/port-fetch";
 import type { DesktopRequest } from "@repo/shared";
 import type { WebRequestFilter } from "electron";
@@ -144,8 +144,8 @@ export function registerAppProtocol(
       );
       // Let Electron report a failed main-document transport to the owning window's recovery.
       // An ordinary HTTP error from the host is still returned intact above.
-      // A cookie store that did not answer is as transient: the request never left this process.
-      if (entry?.mainDocument && (err instanceof PortClosedError || err instanceof CookieStoreTimeoutError)) {
+      // A failed cookie lookup can also recover on the next request.
+      if (entry?.mainDocument && (err instanceof PortClosedError || err instanceof CookieStoreLookupError)) {
         return Response.error();
       }
       return new Response(message, { status, headers: { "content-type": "text/plain", "retry-after": "1" } });

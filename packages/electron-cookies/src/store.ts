@@ -9,7 +9,7 @@ export interface CookieLogger {
 }
 
 export interface CookieStore {
-  get(filter: { url: string; httpOnly?: boolean }): Promise<Cookie[]>;
+  get(filter: { url?: string; domain?: string; httpOnly?: boolean }): Promise<Cookie[]>;
   set(details: CookieWrite): Promise<void>;
   flushStore(): Promise<void>;
 }
@@ -99,8 +99,13 @@ export async function writeCookie(
  */
 export const STORE_TIMEOUT_MS = 5_000;
 
+/** A request cannot be forwarded because its cookie lookup failed. */
+export class CookieStoreLookupError extends Error {
+  override name = "CookieStoreLookupError";
+}
+
 /** The store did not answer a cookie lookup within `timeoutMs`. */
-export class CookieStoreTimeoutError extends Error {
+export class CookieStoreTimeoutError extends CookieStoreLookupError {
   readonly timeoutMs: number;
   constructor(timeoutMs: number) {
     super(`cookie store did not answer within ${timeoutMs} ms`);

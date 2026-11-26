@@ -953,10 +953,8 @@ describe("wake index limits and stale scopes", () => {
       h.manager.acquire(scope, { kind, subscriptions }, "frame");
     const fullName = "é".repeat(2048);
     try {
-      for (const kind of ["subscribe", "unsubscribe"] as const) {
-        await expect(acquire(names(0, 129), kind)).rejects.toThrow(TypeError);
-        await expect(acquire([{ name: fullName + "x" }], kind)).rejects.toThrow(TypeError);
-      }
+      await expect(acquire(names(0, 129))).rejects.toThrow(TypeError);
+      await expect(acquire([{ name: fullName + "x" }])).rejects.toThrow(TypeError);
       expect(h.storage.write).not.toHaveBeenCalled();
       for (const batch of [[{ name: fullName }, ...names(0, 127)], names(127, 128), names(0, 128)]) {
         const grant = await acquire(batch);
@@ -994,6 +992,21 @@ describe("wake index limits and stale scopes", () => {
       expect(h.disk()).toHaveLength(128);
     } finally {
       gate.resolve();
+      await h.manager.quitAll();
+    }
+  });
+
+  it("does not reserve scope capacity for a pending unindexed removal", async () => {
+    const restored = Array.from({ length: 127 }, (_, i) => seed("x", scope + i));
+    const h = setup(restored);
+    try {
+      const removal = await h.manager.acquire(scope, unregister, 7);
+      const last = await h.manager.acquire(otherScope, subscribe, 8);
+      await expect(h.manager.acquire(scope, subscribe, 7)).rejects.toThrow(TypeError);
+      await h.manager.complete(removal.operationId, true);
+      await h.manager.complete(last.operationId, true);
+      expect(h.disk()).toHaveLength(128);
+    } finally {
       await h.manager.quitAll();
     }
   });
