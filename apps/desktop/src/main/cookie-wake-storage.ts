@@ -17,6 +17,7 @@ function isWakeRecord(value: unknown): value is WakeRecord {
     Number.isFinite(value.since) &&
     "eligible" in value &&
     typeof value.eligible === "boolean" &&
+    (!("dormant" in value) || typeof value.dormant === "boolean") &&
     (!("pinned" in value) || typeof value.pinned === "boolean") &&
     (!("name" in value) || typeof value.name === "string") &&
     (!("url" in value) || (typeof value.url === "string" && isAppUrl(value.url) && value.url.startsWith(value.scope)))

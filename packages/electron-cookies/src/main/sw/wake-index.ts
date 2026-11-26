@@ -11,6 +11,20 @@ import type {
 } from "./contracts.ts";
 
 const WRITE_TIMEOUT_MS = 5_000;
+const MAX_OPERATION_SUBSCRIPTIONS = 128;
+const MAX_SCOPE_SUBSCRIPTIONS = 256;
+const MAX_SCOPES = 128;
+const MAX_NAME_BYTES = 4096;
+const MAX_EXHAUSTED_CYCLES = 3;
+
+export function checkSubscriptionCount(count: number): void {
+  if (count > MAX_OPERATION_SUBSCRIPTIONS)
+    throw new TypeError("Cookie subscription limit exceeded: too many entries in one operation");
+}
+
+function oversizedName(name: string | undefined): boolean {
+  return name !== undefined && Buffer.byteLength(name) > MAX_NAME_BYTES;
+}
 
 function matches(record: WakeRecord, item: CookieItem): boolean {
   if (record.name !== undefined && item.name !== record.name) return false;
@@ -27,6 +41,8 @@ export class WakeIndex {
   readonly #storage: WakeStorage;
   readonly #scheduler: Scheduler;
   readonly #logger: WakeLogger;
+  readonly #failures = new Map<string, number>();
+  #sequence = 0;
   readonly #revisions = new Map<string, number>();
   #records = new Map<string, WakeRecord[]>();
   #saved = this.#records;
@@ -41,14 +57,37 @@ export class WakeIndex {
     this.#storage = storage;
     this.#scheduler = scheduler;
     this.#logger = logger;
+    let discarded = 0;
     // A holder from a previous process cannot resume. Its native subscription may still exist.
     for (const { pinned: _pinned, ...stored } of storage.read()) {
       // A restored subscription predates every notification in this launch, even after a clock rollback.
       const record = { ...stored, since: 0 };
       const records = this.#records.get(record.scope);
+      if (
+        oversizedName(record.name) ||
+        (records ? records.length >= MAX_SCOPE_SUBSCRIPTIONS : this.#records.size >= MAX_SCOPES)
+      ) {
+        discarded++;
+        continue;
+      }
       if (records) records.push(record);
       else this.#records.set(record.scope, [record]);
     }
+    if (discarded) logger.warn({ discarded }, "Discarding restored wake hints over the cookie subscription limits");
+  }
+
+  checkOperation(
+    scope: string,
+    activeScopes: ReadonlyMap<string, unknown>,
+    subscriptions: readonly Subscription[],
+  ): void {
+    checkSubscriptionCount(subscriptions.length);
+    if (subscriptions.some(({ name }) => oversizedName(name)))
+      throw new TypeError("Cookie subscription limit exceeded: name exceeds 4096 UTF-8 bytes");
+    if (this.#records.has(scope) || activeScopes.has(scope)) return;
+    let count = this.#records.size;
+    for (const active of activeScopes.keys()) if (!this.#records.has(active)) count++;
+    if (count >= MAX_SCOPES) throw new TypeError("Cookie subscription limit exceeded: too many scopes");
   }
 
   revision(scope: string): number {
@@ -56,7 +95,11 @@ export class WakeIndex {
   }
 
   advance(scope: string): void {
-    this.#revisions.set(scope, this.revision(scope) + 1);
+    if (this.#records.has(scope)) this.#revisions.set(scope, ++this.#sequence);
+    else {
+      this.#revisions.delete(scope);
+      this.#failures.delete(scope);
+    }
   }
 
   closeWrites(): void {
@@ -135,10 +178,19 @@ export class WakeIndex {
 
   subscribe(scope: string, subscriptions: readonly Subscription[], since: number): Promise<void> {
     const records = [...(this.#records.get(scope) ?? [])];
+    const dormant = records[0]?.dormant;
     for (const subscription of subscriptions) {
       const i = records.findIndex((r) => sameSubscription(scope, r, subscription));
       if (i >= 0 && records[i].eligible) continue;
-      const record = { ...(i < 0 ? subscription : records[i]), scope, since, eligible: true };
+      if (i < 0 && records.length >= MAX_SCOPE_SUBSCRIPTIONS)
+        throw new TypeError("Cookie subscription limit exceeded: too many subscriptions for this scope");
+      const record = {
+        ...(i < 0 ? subscription : records[i]),
+        scope,
+        since,
+        eligible: true,
+        ...(dormant && { dormant }),
+      };
       this.#pending.add(record);
       if (i < 0) records.push(record);
       else records[i] = record;
@@ -158,14 +210,26 @@ export class WakeIndex {
     });
   }
 
-  finishSubscribe(scope: string, failed: boolean): Promise<void> {
+  finishSubscribe(scope: string, result: "success" | "failure" | "expired" | "destroyed"): Promise<void> {
     // Operations are serialized per scope. A failed duplicate must preserve an older successful subscribe.
     const records = this.#records.get(scope) ?? [];
+    if (result === "success") {
+      this.wakeSucceeded(scope);
+      this.advance(scope);
+    }
     let changed = false;
     const next = records.map((record) => {
-      if (!this.#pending.delete(record) || !failed) return record;
-      changed = true;
-      return { ...record, eligible: false };
+      const pending = this.#pending.delete(record);
+      if (result === "success" && record.dormant) {
+        changed = true;
+        const { dormant: _dormant, ...active } = record;
+        return active;
+      }
+      if (result === "failure" && pending) {
+        changed = true;
+        return { ...record, eligible: false };
+      }
+      return record;
     });
     return changed ? this.#edit(scope, next) : Promise.resolve();
   }
@@ -186,9 +250,31 @@ export class WakeIndex {
     return this.#edit(scope, records);
   }
 
+  wakeSucceeded(scope: string): void {
+    this.#failures.delete(scope);
+  }
+
+  recordExhaustion(scope: string, revision: number): boolean {
+    if (!this.#records.has(scope) || this.revision(scope) !== revision) return false;
+    const count = (this.#failures.get(scope) ?? 0) + 1;
+    this.#failures.set(scope, count);
+    return count === MAX_EXHAUSTED_CYCLES;
+  }
+
+  persistDormancy(scope: string): Promise<void> {
+    const records = this.#records.get(scope);
+    // A subscribe can succeed or the scope can be removed while this edit waits for its turn.
+    if (!records || this.#failures.get(scope) !== MAX_EXHAUSTED_CYCLES) return Promise.resolve();
+    return this.#edit(
+      scope,
+      records.map((record) => ({ ...record, dormant: true })),
+    );
+  }
+
   scopes<Item extends CookieItem>(event: CookieChange<Item>): Set<string> {
     const scopes = new Set<string>();
     for (const [scope, records] of this.#records) {
+      if (records[0].dormant || this.#failures.get(scope) === MAX_EXHAUSTED_CYCLES) continue;
       const coarseMatch = (item: Item) => records.some((r) => matches(r, item));
       if (event.changed.some(coarseMatch) || event.deleted.some(coarseMatch)) scopes.add(scope);
     }

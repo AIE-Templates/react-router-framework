@@ -38,8 +38,9 @@ export class ScopeOperations {
     return result;
   }
 
-  acquire(scope: string, operation: Operation, ownerId: OwnerId): Promise<{ operationId: string }> {
-    if (this.#quit) return Promise.reject(new Error("Cookie worker manager closed"));
+  async acquire(scope: string, operation: Operation, ownerId: OwnerId): Promise<{ operationId: string }> {
+    if (this.#quit) throw new Error("Cookie worker manager closed");
+    this.#index.checkOperation(scope, this.#tails, operation.kind === "unregister" ? [] : operation.subscriptions);
     const operationId = crypto.randomUUID();
     const grant = deferred<{ operationId: string }>();
     const released = deferred<void>();
@@ -62,7 +63,7 @@ export class ScopeOperations {
           await this.#index.subscribe(scope, operation.subscriptions, this.#scheduler.now());
           if (!this.#requests.has(operationId)) {
             // The owner disappeared during persistence and never received a grant.
-            await this.#index.finishSubscribe(scope, true);
+            await this.#index.finishSubscribe(scope, "failure");
             return;
           }
         }
@@ -88,7 +89,7 @@ export class ScopeOperations {
   async #apply(scope: string, operation: Operation, result: Outcome): Promise<void> {
     switch (operation.kind) {
       case "subscribe":
-        await this.#index.finishSubscribe(scope, result === "failure");
+        await this.#index.finishSubscribe(scope, result);
         if (result === "expired") await this.#index.editSubscriptions(scope, operation.subscriptions, "pin");
         break;
       case "unsubscribe":
@@ -119,6 +120,11 @@ export class ScopeOperations {
     for (const request of this.#requests.values()) {
       if (request.ownerId === ownerId) request.settle("destroyed");
     }
+  }
+
+  exhausted(scope: string, revision: number): Promise<void> {
+    if (!this.#index.recordExhaustion(scope, revision)) return Promise.resolve();
+    return this.#enqueue(scope, () => this.#index.persistDormancy(scope));
   }
 
   missingRegistration(scope: string, revision: number): Promise<void> {

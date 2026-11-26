@@ -12,7 +12,7 @@ The three subpath exports provide built JavaScript and declarations, with `@repo
 | `./preload` | `installWindowCookiePreload(options)` and `installServiceWorkerCookiePreload(options)` install the applicable APIs through the sandboxed preload. Lower-level exports include `prepareCookieFrame`, `selectCookieInstallation` and the serializable `installCookieShims`.                                                                                                                                 |
 | `./shared`  | `cookieIpcChannels(prefix)`, `OMIT_COOKIES_HEADER` and the IPC contracts, including `CookieReply`, `CookieIpcError`, `WindowCookie`, `CookiePush` and `WorkerCookieEvent`. Use the same prefix in main and preload.                                                                                                                                                                                       |
 
-Configure the jar with the public scheme, host and origin, a private HTTPS storage origin, the upstream hostname and the application session's cookies. Keep the storage origin fixed across environments and never request it in this session. Supply a session factory and permission-policy callback for the lazy in-memory HttpOnly replacement probe. The logger implements `debug(fields, message)` and `warn(fields, message)`. Optional `timeoutMs` bounds a protocol lookup or response batch (default five seconds).
+Configure the jar with the public host and either its origin or its registered scheme (the origin is then `scheme://host`; an explicit origin wins), a private HTTPS storage origin, the upstream hostname and the application session's cookies. Keep the storage origin fixed across environments and never request it in this session. Supply a session factory and permission-policy callback for the lazy in-memory HttpOnly replacement probe. The logger implements `debug(fields, message)` and `warn(fields, message)`. Optional `timeoutMs` bounds a protocol lookup or response batch (default five seconds).
 
 IPC takes the application URL predicate, a webContents ownership check and the session's cookie change source. Worker IPC additionally needs that session's serviceWorkers and a `WakeStorage` adapter. Its synchronous `read()` returns wake records at startup. Its asynchronous `write(records)` atomically replaces the complete index. Optional `quitTimeoutMs` bounds how long `quitAll()` waits for wake-index finalization (default 2,000 ms); at the deadline main warns and quit proceeds, an in-flight atomic write may still finish and queued writes are discarded. Optional `wakeTimeoutMs` bounds each `startWorkerForScope()` call (default 60,000 ms, Chromium's startup limit for an installed Service Worker); a timeout uses the scope's retry schedule and a worker returned after the deadline gets nothing from that attempt. Optional `taskTimeoutMs` bounds each event's keepalive from send until acknowledgement, including pending `waitUntil` promises (default five minutes, matching Chromium's request timeout). Chromium keeps the actual subscriptions in `registration.cookies`.
 
@@ -27,13 +27,13 @@ import {
   createCookieJar,
   installCookieIpc,
   installCookieWorkerIpc,
+  stripCookieMarkers,
   type CookieIpcOptions,
 } from "@repo/electron-cookies/main";
 
 const appSession = session.fromPartition("persist:app");
 installPermissionPolicy(appSession, log);
 const cookies = createCookieJar({
-  scheme: APP_SCHEME,
   host: APP_HOST,
   origin: APP_ORIGIN,
   storageOrigin: COOKIE_JAR_ORIGIN,
@@ -75,10 +75,11 @@ if (process.type === "service-worker") {
 }
 ```
 
-In the application protocol handler, pass the pathname, Electron's initiatorOrigin and the original request headers to both jar methods. Forward only the host-shaped headers, which strip incoming Cookie and x-desktop-* before adding trusted host fields.
+In the application protocol handler, pass the pathname, Electron's initiatorOrigin and the original request headers to both jar methods. Call `stripCookieMarkers(headers)` on the mutable upstream headers so the omit marker never reaches the upstream; the desktop host also strips incoming Cookie and untrusted x-desktop-* headers before adding trusted host fields.
 
 ```ts
 const cookieRequest = { path: pathname, initiatorOrigin: request.initiatorOrigin, headers: request.headers };
+stripCookieMarkers(headers);
 const cookie = await cookies.cookieHeader(cookieRequest, signal);
 signal.throwIfAborted();
 if (cookie !== undefined) headers.set("cookie", cookie);
@@ -102,7 +103,7 @@ Strip Set-Cookie before delivering the response. After windows accept quit, awai
 - Server writes preserve HttpOnly. Scripts can read and write non-HttpOnly cookies, including valid nameless cookies. Document writes parse text and silently ignore rejected cookies. Cookie Store validates structured arguments and rejects invalid writes. Only server response batches explicitly flush before delivery. Concurrent batches that downgrade HttpOnly on overlapping cookie identities can interleave. Old cookies keep their stored flags.
 - Window cookie access uses the document creation URL, including across history changes and when another same-origin window's accessor or CookieStore method is applied to the document. Such a borrowed CookieStore method rejects argument-validation failures in the method's window; once the call reaches storage, its promise and any storage error (such as a refused HttpOnly overwrite) belong to the receiving store's window, as in Chromium. Same-origin srcdoc inherits the parent's recorded URL when available. Same-origin blob: and srcdoc without a recorded parent URL retain native cookie APIs and registration methods and receive only the fetch wrapper. Initial and navigated about:blank frames lack preload and jar-cookie inheritance. During a store failure, synchronous reads can return a stale per-URL snapshot or the empty string.
 - Explicit script Domain equal to the public host creates a domain cookie even on a single-label host. Partitioned requires Secure but shares ordinary identity, deletion and eviction limits. Cookie Store reports partitioned=false. Server fields with invalid UTF-8 are dropped. Cookie Store TypeError stacks refer to the shim, and fetch rejection messages can refer to Request construction.
-- Visible changes reach matching window documents as change events. Main uses the persisted wake index to find service workers by cookie name and path. The active worker checks native subscriptions before dispatching cookiechange. Each event has an independent waitUntil lifetime bounded at five minutes. Events are synthetic (isTrusted=false). Changes during subscribe can be delivered. Removal outside wrapped unregister can leave stale eligibility at a reused scope. Electron 45 gives the same error for missing registrations and transient wake failures. Each scope queues at most 128 waiting changes (oldest dropped first) and shares one wake schedule: an immediate attempt and retries after 100, 400 and 1,600 ms. After the last failure main warns, drops the queue and retains the index; the next matching change tries again. Successful wrapped unregister clears it. Closing a window releases its change registrations.
+- Visible changes reach matching window documents as change events. Main uses the persisted wake index to find service workers by cookie name and path. The active worker checks native subscriptions before dispatching cookiechange. Each event has an independent waitUntil lifetime bounded at five minutes. Events are synthetic (isTrusted=false). Changes during subscribe can be delivered. Removal outside wrapped unregister can leave stale eligibility at a reused scope. Electron 45 gives the same error for missing registrations and transient wake failures. Each scope queues at most 128 waiting changes (oldest dropped first) and shares one wake schedule: an immediate attempt and retries after 100, 400 and 1,600 ms. A change whose worker dies or whose send fails before `started` is retried as the oldest waiting change. After the last failure main warns, drops the queue and retains the index; the next matching change tries again. Three exhausted schedules in a row make a scope's hints dormant until it subscribes again. Each operation accepts up to 128 entries and names up to 4,096 bytes; the index holds up to 256 subscriptions per scope and 128 scopes. Successful wrapped unregister clears it. Closing a window releases its change registrations.
 - Other custom schemes do not participate. Multiple cookie-bearing custom-scheme sites and using protocol.handle to intercept HTTP(S) are unsupported. Direct HTTP(S) requests use Chromium's native cookies.
 
 The native comparison baseline is Electron 45.0.0 / Chromium 156.0.8078.48. Rerun the differential suite and review the compatibility boundaries on upgrade. The desktop contract includes the complete request-source policy and known differences. [HOST-09](../../docs/specs/electron-shell.spec.md#server-cookies-host-09)

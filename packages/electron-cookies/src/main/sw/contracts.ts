@@ -4,6 +4,7 @@ export type { Subscription, SubscriptionOperation as Operation } from "../../sha
 export interface WakeRecord extends Subscription {
   readonly scope: string;
   readonly since: number;
+  readonly dormant?: boolean;
   readonly pinned?: boolean;
   readonly eligible: boolean;
 }
@@ -22,7 +23,11 @@ export interface Scheduler {
 
 export interface WakeLogger {
   warn(
-    fields: { scope: string; operationId?: string; eventId?: string } | { timeoutMs: number } | { scopeCount: number },
+    fields:
+      | { scope: string; operationId?: string; eventId?: string }
+      | { timeoutMs: number }
+      | { scopeCount: number }
+      | { discarded: number },
     message: string,
   ): void;
 }

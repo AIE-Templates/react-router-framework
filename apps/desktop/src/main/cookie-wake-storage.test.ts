@@ -94,13 +94,18 @@ it("reopens a durably replaced index, preserves valid records and rejects foreig
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual([record]);
     expect(cookieWakeStorage(dir, log).read()).toEqual([record]);
     const damaged = Buffer.from(
-      JSON.stringify([record, { ...record, scope: "https://foreign/" }, { ...record, since: null }]),
+      JSON.stringify([
+        record,
+        { ...record, scope: "https://foreign/" },
+        { ...record, since: null },
+        { ...record, dormant: "yes" },
+      ]),
     );
     writeFileSync(file, damaged);
     expect(storage.read()).toEqual([record]);
     expect(log.warn).toHaveBeenCalledOnce();
     expect(readFileSync(file)).toEqual(damaged);
-    const next = { ...record, name: "new" };
+    const next = { ...record, name: "new", dormant: true };
     await storage.write([record, next]);
     expect(cookieWakeStorage(dir, log).read()).toEqual([record, next]);
     expect(readFileSync(file + ".corrupt")).toEqual(damaged);
