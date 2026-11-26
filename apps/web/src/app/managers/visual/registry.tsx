@@ -1,10 +1,15 @@
+import type { VisualRecord, Shell } from "@repo/shared";
 import type { PropsWithChildren } from "react";
 
 import { VisualManagerProvider } from "./provider";
-import type { VisualPreferences } from "./types";
 export function VisualManagerRegistry({
   initialState,
+  initialShell,
   children,
-}: PropsWithChildren<{ initialState?: VisualPreferences }>) {
-  return <VisualManagerProvider initialPreferences={initialState}>{children}</VisualManagerProvider>;
+}: PropsWithChildren<{ initialState?: VisualRecord; initialShell?: Shell["kind"] }>) {
+  return (
+    <VisualManagerProvider initialRecord={initialState} initialShell={initialShell}>
+      {children}
+    </VisualManagerProvider>
+  );
 }

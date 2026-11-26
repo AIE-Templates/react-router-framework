@@ -1,4 +1,5 @@
 import { Rating, useDirection, useMantineColorScheme } from "@mantine/core";
+import { visualRecordKernel } from "@repo/shared";
 import { act, render, screen } from "@testing-library/react";
 import { Activity, useEffect, useLayoutEffect } from "react";
 import { hydrateRoot } from "react-dom/client";
@@ -6,6 +7,8 @@ import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { STORAGE_KEYS } from "~/config/storage";
+import { visualCookie } from "~/config/visual-cookie";
+import { visualBootstrapConfig, visualCodec } from "~/managers/visual/bootstrap";
 import { VisualManagerContext } from "~/managers/visual/context";
 import { useVisualState } from "~/managers/visual/hooks";
 import { createVisualManager } from "~/managers/visual/manager";
@@ -14,6 +17,8 @@ import { VisualMantineProvider } from "./provider";
 
 afterEach(() => {
   localStorage.clear();
+  document.cookie = visualCookie.name + "=; Path=/; Max-Age=0";
+  delete window.frameworkVisualBootstrap;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -30,9 +35,10 @@ it("hydrates direction-dependent component markup before adopting the client dir
   container.innerHTML = renderToString(tree(createVisualManager()));
   localStorage.setItem(
     STORAGE_KEYS.visualPreferences,
-    JSON.stringify({ version: 1, preferences: { direction: "rtl" } }),
+    visualRecordKernel.encode({ version: 1, stamp: { t: 1, id: "a" }, preferences: { direction: "rtl" } }),
   );
-  document.documentElement.dir = "rtl";
+  window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window);
+  visualCodec.apply(visualBootstrapConfig, window.frameworkVisualBootstrap.state, document.documentElement);
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const recoverable = vi.fn<(error: unknown) => void>();
   let root: ReturnType<typeof hydrateRoot> | undefined;
@@ -121,7 +127,7 @@ it("restores current system preferences in Mantine after suspended effects and a
   expect(screen.getByRole("status")).toHaveTextContent('"colorScheme":"dark"');
   expect(screen.getByRole("status")).toHaveTextContent('"reducedMotion":true');
   expect(screen.getByRole("status")).toHaveTextContent('"dir":"rtl"');
-  expect(manager.getStatus().persistence).toBe("failed");
+  expect(manager.getStatus().storage.local).toBe("failed");
   expect(document.documentElement.dataset.colorScheme).toBe("dark");
   expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
   view.unmount();

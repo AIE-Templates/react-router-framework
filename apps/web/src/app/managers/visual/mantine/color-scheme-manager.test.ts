@@ -18,7 +18,7 @@ it("breaks Mantine's subscribe/set feedback loop and releases replaced subscript
   visual.actions.setDirection("rtl");
   expect(notify).toHaveBeenCalledTimes(1);
   manager.clear();
-  expect(visual.getSnapshot().preferences).toMatchObject({ colorScheme: "auto", direction: "rtl" });
+  expect(visual.getSnapshot().preferences).toEqual({ direction: "rtl" });
   manager.unsubscribe();
   manager.unsubscribe();
   visual.actions.setColorSchemePreference("light");
