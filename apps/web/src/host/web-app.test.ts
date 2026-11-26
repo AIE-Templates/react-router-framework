@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { defaultPolicy } from "./csp";
 import { createWebApp } from "./web-app";
@@ -28,6 +28,7 @@ for (const [file, contents] of [
   ["index.html", SHELL],
   [".well-known/assetlinks.json", "[]"],
   ["about/index.html", "<p>prerendered</p>"],
+  ["about.data", "prerendered data"],
   ["favicon.ico", "icon"],
   ["assets/app.js", ASSET],
   ["assets/page.html", "<script>alert(1)</script>"],
@@ -81,12 +82,17 @@ describe("static files", () => {
     expect(response.headers.get("x-request-id")).toBeTruthy();
   });
 
-  it("serves other files for an hour and applies the SSR cache policy to HTML", async () => {
+  it("serves other files for an hour and revalidates static documents and data in SSR mode", async () => {
     expect((await web.request("/favicon.ico")).headers.get("cache-control")).toBe("public, max-age=3600");
-    // A prerendered page: extensionless path, served from about/index.html.
-    const page = await web.request("/about");
-    expect(await page.text()).toBe("<p>prerendered</p>");
-    expect(page.headers.get("cache-control")).toBe("private, no-store");
+    for (const [path, contents] of [
+      ["/index.html", SHELL],
+      ["/about", "<p>prerendered</p>"],
+      ["/about.data", "prerendered data"],
+    ] as const) {
+      const response = await web.request(path);
+      expect(await response.text()).toBe(contents);
+      expect(response.headers.get("cache-control")).toBe("no-cache");
+    }
   });
 
   it("answers revalidation of an unchanged file with 304", async () => {
@@ -147,12 +153,7 @@ describe("static files", () => {
 });
 
 describe("without server rendering", () => {
-  let web: ReturnType<typeof createWebApp>;
-  beforeAll(() => {
-    vi.stubGlobal("APP_SSR", false);
-    web = createWebApp({ clientDir, ssr: false });
-    return () => vi.unstubAllGlobals();
-  });
+  const web = createWebApp({ clientDir, ssr: false });
 
   it("returns 404 for missing build assets instead of the SPA shell", async () => {
     for (const method of ["GET", "HEAD"]) {
@@ -265,6 +266,7 @@ describe("without server rendering", () => {
     ] as const) {
       const response = await web.request(path, init);
       expect(response.status).toBe(500);
+      expect(response.headers.has("cache-control")).toBe(false);
       expect(await response.text()).not.toBe(SHELL);
     }
   });
