@@ -1,9 +1,11 @@
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { visualRecordKernel } from "@repo/shared";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 
+import { STORAGE_KEYS } from "~/config/storage";
 import { visualCookie } from "~/config/visual-cookie";
 import { VisualManagerContext } from "~/managers/visual/context";
 import { createVisualManager } from "~/managers/visual/manager";
@@ -46,13 +48,37 @@ it("confirms a reset from the menu and shows a notification", async () => {
   );
   await user.click(screen.getByRole("button", { name: "Preview options" }));
   await user.click(await screen.findByRole("menuitem", { name: "Reset with confirmation" }));
-  await screen.findByRole("dialog", { name: "Reset appearance?" });
+  expect(await screen.findByRole("dialog", { name: "Reset appearance?" })).toHaveTextContent(
+    "Color scheme, direction and motion return to their defaults.",
+  );
   await user.click(screen.getByRole("button", { name: "Reset" }));
 
   expect(manager.getSnapshot().preferences).toEqual({});
-  expect(await screen.findByText("System defaults restored.")).toBeInTheDocument();
+  expect(await screen.findByText("Defaults restored.")).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reset appearance?" })).not.toBeInTheDocument());
+  await user.hover(screen.getByRole("button", { name: "Reset appearance" }));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Restore defaults");
 });
+
+it.each([
+  ["Color scheme", "System", "colorScheme", "auto"],
+  ["Direction", "LTR", "direction", "ltr"],
+  ["Motion", "System", "reducedMotion", "auto"],
+])(
+  "records an explicit %s choice when the displayed default is selected again",
+  async (label, option, field, value) => {
+    const user = userEvent.setup();
+    renderWithProviders(<VisualSettings />);
+    const select = screen.getByRole("combobox", { name: label });
+    expect(select).toHaveValue(option);
+    expect(localStorage.getItem(STORAGE_KEYS.visualPreferences)).toBeNull();
+
+    await user.click(select);
+    await user.keyboard("{Enter}");
+    const { record } = visualRecordKernel.decode(localStorage.getItem(STORAGE_KEYS.visualPreferences));
+    expect(record?.preferences).toEqual({ [field]: value });
+  },
+);
 
 it("keeps effective defaults selected and reports only a failed store or complete loss of persistence", async () => {
   const user = userEvent.setup();
