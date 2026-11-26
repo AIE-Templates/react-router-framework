@@ -15,3 +15,11 @@ export {
   parseDesktopBootstrap,
   parseOverlayAppearance,
 } from "./window-chrome.ts";
+
+export {
+  VISUAL_DEFAULTS,
+  createVisualRecordKernel,
+  visualRecordKernel,
+  type VisualPreferences,
+  type VisualRecord,
+} from "./visual-record.ts";
