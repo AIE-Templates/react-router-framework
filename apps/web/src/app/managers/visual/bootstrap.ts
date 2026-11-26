@@ -1,48 +1,32 @@
 /* oxlint-disable unicorn/consistent-function-scoping -- The serialized kernel must have no module-scope dependencies. */
+import { createVisualRecordKernel, VISUAL_DEFAULTS, visualRecordKernel, type VisualRecord } from "@repo/shared";
+
 import { STORAGE_KEYS } from "~/config/storage";
+import { visualCookie } from "~/config/visual-cookie";
 import { visualIntegration } from "~/config/visual-integration";
 
-import type { VisualBootstrapConfig, VisualBootstrapRecord, VisualPreferences, VisualState } from "./types";
+import { readVisualCookie } from "./cookie";
+import type { NativeVisualSource, VisualBootstrapConfig, VisualBootstrapRecord, VisualState } from "./types";
 
 export const visualBootstrapConfig: VisualBootstrapConfig = {
   storageKey: STORAGE_KEYS.visualPreferences,
   bootstrapKey: "frameworkVisualBootstrap",
+  cookieName: APP_SSR ? visualCookie.name : undefined,
   ...visualIntegration,
 };
 
-/** Self-contained by design: the same parser executes in the prepaint script and runtime. */
-export function visualKernel() {
-  function parse(value: unknown): VisualPreferences {
-    const v = value && typeof value === "object" ? (value as Partial<VisualPreferences>) : {};
-    return {
-      colorScheme: v.colorScheme === "dark" || v.colorScheme === "light" ? v.colorScheme : "auto",
-      direction: v.direction === "rtl" ? "rtl" : "ltr",
-      reducedMotion: v.reducedMotion === "reduce" || v.reducedMotion === "full" ? v.reducedMotion : "auto",
-    };
-  }
-  function decode(raw: string | null) {
-    if (raw === null) return { kind: "missing" as const };
-    try {
-      const value = JSON.parse(raw);
-      if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.version !== "number") {
-        return { kind: "invalid" as const };
-      }
-      if (value.version !== 1) return { kind: "unsupported-version" as const };
-      return { kind: "valid" as const, preferences: parse(value.preferences) };
-    } catch {
-      return { kind: "invalid" as const };
-    }
-  }
-  function resolve(preferences: VisualPreferences, host?: Window, fixedAppearance?: "light" | "dark"): VisualState {
-    const matches = (query: string) => {
+export function visualKernel(records: typeof visualRecordKernel, cookieValue: typeof readVisualCookie) {
+  function resolve(record?: VisualRecord, host?: Window, fixedAppearance?: "light" | "dark"): VisualState {
+    const preferences = records.effective(record);
+    function matches(query: string) {
       try {
         return !!host?.matchMedia?.(query).matches;
       } catch {
         return false;
       }
-    };
+    }
     return {
-      preferences,
+      preferences: record?.preferences ?? {},
       resolved: {
         colorScheme:
           fixedAppearance ??
@@ -59,33 +43,28 @@ export function visualKernel() {
       },
     };
   }
+  function optional<T>(reader: () => T) {
+    try {
+      return reader();
+    } catch {
+      return undefined;
+    }
+  }
   function read(
     config: VisualBootstrapConfig,
-    seed?: VisualPreferences,
-    host?: Window,
-    fixedAppearance?: "light" | "dark",
-  ) {
-    let storagePresent: boolean | undefined;
-    let preferences = parse(seed);
-    let persistence: VisualBootstrapRecord["persistence"] = host ? "ready" : "unavailable";
-    if (host) {
-      try {
-        const raw = host.localStorage.getItem(config.storageKey);
-        storagePresent = raw !== null;
-        const stored = decode(raw);
-        if (stored.kind === "valid") preferences = stored.preferences;
-        if (stored.kind === "unsupported-version") persistence = stored.kind;
-      } catch {
-        persistence = "unavailable";
-      }
-    }
+    host: Window,
+    native?: NativeVisualSource["prepaint"],
+  ): VisualBootstrapRecord {
+    const local = optional(() => records.decode(host.localStorage.getItem(config.storageKey)).record);
+    const name = config.cookieName;
+    const cookie = name ? optional(() => records.decode(cookieValue(host.document.cookie, name)).record) : undefined;
+    const preload = optional(() => native?.(host));
+    const record = records.pick([local, cookie, records.decode(preload?.record ?? null).record]);
     return {
-      version: 1 as const,
       storageKey: config.storageKey,
-      fixedAppearance,
-      state: resolve(preferences, host, fixedAppearance),
-      persistence,
-      storagePresent,
+      record,
+      fixedAppearance: preload?.fixedAppearance,
+      state: resolve(record, host, preload?.fixedAppearance),
     };
   }
   function apply(config: VisualBootstrapConfig, state: VisualState, root: HTMLElement) {
@@ -96,31 +75,36 @@ export function visualKernel() {
       if (/^data-[a-z][a-z0-9-]*$/.test(attribute)) root.setAttribute(attribute, state.resolved.colorScheme);
     }
   }
-  return { parse, decode, resolve, read, apply };
+  return { resolve, read, apply };
 }
 
-export const visualCodec = visualKernel();
-/** Serialized alongside the kernel to resolve the document appearance before paint. */
-export function webWindowAppearance(host: Window) {
-  const fixed = new URLSearchParams(host.location?.search).get("windowAppearance");
-  return fixed === "light" || fixed === "dark" ? fixed : undefined;
+export const visualCodec = visualKernel(visualRecordKernel, readVisualCookie);
+
+function inlineJson(value: unknown) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
-export function visualScript(seed?: VisualPreferences) {
-  const json = (value: unknown) =>
-    JSON.stringify(value)
-      .replace(/</g, "\\u003c")
-      .replace(/\u2028/g, "\\u2028")
-      .replace(/\u2029/g, "\\u2029");
-  return `(()=>{const k=(${visualKernel.toString()})();const c=${json(visualBootstrapConfig)};const r=k.read(c,${json(seed ?? null)},window,(${webWindowAppearance.toString()})(window));window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
+/** A platform reader must be a standalone function expression or arrow, with no module dependencies. */
+export function visualScript(native?: NativeVisualSource["prepaint"], config = visualBootstrapConfig) {
+  const records = `(${createVisualRecordKernel.toString()})(${inlineJson(VISUAL_DEFAULTS)})`;
+  return `(()=>{const k=(${visualKernel.toString()})(${records},(${readVisualCookie.toString()}));const c=${inlineJson(config)};const r=k.read(c,window,${native ? `(${native.toString()})` : "undefined"});window[c.bootstrapKey]=r;k.apply(c,r.state,document.documentElement)})();`;
 }
 
-/** Explicit request seeds must also select integration variables when scripts cannot run. */
-export function visualServerAttributes(colorScheme: VisualPreferences["colorScheme"], config = visualBootstrapConfig) {
-  if (colorScheme === "auto") return {};
-  return Object.fromEntries(
+/** Leave auto attributes absent for the CSS media-query fallback during SSR. */
+export function visualServerAttributes(snapshot: VisualState, config = visualBootstrapConfig) {
+  const { colorScheme, direction, reducedMotion } = visualRecordKernel.effective(snapshot);
+  const attributes = Object.fromEntries(
     config.additionalColorSchemeAttributes
       .filter((name) => /^data-[a-z][a-z0-9-]*$/.test(name))
-      .map((name) => [name, colorScheme]),
+      .map((name) => [name, colorScheme === "auto" ? undefined : colorScheme]),
   );
+  return {
+    ...attributes,
+    dir: direction,
+    "data-color-scheme": colorScheme === "auto" ? undefined : colorScheme,
+    "data-reduced-motion": reducedMotion === "auto" ? undefined : reducedMotion,
+  };
 }

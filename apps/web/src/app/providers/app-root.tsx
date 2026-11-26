@@ -30,7 +30,9 @@ export function AppRoot({
   useEffect(() => runtime.connect(window.desktop), [runtime]);
   return (
     <EnvironmentContext.Provider value={runtime}>
-      <ManagersRegistry initialState={managersInitialState}>{children}</ManagersRegistry>
+      <ManagersRegistry initialShell={shell?.kind} initialState={managersInitialState}>
+        {children}
+      </ManagersRegistry>
     </EnvironmentContext.Provider>
   );
 }

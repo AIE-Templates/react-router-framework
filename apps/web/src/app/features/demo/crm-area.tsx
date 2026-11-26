@@ -86,7 +86,7 @@ export function CrmArea({ basic, report, draft }: { basic: boolean; report: bool
       }
     >
       <div className={classes.layoutSelector}>
-        <a href="/?layout=editor&windowAppearance=dark" target="_blank" rel="noopener" data-native-control="">
+        <a href="/?layout=editor" target="_blank" rel="noopener" data-native-control="">
           Open editor
         </a>
         <label className={classes.nativeField}>

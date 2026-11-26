@@ -1,7 +1,17 @@
+import { WEB_SHELL } from "@repo/shared";
 import { useEffect } from "react";
-import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+import {
+  isRouteErrorResponse,
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+  useRouteLoaderData,
+} from "react-router";
 
 import { useAppEnvironment } from "~/managers/environment/hooks";
+import { readVisualRequestSeed } from "~/managers/visual/request-seed";
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
@@ -18,9 +28,14 @@ import "./styles/index.css";
 // unreachable host would hold up the document. Self-host fonts if needed.
 export const links: Route.LinksFunction = () => [];
 
+export function loader({ request }: Route.LoaderArgs) {
+  return { shell: WEB_SHELL, managersInitialState: { visual: readVisualRequestSeed(request) } };
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
+  const data = useRouteLoaderData<typeof loader>("root");
   return (
-    <AppRoot>
+    <AppRoot shell={data?.shell} managersInitialState={data?.managersInitialState}>
       <Document>{children}</Document>
     </AppRoot>
   );
@@ -28,7 +43,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 function Document({ children }: { children: React.ReactNode }) {
   const environment = useAppEnvironment();
-  const visual = useVisualManager().getServerSnapshot().preferences;
+  const visual = useVisualManager().getServerSnapshot();
   const { shell, fullscreen, windowState } = environment;
   useEffect(() => {
     // Evidence that the client bundle ran and hydration finished, for tests and smoke checks.
@@ -38,10 +53,7 @@ function Document({ children }: { children: React.ReactNode }) {
     <html
       lang="en"
       suppressHydrationWarning
-      {...visualServerAttributes(visual.colorScheme)}
-      dir={visual.direction}
-      data-color-scheme={visual.colorScheme === "auto" ? undefined : visual.colorScheme}
-      data-reduced-motion={visual.reducedMotion === "auto" ? undefined : visual.reducedMotion}
+      {...visualServerAttributes(visual)}
       data-shell={shell.kind}
       data-platform={shell.kind === "desktop" ? shell.platform : undefined}
       data-titlebar={
