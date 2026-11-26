@@ -17,6 +17,7 @@ export class ScopeOperations {
   readonly #logger: WakeLogger;
   readonly #cancelEvents: (scope: string) => void;
   readonly #tails = new Map<string, Promise<void>>();
+  readonly #subscribeTails = new Map<string, Promise<void>>();
   readonly #requests = new Map<string, Request>();
   #quit?: Promise<void>;
 
@@ -40,7 +41,8 @@ export class ScopeOperations {
 
   async acquire(scope: string, operation: Operation, ownerId: OwnerId): Promise<{ operationId: string }> {
     if (this.#quit) throw new Error("Cookie worker manager closed");
-    this.#index.checkOperation(scope, this.#tails, operation.kind === "unregister" ? [] : operation.subscriptions);
+    if (operation.kind === "subscribe")
+      this.#index.checkSubscribe(scope, this.#subscribeTails, operation.subscriptions);
     const operationId = crypto.randomUUID();
     const grant = deferred<{ operationId: string }>();
     const released = deferred<void>();
@@ -78,11 +80,16 @@ export class ScopeOperations {
       }),
     };
     this.#requests.set(operationId, request);
-    void request.done.catch((error: unknown) => {
-      this.#requests.delete(operationId);
-      grant.reject(error);
-      this.#logger.warn({ scope, operationId }, "Wake index operation failed");
-    });
+    if (operation.kind === "subscribe") this.#subscribeTails.set(scope, request.done);
+    void request.done
+      .catch((error: unknown) => {
+        this.#requests.delete(operationId);
+        grant.reject(error);
+        this.#logger.warn({ scope, operationId }, "Wake index operation failed");
+      })
+      .finally(() => {
+        if (this.#subscribeTails.get(scope) === request.done) this.#subscribeTails.delete(scope);
+      });
     return grant.promise;
   }
 

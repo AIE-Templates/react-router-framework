@@ -5,6 +5,7 @@ import { createCookieJar, MAX_SET_COOKIES_PER_RESPONSE, stripCookieMarkers } fro
 import { OMIT_COOKIES_HEADER } from "./shared.ts";
 import {
   type CookieStore,
+  CookieStoreLookupError,
   CookieStoreTimeoutError,
   flushForQuit,
   QUIT_FLUSH_TIMEOUT_MS,
@@ -16,13 +17,14 @@ const logger = () => ({ debug: vi.fn<LogFn>(), warn: vi.fn<LogFn>() });
 const COOKIE_JAR_ORIGIN = "https://app.desktop";
 const origin = "xxx-app://site";
 const req = (path = "/", initiatorOrigin?: string, headers = new Headers()) => ({ path, initiatorOrigin, headers });
-function setup(store: CookieStore = fakeStore(), log = logger(), timeoutMs = STORE_TIMEOUT_MS) {
+function setup(store: CookieStore = fakeStore(), log = logger(), timeoutMs = STORE_TIMEOUT_MS, secureScheme = true) {
   const probe = fakeStore();
   const session = { cookies: probe };
   const fromPartition = vi.fn<(partition: string) => typeof session>(() => session);
   const installPermissionPolicy = vi.fn<(_session: typeof session) => void>();
   const jar = createCookieJar({
     host: "site",
+    secureScheme,
     scheme: "xxx-app",
     storageOrigin: COOKIE_JAR_ORIGIN,
     upstreamHost: "127.0.0.1",
@@ -83,6 +85,24 @@ describe("createCookieJar", () => {
     expect(await jar.cookieHeader(req("/api/users"))).toBe("scoped=2; sid=1");
     expect(await jar.cookieHeader(req("/apiary"))).toBe("sid=1");
     expect(store.get).toHaveBeenCalledWith({ url: `${COOKIE_JAR_ORIGIN}/apiary` });
+  });
+
+  it("clears and flushes only credentialed responses from a trustworthy application origin", async () => {
+    const store = fakeStore();
+    const { jar } = setup(store);
+    await jar.storeResponseCookies(response("sid=1; HttpOnly; Max-Age=60"), req());
+    const headers = new Headers({ "clear-site-data": '"cookies"' });
+    store.flushStore.mockClear();
+    await jar.storeResponseCookies(headers, req("/", "other://app"));
+    await jar.storeResponseCookies(headers, req("/", origin, new Headers({ [OMIT_COOKIES_HEADER]: "1" })));
+    const insecure = setup(store, logger(), STORE_TIMEOUT_MS, false);
+    await insecure.jar.storeResponseCookies(headers, req());
+    expect(store.flushStore).not.toHaveBeenCalled();
+    expect(store.disk).toHaveLength(1);
+    await jar.storeResponseCookies(headers, req());
+    expect(store.flushStore).toHaveBeenCalledOnce();
+    expect(store.disk).toEqual([]);
+    expect(await jar.cookieHeader(req())).toBeUndefined();
   });
 
   it("answers no header when no cookie applies", async () => {
@@ -224,6 +244,33 @@ describe("createCookieJar with a store that stops answering", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("ignores a late clear enumeration after its deadline and accepts the next clear", async () => {
+    vi.useFakeTimers();
+    const store = fakeStore();
+    const { jar, log } = setup(store);
+    await jar.storeResponseCookies(response("sid=old; HttpOnly"), req());
+    const before = await store.get({ domain: "app.desktop" });
+    const read = gate();
+    const headers = new Headers({ "clear-site-data": '"cookies"' });
+    store.get.mockImplementationOnce(async () => {
+      await read.promise;
+      return before;
+    });
+    try {
+      const stalled = jar.storeResponseCookies(headers, req());
+      await vi.advanceTimersByTimeAsync(STORE_TIMEOUT_MS);
+      await stalled;
+      expect(log.warn).toHaveBeenCalledOnce();
+      await jar.storeResponseCookies(response("sid=new; HttpOnly"), req());
+    } finally {
+      read.open();
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await jar.cookieHeader(req())).toBe("sid=new");
+    await jar.storeResponseCookies(headers, req());
+    expect(await jar.cookieHeader(req())).toBeUndefined();
+  });
+
   it("gives up on a flush that never answers, keeping what the store already has", async () => {
     vi.useFakeTimers();
     const store = fakeStore();
@@ -312,7 +359,7 @@ describe("server cookie writes", () => {
     store.flushStore.mockRejectedValueOnce(new Error("store unavailable"));
     await jar.storeResponseCookies(response("sid=secret"), req());
     store.get.mockRejectedValueOnce(new Error("store unavailable"));
-    expect(await jar.cookieHeader(req())).toBeUndefined();
+    await expect(jar.cookieHeader(req())).rejects.toBeInstanceOf(CookieStoreLookupError);
     await jar.storeResponseCookies(response("sid=recovered"), req());
     expect(await jar.cookieHeader(req())).toBe("sid=recovered");
     expect(log.warn).toHaveBeenCalledTimes(2);

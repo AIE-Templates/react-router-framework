@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { COOKIE_JAR_ORIGIN } from "./app-url.ts";
 import { createBootProfile } from "./boot-profile.ts";
-import { COOKIE_STORE_STARTUP_TIMEOUT_MS, openFirstWindow } from "./first-window.ts";
+import { COOKIE_STORE_PROBE_INTERVAL_MS, COOKIE_STORE_STARTUP_TIMEOUT_MS, openFirstWindow } from "./first-window.ts";
 import type { Logger } from "./log.ts";
 
 function start() {
@@ -37,8 +37,20 @@ it("waits for the application cookie store before opening the first window", asy
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("opens on the next probe when the first read never settles", async () => {
+  const { store, log, profile, open, opened } = start();
+  store.get.mockResolvedValueOnce([]);
+  await vi.advanceTimersByTimeAsync(COOKIE_STORE_PROBE_INTERVAL_MS);
+  await opened;
+  expect(store.get).toHaveBeenCalledTimes(2);
+  expect(open).toHaveBeenCalledOnce();
+  expect(profile.notes()["cookie-store-wait-ms"]).toBe(COOKIE_STORE_PROBE_INTERVAL_MS);
+  expect(log.warn).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("warns and opens the first window at the fallback deadline", async () => {
-  const { reject, log, profile, open, opened } = start();
+  const { reject, store, log, profile, open, opened } = start();
   await vi.advanceTimersByTimeAsync(COOKIE_STORE_STARTUP_TIMEOUT_MS - 1);
   expect(open).not.toHaveBeenCalled();
   expect(log.warn).not.toHaveBeenCalled();
@@ -46,6 +58,7 @@ it("warns and opens the first window at the fallback deadline", async () => {
   await opened;
   expect(open).toHaveBeenCalledOnce();
   expect(profile.notes()["cookie-store-wait-ms"]).toBe(COOKIE_STORE_STARTUP_TIMEOUT_MS);
+  expect(store.get).toHaveBeenCalledTimes(COOKIE_STORE_STARTUP_TIMEOUT_MS / COOKIE_STORE_PROBE_INTERVAL_MS);
   expect(log.warn).toHaveBeenCalledExactlyOnceWith(
     { timeoutMs: COOKIE_STORE_STARTUP_TIMEOUT_MS },
     "cookie store timed out before first window",

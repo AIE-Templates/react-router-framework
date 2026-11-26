@@ -120,11 +120,11 @@ async function launch(profile: string, upstreamHost: string, taskTimeoutMs: numb
         await peer.waitForURL(url);
         return peer;
       },
-      async replyPath(cookies: string[], path = "/account/set", date?: string) {
-        const id = await app.evaluate((_electron, reply: Reply) => globalThis.cookieFixture.addReply(reply), {
-          cookies,
-          date,
-        });
+      async replyPath(reply: string[] | Reply, path = "/account/set", date?: string) {
+        const id = await app.evaluate(
+          (_electron, value: Reply) => globalThis.cookieFixture.addReply(value),
+          Array.isArray(reply) ? { cookies: reply, date } : reply,
+        );
         return path + "?reply=" + id;
       },
       async set(cookies: string[], path?: string, date?: string) {

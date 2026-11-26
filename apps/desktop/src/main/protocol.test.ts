@@ -75,6 +75,7 @@ function setup(
     internalOrigin,
     desktop,
     cookies: createCookieJar({
+      secureScheme: true,
       store,
       host: APP_HOST,
       origin: APP_ORIGIN,
@@ -205,6 +206,20 @@ describe("registerAppProtocol with the cookie jar", () => {
     expect((await pending).type).toBe("error");
     expect(upstream).not.toHaveBeenCalled();
     expect(await (await handle(`${APP_ORIGIN}/next`)).text()).toBe("ok");
+  });
+
+  it("fails a rejected lookup before forwarding a POST or main document, then recovers", async () => {
+    const store = fakeCookieStore();
+    const upstream = vi.fn<Handler>(async () => new Response("ok"));
+    const { handle, networkHeaders } = setup(upstream, { store });
+    const error = new Error("cookie store unavailable");
+    store.get.mockRejectedValueOnce(error).mockRejectedValueOnce(error);
+    const post = await handle(APP_ORIGIN + "/submit", { method: "POST" });
+    expect(post.status).toBe(503);
+    expect(post.headers.get("retry-after")).toBe("1");
+    expect((await handle(APP_ORIGIN + "/", { headers: networkHeaders(11, {}, "mainFrame") })).type).toBe("error");
+    expect(upstream).not.toHaveBeenCalled();
+    expect(await (await handle(APP_ORIGIN + "/next")).text()).toBe("ok");
   });
 
   it("answers 503 without calling upstream when the cookie lookup never answers, and serves the next request", async () => {

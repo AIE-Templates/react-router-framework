@@ -17,13 +17,13 @@ export function fakeCookieStore(changed?: (cookie: Cookie, cause: string) => voi
     cookies,
     disk,
     get: vi.fn<CookieStore["get"]>(async ({ url, httpOnly }) => {
-      const path = new URL(url).pathname;
+      const path = url && new URL(url).pathname;
       return cookies
         .filter(
           (c) =>
             (httpOnly === undefined || c.httpOnly === httpOnly) &&
             (c.expirationDate === undefined || c.expirationDate * 1000 > Date.now()) &&
-            (path === c.path || path.startsWith(c.path.endsWith("/") ? c.path : c.path + "/")),
+            (!path || path === c.path || path.startsWith(c.path.endsWith("/") ? c.path : c.path + "/")),
         )
         .map((c) => ({
           ...c,

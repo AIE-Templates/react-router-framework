@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import type { Session } from "electron";
 
+import { clearJarCookies, responseCookiePolicy } from "./clear-site-data.ts";
 import { parseHttpDate, parseSetCookie } from "./parse.ts";
 import { createScriptCookies, type ScriptCookies } from "./script-cookies.ts";
 import { OMIT_COOKIES_HEADER } from "./shared.ts";
 import {
   abandonOn,
+  CookieStoreLookupError,
   CookieStoreTimeoutError,
   type CookieLogger,
   type CookieStore,
@@ -22,6 +24,7 @@ import {
 } from "./store.ts";
 
 export {
+  CookieStoreLookupError,
   CookieStoreTimeoutError,
   flushForQuit,
   STORE_TIMEOUT_MS,
@@ -46,6 +49,8 @@ export type CookieJarOptions<S extends { cookies: CookieStore } = Session> = (
   | { scheme: string; origin?: undefined }
 ) & {
   host: string;
+  /** Whether the host registered the standard application scheme with the secure privilege. */
+  secureScheme?: boolean;
   storageOrigin: string;
   upstreamHost: string;
   store: CookieStore;
@@ -226,18 +231,22 @@ export function createCookieJar<S extends { cookies: CookieStore }>(options: Coo
         if (signal?.aborted) return undefined;
         if (err instanceof CookieStoreTimeoutError) throw err;
         log.warn({ err }, "reading cookies failed");
-        return undefined;
+        throw new CookieStoreLookupError("Cookie store lookup failed");
       } finally {
         deadline.clear();
       }
     },
     async storeResponseCookies(headers, request) {
       if (!accepts(request)) return;
-      const values = headers.getSetCookie();
-      if (!values.length) return;
+      const header = headers.get("clear-site-data");
+      const policy = header ? responseCookiePolicy(header, options.secureScheme === true) : undefined;
+      const setCookies = policy?.suppressSetCookie ? [] : headers.getSetCookie();
+      if (!policy?.clear && !setCookies.length) return;
       const deadline = storeDeadline(timeoutMs);
       try {
-        await storeBatch(headers, values, request.path, deadline.signal);
+        if (policy?.clear) await clearJarCookies(store, storageOrigin, storageHost, deadline.signal);
+        if (setCookies.length && !deadline.signal.aborted)
+          await storeBatch(headers, setCookies, request.path, deadline.signal);
       } catch (err) {
         if (!deadline.signal.aborted) log.warn({ err }, "storing response cookies failed");
       } finally {

@@ -20,34 +20,33 @@ export const nodeFs: AtomicFileFs = {
   closeSync,
   renameSync,
   rmSync,
-  // A synchronous wait: only between rename attempts, at most about 100 ms in all.
+  // A synchronous wait between attempts, at most about 100 ms in all.
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
 };
 
-/**
- * Waits before each further rename attempt, about 100 ms in all. On Windows an antivirus scanner or
- * the search indexer can hold `prefs.json` open for a moment, failing the rename with one of
- * `RETRYABLE_RENAME`; other errors fail at once.
- */
-const RENAME_RETRY_MS = [10, 20, 30, 40];
-const RETRYABLE_RENAME = new Set(["EPERM", "EBUSY", "EACCES"]);
+// Windows antivirus and indexing can briefly block reads and renames.
+const FILE_RETRY_MS = [10, 20, 30, 40];
+const RETRYABLE_ERRORS = new Set(["EPERM", "EBUSY", "EACCES"]);
 
 function retryDelay(error: unknown, attempt: number): number {
   const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-  const wait = RENAME_RETRY_MS[attempt];
-  if (wait === undefined || typeof code !== "string" || !RETRYABLE_RENAME.has(code)) throw error;
+  const wait = FILE_RETRY_MS[attempt];
+  if (wait === undefined || typeof code !== "string" || !RETRYABLE_ERRORS.has(code)) throw error;
   return wait;
 }
 
-export function renameWithRetry(fs: AtomicFileFs, from: string, to: string): void {
+export function withFileRetry<T>(operation: () => T, fs: Pick<AtomicFileFs, "sleep"> = nodeFs): T {
   for (let attempt = 0; ; attempt++) {
     try {
-      fs.renameSync(from, to);
-      return;
+      return operation();
     } catch (err) {
       fs.sleep(retryDelay(err, attempt));
     }
   }
+}
+
+export function renameWithRetry(fs: AtomicFileFs, from: string, to: string): void {
+  withFileRetry(() => fs.renameSync(from, to), fs);
 }
 
 /** Writes `data` to `path` and flushes it to the disk, so a rename over the old file never exposes an empty one. */

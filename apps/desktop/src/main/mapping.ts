@@ -1,4 +1,4 @@
-import { CookieStoreTimeoutError } from "@repo/electron-cookies/main";
+import { CookieStoreLookupError } from "@repo/electron-cookies/main";
 import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError } from "@repo/port-fetch";
 import { DESKTOP_HEADERS, type DesktopRequest, isDesktopHeader } from "@repo/shared";
 
@@ -111,7 +111,7 @@ export function failureStatus(err: unknown): { status: 500 | 503 | 504; message:
   if (err instanceof PortBusyError || (err instanceof RemoteFetchError && err.code === "busy")) {
     return { status: 503, message: "Server Busy" };
   }
-  if (err instanceof CookieStoreTimeoutError) return { status: 503, message: "Cookies Unavailable" };
+  if (err instanceof CookieStoreLookupError) return { status: 503, message: "Cookies Unavailable" };
   if (err instanceof PortFetchTimeoutError) return { status: 504, message: "Internal Server Error" };
   return { status: 500, message: "Internal Server Error" };
 }

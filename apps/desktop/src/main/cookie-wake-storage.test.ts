@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
+import { nodeFs } from "./atomic-file.ts";
 import { cookieWakeStorage } from "./cookie-wake-storage.ts";
 
 vi.mock(import("node:fs"), async (importOriginal) => {
@@ -48,20 +49,46 @@ it("keeps the previous complete index visible until the replacement is renamed",
   }
 });
 
+it.each(["EACCES", "EBUSY", "EPERM"])("restores hints and keeps writing after a transient %s", async (code) => {
+  const dir = mkdtempSync(join(tmpdir(), "cookie-wake-"));
+  const sleep = vi.spyOn(nodeFs, "sleep").mockImplementation(() => {});
+  const log = { warn: vi.fn<() => void>(), debug: vi.fn<() => void>() };
+  const storage = cookieWakeStorage(dir, log);
+  const saved = [{ scope: "app://app/", eligible: true, since: 1 }];
+  try {
+    await storage.write(saved);
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error(code), { code });
+    });
+    expect(storage.read()).toEqual(saved);
+    expect(sleep.mock.calls).toEqual([[10]]);
+    await storage.write([]);
+    expect(cookieWakeStorage(dir, log).read()).toEqual([]);
+    expect(log.warn).not.toHaveBeenCalled();
+  } finally {
+    sleep.mockRestore();
+    vi.mocked(readFileSync).mockReset();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 it.each(["EACCES", "EIO", "EISDIR"])("preserves the wake index for the rest of the launch after %s", async (code) => {
   const dir = mkdtempSync(join(tmpdir(), "cookie-wake-"));
   const file = join(dir, "cookie-wake-index.json");
   const saved = { scope: "app://app/", name: "saved", eligible: true, since: 1 };
   const original = JSON.stringify([saved]) + "\n";
+  const sleep = vi.spyOn(nodeFs, "sleep").mockImplementation(() => {});
   const error = Object.assign(new Error(code), { code });
   const log = { warn: vi.fn<() => void>(), debug: vi.fn<() => void>() };
   try {
     writeFileSync(file, original);
     const storage = cookieWakeStorage(dir, log);
-    vi.mocked(readFileSync).mockImplementationOnce(() => {
+    vi.mocked(readFileSync).mockImplementation(() => {
       throw error;
     });
     expect(storage.read()).toEqual([]);
+    expect(sleep.mock.calls.flat()).toEqual(code === "EACCES" ? [10, 20, 30, 40] : []);
+    vi.mocked(readFileSync).mockReset();
     await storage.write([]);
     expect(storage.read()).toEqual([]);
     await storage.write([{ ...saved, name: "new" }]);
@@ -75,6 +102,7 @@ it.each(["EACCES", "EIO", "EISDIR"])("preserves the wake index for the rest of t
     await nextLaunch.write([]);
     expect(readFileSync(file, "utf8")).toBe("[]");
   } finally {
+    sleep.mockRestore();
     vi.mocked(readFileSync).mockReset();
     rmSync(dir, { recursive: true, force: true });
   }
