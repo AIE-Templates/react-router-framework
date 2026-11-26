@@ -93,6 +93,8 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     expect(await editor.evaluate(() => window.desktop!.readVisual().record)).toBe(light);
     const editorWindow = await app.browserWindow(editor);
     const ordinaryWindow = await app.browserWindow(home);
+    // Playwright emulates a light system scheme; auto must follow the real one that nativeTheme reports.
+    await home.emulateMedia({ colorScheme: null });
     for (const [value, option] of [
       ["dark", "Dark"],
       ["auto", "System"],
@@ -484,6 +486,8 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     await expect.poll(() => next.page.evaluate(() => window.desktop!.readVisual().record)).toBe(wire);
     await expect.poll(() => next.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("system");
     const dark = await next.app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
+    // Playwright emulates a light system scheme; auto must follow the real one that nativeTheme reports.
+    await next.page.emulateMedia({ colorScheme: null });
     await expect(next.page.locator("html")).toHaveAttribute("data-color-scheme", dark ? "dark" : "light");
   });
 
