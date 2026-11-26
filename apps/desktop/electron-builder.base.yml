@@ -6,10 +6,14 @@
 # electron-builder packages what the Vite builds emitted plus the web client build. Build-time
 # packages live in devDependencies and are already bundled, so no node_modules ship; `dependencies`
 # is reserved for native modules that must stay external (none yet).
-# Placeholders to replace per project: appId, productName, and in package.json `homepage` and
+# Placeholders to replace per project: appId, productName, the icon, and in package.json `homepage` and
 # `author` (deb needs both; the author's email is the package maintainer).
 appId: dev.repo.desktop
 productName: Desktop
+# Replace the image but keep an icon configured: without one, deb/rpm builds take electron-builder's
+# default icons from the pnpm-patched app-builder-lib, whose store path contains `=`, which FPM reads
+# as its source=destination separator.
+icon: resources/icon.png
 asar: true
 asarUnpack:
   - "**/*.node"
