@@ -14,3 +14,6 @@ out/
 
 # Benchmark results
 bench/transport/results/
+
+# Local working documents
+/tmp/
