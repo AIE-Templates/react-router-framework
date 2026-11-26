@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { visualCookie } from "~/config/visual-cookie";
 import { useVisualManager } from "~/managers/visual/hooks";
+import { createVisualManager } from "~/managers/visual/manager";
 import { VisualManagerProvider } from "~/managers/visual/provider";
 
 import { VisualMantineProvider } from "./provider";
@@ -54,6 +55,28 @@ it("mounts with effective defaults and only persists a changed Mantine preferenc
   expect(result.current.visual.getSnapshot().preferences).toEqual({ colorScheme: "dark" });
   expect(local).toHaveBeenCalledTimes(2);
   expect(cookie).toHaveBeenCalledTimes(2);
+});
+
+it("restores Mantine's scheme when a concurrent cookie write keeps the previous scheme", () => {
+  const { result } = renderHook(useAppearance, { wrapper: Providers });
+  const peer = createVisualManager({ host: window });
+  // The peer sees the pending dark record in local storage and writes a newer light record before read-back.
+  const cookie = vi
+    .spyOn(document, "cookie", "set")
+    .mockImplementationOnce(() => peer.actions.setColorSchemePreference("light"));
+  try {
+    act(() => result.current.mantine.setColorScheme("dark"));
+    expect(result.current.visual.getSnapshot().preferences.colorScheme).toBe("light");
+    expect(result.current.mantine.colorScheme).toBe("light");
+    expect(document.documentElement.dataset.mantineColorScheme).toBe("light");
+  } finally {
+    cookie.mockRestore();
+  }
+
+  act(() => result.current.mantine.setColorScheme("dark"));
+  expect(result.current.visual.getSnapshot().preferences.colorScheme).toBe("dark");
+  expect(result.current.mantine.colorScheme).toBe("dark");
+  expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
 });
 
 it("clears to the configured Mantine default even when the effective preference stays the same", () => {

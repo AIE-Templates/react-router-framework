@@ -16,11 +16,11 @@ function confirmReset(reset: () => void, trigger: HTMLElement | null) {
     returnFocus: false,
     onExitTransitionEnd: () => trigger?.focus(),
     title: "Reset appearance?",
-    children: <Text size="sm">Color scheme, direction and motion return to system defaults.</Text>,
+    children: <Text size="sm">Color scheme, direction and motion return to their defaults.</Text>,
     labels: { confirm: "Reset", cancel: "Cancel" },
     onConfirm: () => {
       reset();
-      notifications.show({ title: "Appearance reset", message: "System defaults restored." });
+      notifications.show({ title: "Appearance reset", message: "Defaults restored." });
     },
   });
 }
@@ -46,7 +46,7 @@ export function VisualSettings() {
           { value: "light", label: "Light" },
           { value: "dark", label: "Dark" },
         ]}
-        onChange={(value) => {
+        onOptionSubmit={(value) => {
           if (value === "auto" || value === "light" || value === "dark") actions.setColorSchemePreference(value);
         }}
         styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
@@ -56,7 +56,7 @@ export function VisualSettings() {
         allowDeselect={false}
         value={preferences.direction}
         data={["ltr", "rtl"].map((value) => ({ value, label: value.toUpperCase() }))}
-        onChange={(value) => actions.setDirection(value === "rtl" ? "rtl" : "ltr")}
+        onOptionSubmit={(value) => actions.setDirection(value === "rtl" ? "rtl" : "ltr")}
         styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Select
@@ -68,13 +68,13 @@ export function VisualSettings() {
           { value: "reduce", label: "Reduced" },
           { value: "full", label: "Full" },
         ]}
-        onChange={(value) => {
+        onOptionSubmit={(value) => {
           if (value === "auto" || value === "reduce" || value === "full") actions.setReducedMotionPreference(value);
         }}
         styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Group gap="xs">
-        <Tooltip label="Restore system defaults">
+        <Tooltip label="Restore defaults">
           <Button variant="default" onClick={actions.resetVisualPreferences}>
             Reset appearance
           </Button>
