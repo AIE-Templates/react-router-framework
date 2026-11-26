@@ -12,6 +12,6 @@ Settled design contracts and rationale.
 
 - [SSR visual cookie](visual-cookie.spec.md)
 
-- [Desktop visual synchronization](desktop-visual.spec.md)
+- [Desktop visual mirror](desktop-visual.spec.md)
 
 - [Application source structure](structure.spec.md)

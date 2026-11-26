@@ -87,20 +87,6 @@ describe("shapeRequestHeaders", () => {
     expect(headers.get("accept")).toBe("*/*");
   });
 
-  it("seeds documents from the trusted theme snapshot and removes a forged seed", async () => {
-    const { parseDesktopHeaders, DESKTOP_HEADERS } = await import("@repo/shared");
-    const forged = new Headers({ [DESKTOP_HEADERS.visualTheme]: '{"revision":999,"preference":"light"}' });
-    const visualTheme = { revision: 3, preference: "dark" } as const;
-    expect(
-      parseDesktopHeaders(shapeRequestHeaders(forged, { method: "GET", desktop: { ...desktop, visualTheme } }))
-        .visualTheme,
-    ).toEqual(visualTheme);
-    expect(parseDesktopHeaders(shapeRequestHeaders(forged, { method: "GET", desktop })).visualTheme).toBeUndefined();
-    for (const bad of ["{", '{"revision":-1,"preference":"dark"}', '{"revision":2,"preference":"pink"}']) {
-      expect(parseDesktopHeaders(new Headers({ [DESKTOP_HEADERS.visualTheme]: bad })).visualTheme).toBeUndefined();
-    }
-  });
-
   it("drops x-desktop-* headers a page sent", () => {
     const headers = shapeRequestHeaders(new Headers({ "x-desktop-titlebar": "custom", "x-desktop-evil": "1" }), {
       method: "GET",

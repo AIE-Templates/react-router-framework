@@ -4,9 +4,9 @@ import { DESKTOP_PLATFORMS, type DesktopPlatform, type Shell, WEB_SHELL } from "
 import { parseDesktopBootstrap, type DesktopBootstrap, type WindowChromeBridge } from "./window-chrome.ts";
 
 export interface DesktopBridge extends WindowChromeBridge {
-  readonly visualTheme: VisualThemeSnapshot | null;
-  subscribeVisualTheme(this: void, listener: (snapshot: VisualThemeSnapshot) => void): () => void;
-  syncVisualTheme?(this: void, preference: VisualThemePreference): Promise<VisualThemeResult>;
+  readonly visualSeed: VisualMirrorSnapshot | null;
+  readVisual(this: void): VisualMirrorSnapshot;
+  pushVisual(this: void, raw: string): Promise<"ok" | "failed" | "unavailable">;
   subscribePreferences?(
     this: void,
     rendered: Readonly<Record<string, PreferenceValue>>,
@@ -16,17 +16,19 @@ export interface DesktopBridge extends WindowChromeBridge {
   removePref(this: void, key: string): Promise<PreferenceUpdateResult>;
 }
 
+export interface VisualMirrorSnapshot {
+  record: string | null;
+  pending: boolean;
+}
+export const DESKTOP_VISUAL_IPC = { read: "desktop:visual:read", push: "desktop:visual:push" } as const;
+
 export const DESKTOP_BOOTSTRAP_ARGUMENT = "--desktop-bootstrap=";
 export const DESKTOP_CHROME_IPC = {
   subscribe: "desktop:chrome:subscribe",
   unsubscribe: "desktop:chrome:unsubscribe",
   state: "desktop:chrome:state",
-  visualSeed: "desktop:visual:seed",
-  visualSnapshot: "desktop:visual:snapshot",
-  visualChanged: "desktop:visual:changed",
   declaration: "desktop:chrome:declaration",
   visualDocument: "desktop:visual:document",
-  visualTheme: "desktop:visual:theme",
 } as const;
 
 export function desktopBootstrapFromArguments(args: readonly string[]): DesktopBootstrap | null {
@@ -62,51 +64,4 @@ export function shellFromEnv(env: Record<string, string | undefined>): Shell {
 
 function isDesktopPlatform(value: string | undefined): value is DesktopPlatform {
   return (DESKTOP_PLATFORMS as readonly (string | undefined)[]).includes(value);
-}
-
-export type VisualThemePreference = "auto" | "light" | "dark";
-export interface VisualThemeSnapshot {
-  readonly revision: number;
-  readonly preference: VisualThemePreference;
-}
-export function isVisualThemeSnapshot(value: unknown): value is VisualThemeSnapshot {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "preference" in value &&
-    isVisualThemePreference(value.preference) &&
-    "revision" in value &&
-    typeof value.revision === "number" &&
-    Number.isSafeInteger(value.revision) &&
-    value.revision >= 0 &&
-    Object.keys(value).every((key) => key === "preference" || key === "revision")
-  );
-}
-export type VisualThemeResult =
-  | {
-      status: "processed";
-      background: "applied" | "failed";
-      overlay: "applied" | "failed" | "unsupported";
-      persistence: "saved";
-      snapshot: VisualThemeSnapshot;
-    }
-  | { status: "rejected"; reason: string };
-export function isVisualThemePreference(value: unknown): value is VisualThemePreference {
-  return value === "auto" || value === "light" || value === "dark";
-}
-export function isVisualThemeResult(value: unknown): value is VisualThemeResult {
-  if (typeof value !== "object" || value === null || !("status" in value)) return false;
-  if (value.status === "rejected")
-    return "reason" in value && typeof value.reason === "string" && value.reason.length <= 128;
-  return (
-    value.status === "processed" &&
-    "background" in value &&
-    ["applied", "failed"].includes(String(value.background)) &&
-    "overlay" in value &&
-    ["applied", "failed", "unsupported"].includes(String(value.overlay)) &&
-    "persistence" in value &&
-    value.persistence === "saved" &&
-    "snapshot" in value &&
-    isVisualThemeSnapshot(value.snapshot)
-  );
 }

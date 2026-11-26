@@ -10,10 +10,8 @@ import {
   isDesktopWindowState,
   parseOverlayAppearance,
   parseOverlayDeclaration,
-  isVisualThemePreference,
-  isVisualThemeSnapshot,
-  type VisualThemeSnapshot,
-  isVisualThemeResult,
+  DESKTOP_VISUAL_IPC,
+  type VisualMirrorSnapshot,
   type PreferenceUpdateResult,
 } from "@repo/shared";
 import { contextBridge, ipcRenderer } from "electron";
@@ -60,8 +58,7 @@ function installDesktopBridge() {
     ipcRenderer.off(DESKTOP_CHROME_IPC.state, onState);
   };
 
-  // The main process issues one token per committed document. Both appearance channels share its
-  // first async lookup. A temporary IPC failure can be retried by the next call.
+  // Overlay declarations are scoped to the committed document.
   let visualDocument: Promise<string> | undefined;
   async function invokeForDocument(channel: string, input: object): Promise<unknown> {
     visualDocument ??= ipcRenderer
@@ -77,36 +74,22 @@ function installDesktopBridge() {
     return ipcRenderer.invoke(channel, { ...input, document: await visualDocument });
   }
 
-  let visualRevision = 0;
-
-  // Window creation arguments survive reloads. Read the current committed preference once per document instead.
-  let seed: unknown;
+  let visualSeed: VisualMirrorSnapshot | null = null;
   try {
-    seed = ipcRenderer.sendSync(DESKTOP_CHROME_IPC.visualSeed);
+    visualSeed = readVisual();
   } catch {
-    // The async subscription can still recover the current preference after preload.
+    // A live read can recover after document start.
   }
   const bridge: DesktopBridge = {
-    visualTheme: isVisualThemeSnapshot(seed) ? seed : null,
-    subscribeVisualTheme(listener) {
-      if (typeof listener !== "function") return () => {};
-      let active = true;
-      let revision = -1;
-      const receiveTheme = (value: unknown) => {
-        if (!active || !isVisualThemeSnapshot(value) || value.revision <= revision) return;
-        revision = value.revision;
-        listener(Object.freeze({ revision, preference: value.preference }));
-      };
-      const changed = (_event: Electron.IpcRendererEvent, value: VisualThemeSnapshot) => receiveTheme(value);
-      ipcRenderer.on(DESKTOP_CHROME_IPC.visualChanged, changed);
-      void ipcRenderer
-        .invoke(DESKTOP_CHROME_IPC.visualSnapshot)
-        .then(receiveTheme)
-        .catch(() => {});
-      return () => {
-        active = false;
-        ipcRenderer.off(DESKTOP_CHROME_IPC.visualChanged, changed);
-      };
+    visualSeed,
+    readVisual,
+    async pushVisual(raw) {
+      try {
+        const result: unknown = await ipcRenderer.invoke(DESKTOP_VISUAL_IPC.push, raw);
+        return result === "ok" || result === "failed" ? result : "unavailable";
+      } catch {
+        return "unavailable";
+      }
     },
     platform: process.platform,
     version: versionArg ? versionArg.slice("--desktop-app-version=".length) : "",
@@ -146,18 +129,6 @@ function installDesktopBridge() {
       const declaration = parseOverlayDeclaration(input);
       if (!declaration) return Promise.resolve({ status: "rejected", reason: "invalid-appearance" });
       return invokeAppearance(() => invokeForDocument(DESKTOP_CHROME_IPC.declaration, { declaration }));
-    },
-    async syncVisualTheme(preference) {
-      if (!isVisualThemePreference(preference)) return { status: "rejected", reason: "invalid-request" };
-      try {
-        const result = await invokeForDocument(DESKTOP_CHROME_IPC.visualTheme, {
-          revision: ++visualRevision,
-          preference,
-        });
-        return isVisualThemeResult(result) ? result : { status: "rejected", reason: "invalid-response" };
-      } catch {
-        return { status: "rejected", reason: "bridge-unavailable" };
-      }
     },
     subscribePreferences(rendered, listener) {
       if (!rendered || typeof rendered !== "object" || Array.isArray(rendered) || typeof listener !== "function")
@@ -245,4 +216,18 @@ async function invokeAppearance(request: () => Promise<unknown>): Promise<Overla
   } catch {
     return { status: "rejected", reason: "bridge-unavailable" };
   }
+}
+
+function readVisual(): VisualMirrorSnapshot {
+  const value: unknown = ipcRenderer.sendSync(DESKTOP_VISUAL_IPC.read);
+  if (
+    typeof value !== "object" ||
+    !value ||
+    !("record" in value) ||
+    (value.record !== null && typeof value.record !== "string") ||
+    !("pending" in value) ||
+    typeof value.pending !== "boolean"
+  )
+    throw new Error("Visual mirror unavailable");
+  return { record: value.record, pending: value.pending };
 }

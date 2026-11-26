@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
-import { DESKTOP_BOOTSTRAP_ARGUMENT, type DesktopBootstrap } from "@repo/shared";
+import { DESKTOP_BOOTSTRAP_ARGUMENT, desktopBootstrapFromArguments, type DesktopBootstrap } from "@repo/shared";
 import {
   app,
   Menu,
@@ -19,7 +19,7 @@ import { chromeAppearance, chromeWindowOptions, type ChromePolicy } from "./chro
 import { installWindowChrome } from "./chrome.ts";
 import { redactLogUrls, safeUrl } from "./log-url.ts";
 import type { Logger } from "./log.ts";
-import type { VisualThemeStore } from "./visual-theme.ts";
+import type { VisualMirror } from "./visual-mirror.ts";
 
 export const IPC = {
   /** Renderer → main: the preload saw two animation frames, so the page has painted. */
@@ -39,7 +39,7 @@ export interface WindowOptions {
    * for the smoke. Never in a release build.
    */
   logRendererConsole?: boolean;
-  chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualThemeStore: VisualThemeStore };
+  chrome?: { bootstrap: DesktopBootstrap; currentPolicy: () => ChromePolicy; visualMirror: VisualMirror };
 }
 
 const CASCADE_STEP = 24;
@@ -86,6 +86,7 @@ export function createAppWindow(options: WindowOptions): BrowserWindow {
 }
 
 function nativeOptions({ session, preloadPath, chrome, appVersion, fixedAppearance }: WindowOptions) {
+  chrome?.visualMirror.retryPending();
   const policy = chrome?.currentPolicy();
   return {
     show: false,
@@ -126,7 +127,10 @@ function nativeOptions({ session, preloadPath, chrome, appVersion, fixedAppearan
 export function configureWindow(
   win: BrowserWindow,
   options: WindowOptions,
-  children: { reuse(url: string): boolean; adopt(window: BrowserWindow, url: string): void },
+  children: {
+    reuse(url: string): boolean;
+    adopt(window: BrowserWindow, url: string, fixedAppearance?: "light" | "dark"): void;
+  },
   onShown?: () => void,
 ) {
   const { chrome, profile, log, logRendererConsole } = options;
@@ -160,7 +164,7 @@ export function configureWindow(
       policy,
       (event) => isTrustedSender(event, win),
       log,
-      chrome.visualThemeStore,
+      chrome.visualMirror,
       options.fixedAppearance,
     );
     log.info(
@@ -252,7 +256,8 @@ export function configureWindow(
         y: geometry.y ?? cascade(bounds.y, size.height, area.y, area.height, placement),
       });
     }
-    children.adopt(child, url);
+    const bootstrap = desktopBootstrapFromArguments(geometry.webPreferences?.additionalArguments ?? []);
+    children.adopt(child, url, bootstrap?.fixedAppearance);
   });
   win.webContents.on("render-process-gone", (_event, details) => {
     if (details.reason !== "clean-exit" && details.reason !== "killed") log.error({ details }, "renderer process gone");

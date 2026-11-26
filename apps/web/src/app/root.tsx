@@ -12,7 +12,6 @@ import {
 import { useAppEnvironment } from "~/managers/environment/hooks";
 import { DesktopPreferenceSync } from "~/platform/electron/preferences";
 import { desktopContext, shellContext } from "~/platform/electron/shell";
-import { desktopWindowAppearance } from "~/platform/electron/visual-prepaint";
 
 import type { Route } from "./+types/root";
 import { CHROME_SAFETY_CSS } from "./layouts/app-shell/chrome-safety";
@@ -96,7 +95,7 @@ function Document({ children, nonce }: { children: React.ReactNode; nonce?: stri
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style id="window-chrome-safety">{CHROME_SAFETY_CSS}</style>
-        <VisualInitScript nonce={nonce} prepaint={desktopWindowAppearance} />
+        <VisualInitScript nonce={nonce} />
         <Meta />
         <Links nonce={nonce} />
       </head>

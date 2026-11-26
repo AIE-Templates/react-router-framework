@@ -5,6 +5,7 @@ import { EnvironmentContext } from "~/managers/environment/context";
 import { createWindowChromeRuntime } from "~/managers/environment/runtime";
 import type { ManagersInitialState } from "~/managers/initial-state";
 import { ManagersRegistry } from "~/managers/registry";
+import { desktopVisualSource } from "~/platform/electron/visual-source";
 
 declare global {
   interface Window {
@@ -30,7 +31,11 @@ export function AppRoot({
   useEffect(() => runtime.connect(window.desktop), [runtime]);
   return (
     <EnvironmentContext.Provider value={runtime}>
-      <ManagersRegistry initialShell={shell?.kind} initialState={managersInitialState}>
+      <ManagersRegistry
+        nativeSource={desktopVisualSource}
+        initialShell={shell?.kind}
+        initialState={managersInitialState}
+      >
         {children}
       </ManagersRegistry>
     </EnvironmentContext.Provider>

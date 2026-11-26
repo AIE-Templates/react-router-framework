@@ -9,13 +9,7 @@ import {
   type CookieIpcOptions,
 } from "@repo/electron-cookies/main";
 import type { PortFetch } from "@repo/port-fetch";
-import {
-  DESKTOP_PREFS_IPC,
-  shellFromEnv,
-  type DesktopBootstrap,
-  type DesktopRequest,
-  type VisualThemeSnapshot,
-} from "@repo/shared";
+import { DESKTOP_PREFS_IPC, shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
 import { app, type BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session } from "electron";
 
 import type { DebugEnv } from "~/debug-env.contract.ts";
@@ -24,6 +18,7 @@ import { readDebugEnv, utilityDebugEnv } from "~/debug-env.ts";
 import { selectMainRun } from "~/diagnostics/entry.ts";
 import { developmentHost } from "~/main/dev-host.ts";
 
+import { demoChildAppearance } from "./demo/child-appearance.ts";
 import { APP_HOST, APP_ORIGIN, APP_SCHEME, COOKIE_JAR_ORIGIN, isAppUrl } from "./main/app-url.ts";
 import { type BootProfile, createBootProfile } from "./main/boot-profile.ts";
 import { resolveChromePolicy } from "./main/chrome-policy.ts";
@@ -46,7 +41,8 @@ import type { RecoveryChoice, RecoveryDialog } from "./main/recovery.ts";
 import { refuseRemoteDebugging } from "./main/remote-debugging.ts";
 import { startServerProcess } from "./main/server-process.ts";
 import { configureUserData } from "./main/user-data.ts";
-import { createVisualThemeStore } from "./main/visual-theme.ts";
+import { installVisualIpc } from "./main/visual-ipc.ts";
+import { createVisualMirror } from "./main/visual-mirror.ts";
 import { createWindowRegistry } from "./main/window-registry.ts";
 import { isTrustedSender } from "./main/window.ts";
 import {
@@ -276,10 +272,6 @@ async function askRecovery(
   return choices[result.response] ?? "wait";
 }
 
-function applyNativeTheme({ preference }: VisualThemeSnapshot) {
-  nativeTheme.themeSource = preference === "auto" ? "system" : preference;
-}
-
 async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup): Promise<void> {
   profile.mark("ready");
   const development = dev !== undefined;
@@ -287,9 +279,14 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
   const appSession = session.fromPartition("persist:app");
   installPermissionPolicy(appSession, log);
   // Preferences the page writes through the preload; every request carries the current ones.
-  const visualThemeStore = createVisualThemeStore(app.getPath("userData"), { log });
-  applyNativeTheme(visualThemeStore.current());
-  app.once("will-quit", visualThemeStore.subscribe(applyNativeTheme));
+  const visualMirror = createVisualMirror(app.getPath("userData"), { log });
+  const applyNativeTheme = () => {
+    const preference = visualMirror.colorScheme();
+    nativeTheme.themeSource = preference === "auto" ? "system" : preference;
+  };
+  applyNativeTheme();
+  app.on("before-quit", visualMirror.retryPending);
+  app.once("will-quit", visualMirror.onColorSchemeChange(applyNativeTheme));
   const prefsStore = createPrefsStore(app.getPath("userData"), { log });
   const shell = shellFromEnv({
     WEB_SHELL: "desktop",
@@ -304,7 +301,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     resolveChromePolicy({
       platform: shell.platform,
       requestedMode: requested === "system-decorated" || requested === "custom-controls" ? requested : "native-overlay",
-      themePreference: visualThemeStore.current().preference,
+      themePreference: visualMirror.colorScheme(),
       darkColors: nativeTheme.shouldUseDarkColors,
     });
   const chromePolicy = currentChromePolicy();
@@ -313,14 +310,13 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
   const preloadPath = join(__dirname, "preload.cjs");
   const registry = createWindowRegistry({
     session: appSession,
-    chrome: { bootstrap, currentPolicy: currentChromePolicy, visualThemeStore },
+    chrome: { bootstrap, currentPolicy: currentChromePolicy, visualMirror },
     preloadPath,
     appVersion: app.getVersion(),
     log,
     profile,
     logRendererConsole: DESKTOP_BUILD_PROFILE !== "release" && (development || debug.smoke),
-    childAppearance: (url) =>
-      url.pathname === "/" && url.searchParams.get("layout") === "editor" ? "dark" : undefined,
+    childAppearance: demoChildAppearance,
     keyForUrl: (url) => (/^\/settings\/*$/i.test(url.pathname) ? "settings" : undefined),
     askRecovery,
     // What an external verifier waits for: logged once, at info, in every build profile.
@@ -330,6 +326,12 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
       log.info({}, MAIN_WINDOW_READY_MESSAGE);
     },
   });
+  installVisualIpc(
+    ipcMain,
+    visualMirror,
+    (event) => isTrustedSender(event, registry.byContentsId(event.sender.id)),
+    log,
+  );
   installPrefsIpc(
     prefsStore,
     (event) => isTrustedSender(event, registry.byContentsId(event.sender.id)),
@@ -346,7 +348,6 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     chromeMode: chromePolicy.resolvedMode,
     fullscreen: registry.byContentsId(contentsId)?.isFullScreen() ?? false,
     prefs: prefsStore.current(),
-    visualTheme: visualThemeStore.current(),
   });
 
   // Ack coalescing on the main↔utility port, the same on both ends (dev and test builds can turn it

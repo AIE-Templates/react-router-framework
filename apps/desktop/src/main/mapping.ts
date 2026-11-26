@@ -64,7 +64,6 @@ export function shapeRequestHeaders(
   out.set(DESKTOP_HEADERS.titlebar, desktop.titlebar);
   out.set(DESKTOP_HEADERS.chromeMode, desktop.chromeMode);
   out.set(DESKTOP_HEADERS.fullscreen, desktop.fullscreen ? "1" : "0");
-  if (desktop.visualTheme) out.set(DESKTOP_HEADERS.visualTheme, JSON.stringify(desktop.visualTheme));
   out.set(DESKTOP_HEADERS.prefs, asciiJson(desktop.prefs));
   return out;
 }

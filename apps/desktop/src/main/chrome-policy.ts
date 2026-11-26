@@ -1,4 +1,4 @@
-import type { ChromeMode, VisualThemePreference, OverlayAppearance } from "@repo/shared";
+import { VISUAL_DEFAULTS, type ChromeMode, type VisualPreferences, type OverlayAppearance } from "@repo/shared";
 
 export interface ChromePolicy {
   platform: string;
@@ -8,7 +8,7 @@ export interface ChromePolicy {
   appearance: OverlayAppearance;
   backgroundColor: string;
   followsSystemTheme: boolean;
-  themePreference: VisualThemePreference;
+  themePreference: VisualPreferences["colorScheme"];
 }
 
 export function chromeAppearance(dark: boolean): OverlayAppearance & { color: string } {
@@ -19,12 +19,12 @@ export function chromeAppearance(dark: boolean): OverlayAppearance & { color: st
 export function resolveChromePolicy({
   platform,
   requestedMode = "native-overlay",
-  themePreference = "auto",
+  themePreference = VISUAL_DEFAULTS.colorScheme,
   darkColors = false,
 }: {
   platform: string;
   requestedMode?: ChromeMode;
-  themePreference?: VisualThemePreference;
+  themePreference?: VisualPreferences["colorScheme"];
   darkColors?: boolean;
 }): ChromePolicy {
   const dark = themePreference === "dark" || (themePreference !== "light" && darkColors);
