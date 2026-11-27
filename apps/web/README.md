@@ -8,7 +8,7 @@ Run `pnpm dev` at the workspace root for HMR at http://localhost:5173. Build wit
 
 SSR is the default. Set SSR=false for an SPA build; application route exports must be compatible. Server loaders/actions/middleware/headers (except the build-time root loader) and non-root HydrateFallback prevent SPA builds. Client data APIs can work in both modes, with a first-render skeleton followed by browser data loading.
 
-SSR HTML documents and React Router `.data` responses can contain a request-specific visual cookie snapshot. Configure the deployment or reverse proxy to prevent shared caches from reusing either response across requests, for example with `Cache-Control: private` or a cache bypass for requests carrying cookies. The Core root loader cannot set document and data cache headers for this dual SSR/SPA template. Static SPA files use build-time defaults and can be cached normally.
+SSR documents and Router `.data` responses carry no `Cache-Control`, as in React Router, so they are not cached by default. If the deployment adds automatic caching (for example a CDN or proxy caching HTML), configure caching for these responses to suit the application: a shared cache could otherwise serve one user's cookie-dependent content, such as session data or visual preferences, to other users. Static SPA files can be cached normally.
 
 Use the configured start command to serve the build through react-router-serve. Run Docker builds from the workspace root.
 
@@ -90,6 +90,8 @@ Extend existing owners when adding data features; no generic cache or account ma
 Read environment through `~/managers/environment/hooks`; interactive and drag DOM props come from `~/managers/environment/dom-props`. The runtime is still created by AppRoot. Reuse `~/components/appearance-settings` for appearance UI. Ordinary component tests may use `renderWithProviders` from `~/testing/render`; route-dependent components still need an explicit Router context, and provider lifecycle tests can mount providers directly.
 
 Colors use Core semantic variables; viewport media widths come from `~/config/breakpoints`. CSS Modules use the components layer. `tests/architecture/styles.test.ts` checks real CSS/SCSS and TS/TSX source, including inline CSS strings. The window safety stylesheet stays inline and unlayered in `layouts/app-shell/chrome-safety.ts`.
+
+Custom layouts read `--app-window-safe-top`, `--app-window-safe-left` and `--app-window-safe-right` for native control clearance. The document reserves the top inset by default. To lay out edge to edge, put `data-window-safe-area-owner=""` on the visible element responsible for clearance. Mark drag surfaces with `getDragRegionProps()` and pointer targets with `getInteractiveProps()`. Removing or hiding the owner restores the document reservation. The geometry remains available in either mode.
 
 ## Mantine UI
 
