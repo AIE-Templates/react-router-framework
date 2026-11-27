@@ -42,6 +42,22 @@ describe("document window chrome runtime", () => {
     expect(runtime.getSnapshot().diagnostic).toBeUndefined();
   });
 
+  it.each(["darwin", "win32", "linux"] as const)("reports live overlay capability on %s", (platform) => {
+    const runtime = createWindowChromeRuntime();
+    const host = bridge().value;
+    const stop = runtime.connect({
+      ...host,
+      bootstrap: {
+        protocolVersion: 1,
+        mode: "native-overlay",
+        shell: { kind: "desktop", platform, osVersion: "test" },
+      },
+    });
+    expect(runtime.getSnapshot().canSetOverlayAppearance).toBe(platform !== "darwin");
+    stop();
+    expect(runtime.getSnapshot().canSetOverlayAppearance).toBe(false);
+  });
+
   it("lets preload replace mismatched SSR facts and reports only differing field names", () => {
     const runtime = createWindowChromeRuntime({ shell: { kind: "desktop", platform: "win32", osVersion: "10" } });
     runtime.connect(bridge().value);

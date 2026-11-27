@@ -2,6 +2,10 @@ import { type Shell } from "./shell.ts";
 
 /** custom-controls is reserved; the first implementation never resolves to it. */
 export type ChromeMode = "native-overlay" | "custom-controls" | "system-decorated";
+/** Electron's live overlay API is available on these native-overlay windows. */
+export function supportsOverlayAppearance(platform: string, mode: ChromeMode): boolean {
+  return mode === "native-overlay" && (platform === "win32" || platform === "linux");
+}
 export interface DesktopBootstrap {
   protocolVersion: 1;
   fixedAppearance?: "light" | "dark";
