@@ -14,7 +14,7 @@ import {
 import { fakeCookieStore as fakeStore } from "./testing/fake-store.ts";
 type LogFn = (data: Record<string, unknown>, msg: string) => void;
 const logger = () => ({ debug: vi.fn<LogFn>(), warn: vi.fn<LogFn>() });
-const COOKIE_JAR_ORIGIN = "https://app.desktop";
+const COOKIE_JAR_ORIGIN = "https://xxx-app.invalid";
 const origin = "xxx-app://site";
 const req = (path = "/", initiatorOrigin?: string, headers = new Headers()) => ({ path, initiatorOrigin, headers });
 function setup(store: CookieStore = fakeStore(), log = logger(), timeoutMs = STORE_TIMEOUT_MS, secureScheme = true) {
@@ -249,7 +249,7 @@ describe("createCookieJar with a store that stops answering", () => {
     const store = fakeStore();
     const { jar, log } = setup(store);
     await jar.storeResponseCookies(response("sid=old; HttpOnly"), req());
-    const before = await store.get({ domain: "app.desktop" });
+    const before = await store.get({ domain: "xxx-app.invalid" });
     const read = gate();
     const headers = new Headers({ "clear-site-data": '"cookies"' });
     store.get.mockImplementationOnce(async () => {
@@ -372,18 +372,23 @@ describe("server cookie writes", () => {
     await jar.storeResponseCookies(response("sid=host", "sid=domain; Domain=.127.0.0.1; HttpOnly"), req());
     expect(store.cookies).toEqual([
       expect.objectContaining({ value: "host", httpOnly: false, secure: false, sameSite: "unspecified" }),
-      expect.objectContaining({ value: "domain", domain: "app.desktop", url: COOKIE_JAR_ORIGIN + "/", httpOnly: true }),
+      expect.objectContaining({
+        value: "domain",
+        domain: "xxx-app.invalid",
+        url: COOKIE_JAR_ORIGIN + "/",
+        httpOnly: true,
+      }),
     ]);
-    await jar.storeResponseCookies(response("sid=; Max-Age=0; Domain=.APP.DESKTOP"), req());
+    await jar.storeResponseCookies(response("sid=; Max-Age=0; Domain=.XXX-APP.INVALID"), req());
     expect(await jar.cookieHeader(req())).toBe("sid=host");
     expect(store.set).toHaveBeenLastCalledWith(
-      expect.objectContaining({ domain: "app.desktop", httpOnly: true, expirationDate: 1 }),
+      expect.objectContaining({ domain: "xxx-app.invalid", httpOnly: true, expirationDate: 1 }),
     );
     await jar.storeResponseCookies(
-      response("sid=wrong; Domain=DESKTOP", "__Host-sid=x; Secure; Path=/; Domain=.127.0.0.1"),
+      response("sid=wrong; Domain=INVALID", "__Host-sid=x; Secure; Path=/; Domain=.127.0.0.1"),
       req(),
     );
-    expect(store.set).toHaveBeenCalledWith(expect.objectContaining({ domain: "desktop" }));
+    expect(store.set).toHaveBeenCalledWith(expect.objectContaining({ domain: "invalid" }));
     expect(await jar.cookieHeader(req())).toBe("sid=host");
   });
 

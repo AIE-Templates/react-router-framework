@@ -92,7 +92,9 @@ declare global {
 
 test("clears both private host identities on all paths and preserves other session hosts", async ({ fixture }) => {
   const { app, page, storageOrigin } = fixture;
-  const others = ["https://other.test", "https://child.app.desktop"];
+  const storageHost = new URL(storageOrigin).hostname;
+  const childHost = `child.${storageHost}`;
+  const others = ["https://other.test", `https://${childHost}`];
   await app.evaluate(async ({ session }, origins) => {
     for (const url of origins)
       await session.defaultSession.cookies.set({ url, name: "sid", value: "other", path: "/" });
@@ -107,12 +109,12 @@ test("clears both private host identities on all paths and preserves other sessi
         (await session.defaultSession.cookies.get({ domain }))
           .map((c) => [c.domain, c.path])
           .toSorted((a, b) => a.join("\n").localeCompare(b.join("\n"))),
-      new URL(storageOrigin).hostname,
+      storageHost,
     );
   expect(await records()).toEqual([
-    [".app.desktop", "/"],
-    ["app.desktop", "/"],
-    ["app.desktop", "/long;directory"],
+    [`.${storageHost}`, "/"],
+    [storageHost, "/"],
+    [storageHost, "/long;directory"],
   ]);
   const reply = await fixture.replyPath({ cookies: [], clearSiteData: '"cookies"' });
   await page.evaluate((url) => fetch(url, { credentials: "omit" }).then((r) => r.text()), reply);
@@ -123,5 +125,5 @@ test("clears both private host identities on all paths and preserves other sessi
     await app.evaluate(async ({ session }) =>
       (await session.defaultSession.cookies.get({})).map((c) => c.domain ?? "").toSorted(),
     ),
-  ).toEqual(["child.app.desktop", "other.test"]);
+  ).toEqual([childHost, "other.test"]);
 });
