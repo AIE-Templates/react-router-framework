@@ -1,6 +1,6 @@
 import type { Config } from "@react-router/dev/config";
 
-export default {
+const config: Config = {
   appDirectory: "src/app",
   // A static SPA: React Router prebuilds a shell (build/client/index.html) and fills it in the browser,
   // without server rendering or server loaders (except the root route's, which runs at build time).
@@ -14,4 +14,6 @@ export default {
     // optimization. Experimental in Router 8.5: recheck cold development startup when upgrading.
     unstable_optimizeDeps: true,
   },
-} satisfies Config;
+};
+
+export default config;

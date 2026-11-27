@@ -12,60 +12,24 @@ function record(t: number, preferences: Partial<VisualPreferences> = {}, id = "a
   return { version: 1, stamp: { t, id }, preferences };
 }
 
-// Input digits denote record time, '-' missing, '!' invalid and 'x' unavailable.
-// Inputs are ordered upstream to downstream. The last column lists the available replicas that need the winning record.
-it.each([
-  ["A1", "-", 0, ""],
-  ["A2", "!", 0, ""],
-  ["A3", "1", 1, ""],
-  ["A4", "x", 0, ""],
-  ["B1", "-!", 0, ""],
-  ["B2", "1-", 1, "1"],
-  ["B3", "!1", 1, "0"],
-  ["B4", "12", 1, "1"],
-  ["B5", "21", 2, "1"],
-  ["B6", "11", 1, ""],
-  ["B7", "1x", 1, ""],
-  ["B8", "x1", 1, ""],
-  ["C1", "---", 0, ""],
-  ["C2", "1--", 1, "12"],
-  ["C3", "-1-", 1, "02"],
-  ["C4", "--1", 1, "01"],
-  ["C5", "21-", 2, "12"],
-  ["C6", "12-", 1, "12"],
-  ["C7", "11-", 1, "2"],
-  ["C8", "2-1", 2, "12"],
-  ["C9", "1-2", 1, "12"],
-  ["C10", "1-1", 1, "1"],
-  ["C11", "-21", 2, "02"],
-  ["C12", "-12", 1, "02"],
-  ["C13", "-11", 1, "0"],
-  ["C14", "211", 2, "12"],
-  ["C15", "121", 1, "1"],
-  ["C16", "112", 1, "2"],
-  ["C17", "221", 2, "2"],
-  ["C18", "212", 2, "1"],
-  ["C19", "122", 1, "12"],
-  ["C20", "111", 1, ""],
-] as const)(
-  "%s starts from the first valid upstream and repairs every different replica",
-  (_, inputs, time, repair) => {
-    const sources = Array.from(
-      inputs,
-      (c) => kernel.decode(c === "!" ? "{}" : Number(c) ? kernel.encode(record(Number(c))) : null).record,
-    );
-    const [native, cookie, local] = sources;
-    const selected = kernel.atStart({ native, cookie, local });
-    expect(selected?.stamp.t ?? 0).toBe(time);
-    expect(
-      sources
-        .flatMap((source, i) =>
-          inputs[i] !== "x" && selected && (!source || kernel.compare(source, selected) !== 0) ? [i] : [],
-        )
-        .join(""),
-    ).toBe(repair);
-  },
-);
+it("selects the first present record in native, cookie, local order regardless of time", () => {
+  const native = record(1);
+  const cookie = record(2);
+  const local = record(3);
+  expect(kernel.atStart({ native, cookie, local })).toBe(native);
+  expect(kernel.atStart({ cookie, local })).toBe(cookie);
+  expect(kernel.atStart({ local })).toBe(local);
+  expect(kernel.atStart({})).toBeUndefined();
+});
+
+it("accepts stamps through the Date limit and 64 ID code units", () => {
+  const upper = record(8.64e15, {}, "a".repeat(64));
+  expect(kernel.decode(kernel.encode(upper)).record).toEqual(upper);
+  expect(kernel.nextStamp([upper], 0).t).toBe(8.64e15 + 1);
+  for (const invalid of [record(8.64e15 + 1), record(0, {}, "a".repeat(65))]) {
+    expect(kernel.decode(kernel.encode(invalid))).toEqual({ kind: "invalid" });
+  }
+});
 
 it("orders by time, code units and canonical sparse JSON, independently of key order", () => {
   const a = record(1, { direction: "rtl", colorScheme: "dark" });

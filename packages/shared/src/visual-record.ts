@@ -18,6 +18,9 @@ export interface VisualRecord {
 }
 
 export function createVisualRecordKernel(defaults: Readonly<VisualPreferences>) {
+  const maxDateTime = 8.64e15;
+  const maxStampIdLength = 64;
+
   function object(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
@@ -41,8 +44,10 @@ export function createVisualRecordKernel(defaults: Readonly<VisualPreferences>) 
         typeof stamp.t !== "number" ||
         !Number.isSafeInteger(stamp.t) ||
         stamp.t < 0 ||
+        stamp.t > maxDateTime ||
         typeof stamp.id !== "string" ||
         !stamp.id ||
+        stamp.id.length > maxStampIdLength ||
         !object(preferences)
       )
         return { kind: "invalid" };
