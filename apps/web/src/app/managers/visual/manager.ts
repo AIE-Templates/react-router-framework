@@ -48,7 +48,9 @@ export function createVisualManager({
   const handoff = host?.[config.bootstrapKey];
   const bootstrap = handoff?.storageKey === config.storageKey ? handoff : undefined;
   let fixedAppearance = bootstrap?.fixedAppearance;
+  let publishedAppearance = fixedAppearance;
   let record = bootstrap?.record;
+  let highestObserved = records.pick([initialRecord, record]);
   let state = bootstrap ? freeze(bootstrap.state) : server;
   const storage: Record<keyof VisualStatus["storage"], StoreStatus> = {
     local: "ok",
@@ -79,7 +81,8 @@ export function createVisualManager({
   }
   function publish() {
     const next = visualCodec.resolve(record, host, fixedAppearance);
-    if (JSON.stringify(next) !== JSON.stringify(state)) {
+    if (fixedAppearance !== publishedAppearance || JSON.stringify(next) !== JSON.stringify(state)) {
+      publishedAppearance = fixedAppearance;
       state = freeze(next);
       if (connections && host) visualCodec.apply(config, state, host.document.documentElement);
       changes.notify();
@@ -91,13 +94,6 @@ export function createVisualManager({
     if (!host) return;
     try {
       native = nativeSource?.connect(host);
-      if (native && !bootstrap) {
-        try {
-          fixedAppearance = nativeSource?.prepaint(host)?.fixedAppearance;
-        } catch {
-          /* The live mirror is independent of its document-start snapshot. */
-        }
-      }
       storage.native = native
         ? "ok"
         : initialShell === "desktop" || host.desktop !== undefined
@@ -108,13 +104,20 @@ export function createVisualManager({
       storage.native = "unavailable";
     }
   }
+  function decodeObserved(raw: string | null) {
+    const decoded = records.decode(raw);
+    if (decoded.record && (!highestObserved || decoded.record.stamp.t > highestObserved.stamp.t)) {
+      highestObserved = decoded.record;
+    }
+    return decoded;
+  }
   function readWeb(store: "local" | "cookie") {
     try {
       const raw =
         store === "local"
           ? host!.localStorage.getItem(config.storageKey)
           : readVisualCookie(host!.document.cookie, config.cookieName!);
-      return records.decode(raw);
+      return decodeObserved(raw);
     } catch {
       storage[store] = "unavailable";
       return undefined;
@@ -124,7 +127,8 @@ export function createVisualManager({
     if (!native || storage.native === "unavailable") return undefined;
     try {
       const mirror = native.read();
-      const observed = records.decode(mirror.record).record;
+      fixedAppearance = mirror.fixedAppearance;
+      const observed = decodeObserved(mirror.record).record;
       if (latestPush && observed) {
         const order = records.compare(observed, latestPush.record);
         if (order > 0 || (order === 0 && !mirror.pending)) latestPush = undefined;
@@ -191,7 +195,8 @@ export function createVisualManager({
     if (latestPush !== operation) return;
     latestPush = undefined;
     storage.native = result;
-    publishStatus();
+    if (result === "unavailable") publishStatus();
+    else reconcile("event", target);
   }
   function available(store: keyof typeof storage) {
     return storage[store] !== "absent" && storage[store] !== "unavailable";
@@ -214,7 +219,7 @@ export function createVisualManager({
     if (store === "local") writeLocal(records.encode(target));
     else writeCookie(target, start);
   }
-  function reconcile(trigger: "start" | "connect" | "event" | "restore" | "retry") {
+  function reconcile(trigger: "start" | "connect" | "event" | "restore" | "retry", pushed?: VisualRecord) {
     const start = trigger === "start";
     if (trigger !== "event") {
       if (storage.local === "unavailable") storage.local = "ok";
@@ -232,6 +237,8 @@ export function createVisualManager({
     if (
       record &&
       available("native") &&
+      // A completion can discover a newer Web edit, but must not retry its own push.
+      (!pushed || records.behind(pushed, record)) &&
       (records.behind(observed.native, record) || (trigger === "retry" && storage.native === "failed"))
     ) {
       void push(record);
@@ -243,7 +250,11 @@ export function createVisualManager({
     if (!initialized) connectNative();
     observe();
     latestPush = undefined;
-    record = { version: 1, stamp: records.nextStamp([record]), preferences: change({ ...record?.preferences }) };
+    record = {
+      version: 1,
+      stamp: records.nextStamp([record, highestObserved]),
+      preferences: change({ ...record?.preferences }),
+    };
     startPending = false;
     const committed = record;
     if (available("native")) void push(committed);
@@ -269,7 +280,9 @@ export function createVisualManager({
     resetDirection: () => reset("direction"),
     resetReducedMotionPreference: () => reset("reducedMotion"),
     resetVisualPreferences: () => commit(() => ({})),
-    retry: () => reconcile("retry"),
+    retry: () => {
+      if (initialized) reconcile("retry");
+    },
   });
   function attach(window: Window) {
     const trigger = startPending ? "start" : "connect";
@@ -278,14 +291,18 @@ export function createVisualManager({
     reconcile(trigger);
     visualCodec.apply(config, state, window.document.documentElement);
     const onStorage = (event: StorageEvent) => {
-      if (event.key === config.storageKey || event.key === null) reconcile("event");
+      if (event.key !== config.storageKey && event.key !== null) return;
+      if (event.key === config.storageKey) adopt(decodeObserved(event.newValue).record);
+      reconcile("event");
     };
-    const onRestore = () => reconcile("restore");
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) reconcile("restore");
+    };
     const onVisibility = () => {
-      if (window.document.visibilityState === "visible") onRestore();
+      if (window.document.visibilityState === "visible") reconcile("restore");
     };
     window.addEventListener("storage", onStorage);
-    window.addEventListener("pageshow", onRestore);
+    window.addEventListener("pageshow", onPageShow);
     window.document.addEventListener("visibilitychange", onVisibility);
     const media = ["(prefers-color-scheme: dark)", "(prefers-reduced-motion: reduce)"].flatMap((query) => {
       try {
@@ -297,7 +314,7 @@ export function createVisualManager({
     for (const query of media) query.addEventListener("change", publish);
     return () => {
       window.removeEventListener("storage", onStorage);
-      window.removeEventListener("pageshow", onRestore);
+      window.removeEventListener("pageshow", onPageShow);
       window.document.removeEventListener("visibilitychange", onVisibility);
       for (const query of media) query.removeEventListener("change", publish);
       latestPush = undefined;
