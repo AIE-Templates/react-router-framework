@@ -86,6 +86,29 @@ it.each(["older", "newer"] as const)(
     expect(applied).toHaveLastReturnedWith(order === "older" ? "dark" : "light");
   },
 );
+it.each([
+  ["read", { record: newer, pending: false }],
+  ["retryPending", undefined],
+  ["older push", "ok"],
+] as const)("recovers an unread disk record on %s", (trigger, expected) => {
+  const { fs, start } = fixture();
+  fs.readFileSync.mockImplementation(() => {
+    throw new Error("disk unavailable");
+  });
+  const mirror = start();
+  try {
+    expect(mirror.read()).toEqual({ record: null, pending: true });
+  } finally {
+    fs.readFileSync.mockReturnValue(newer);
+  }
+  const result = trigger === "older push" ? mirror.push(older) : mirror[trigger]();
+  expect(result).toEqual(expected);
+  // Observe the adoption before another read gets a chance to recover it.
+  expect(mirror.colorScheme()).toBe("dark");
+  expect(mirror.read()).toEqual({ record: newer, pending: false });
+  expect(fs.renameSync).not.toHaveBeenCalled();
+});
+
 it("G10 derives missing choices from product defaults on construction and reset", () => {
   const kernel = createVisualRecordKernel({ ...VISUAL_DEFAULTS, colorScheme: "light" });
   const effective = vi.spyOn(visualRecordKernel, "effective").mockImplementation(kernel.effective);
@@ -139,7 +162,7 @@ it.each(["equal", "older", "invalid", "window or quit"] as const)(
 );
 
 it("supersedes a pending write with the new maximum and reports durability independently of native drawing", () => {
-  const { fs, start } = fixture();
+  const { fs, log, start } = fixture();
   const mirror = start();
   const latest = raw(3, { colorScheme: "light" });
   mirror.onColorSchemeChange(() => {
@@ -147,10 +170,12 @@ it("supersedes a pending write with the new maximum and reports durability indep
   });
   const applied = vi.fn<() => string>(() => mirror.colorScheme());
   mirror.onColorSchemeChange(applied);
+  const err = new Error("disk unavailable");
   fs.renameSync.mockImplementationOnce(() => {
-    throw new Error("disk unavailable");
+    throw err;
   });
   expect(mirror.push(newer)).toBe("failed");
+  expect(log.warn).toHaveBeenCalledWith({ err }, "visual mirror write failed");
   expect(applied).toHaveLastReturnedWith("dark");
   expect(mirror.push(latest)).toBe("ok");
   expect(applied).toHaveLastReturnedWith("light");
