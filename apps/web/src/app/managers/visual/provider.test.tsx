@@ -17,12 +17,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 it("keeps one committed manager through registry rerenders and cleans up StrictMode subscriptions", () => {
-  const active = new Set<() => void>();
-  vi.stubGlobal("matchMedia", () => ({
+  const queries = ["(prefers-color-scheme: dark)", "(prefers-reduced-motion: reduce)"];
+  const active = new Map(queries.map((query) => [query, new Set<() => void>()]));
+  vi.stubGlobal("matchMedia", (query: string) => ({
     matches: false,
-    addEventListener: (_: string, callback: () => void) => active.add(callback),
-    removeEventListener: (_: string, callback: () => void) => active.delete(callback),
+    addEventListener: (_: string, callback: () => void) => active.get(query)!.add(callback),
+    removeEventListener: (_: string, callback: () => void) => active.get(query)!.delete(callback),
   }));
+  const counts = () => queries.map((query) => active.get(query)!.size);
   const seen: ReturnType<typeof createVisualManager>[] = [];
   function Consumer() {
     const manager = useVisualManager();
@@ -39,7 +41,7 @@ it("keeps one committed manager through registry rerenders and cleans up StrictM
   );
   const { rerender, unmount } = render(tree);
   const manager = seen.at(-1);
-  const count = active.size;
+  expect(counts()).toEqual([1, 1]);
   const renders = seen.length;
   rerender(
     <StrictMode>
@@ -50,11 +52,10 @@ it("keeps one committed manager through registry rerenders and cleans up StrictM
   );
   expect(seen.length).toBeGreaterThan(renders);
   expect(seen.at(-1)).toBe(manager);
-  expect(active.size).toBe(count);
-  expect(count).toBeGreaterThan(0);
+  expect(counts()).toEqual([1, 1]);
   expect(screen.getByText("auto")).toBeTruthy();
   unmount();
-  expect(active.size).toBe(0);
+  expect(counts()).toEqual([0, 0]);
 });
 
 it("uses only the prepaint handoff and request snapshot during React render", () => {

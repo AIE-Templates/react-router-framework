@@ -14,5 +14,15 @@ export function createVisualFallbackCss() {
   const common = { ...defaults.variables, ...custom.variables };
   const light = { ...defaults.light, ...custom.light, "--mantine-color-scheme": "light", "color-scheme": "light" };
   const dark = { ...defaults.dark, ...custom.dark, "--mantine-color-scheme": "dark", "color-scheme": "dark" };
-  return `@layer theme,base,mantine,components,utilities;@layer mantine {${selector}{${declarations({ ...common, ...light })}}@media(prefers-color-scheme:dark){${selector}{${declarations(dark)}}}}`;
+  const input = declarations({
+    "--input-bg": "var(--app-color-card)", // naming-allow: Mantine Input wrapper variable
+    "--input-bd": "var(--app-color-input)", // naming-allow: Mantine Input wrapper variable
+    "--input-bd-focus": "var(--app-color-ring)", // naming-allow: Mantine Input wrapper variable
+  });
+  return `@layer theme,base,mantine,components,utilities;
+@layer mantine {
+  ${selector}{${declarations({ ...common, ...light })}}
+  ${selector} .mantine-Input-wrapper[data-variant="default"]{${input}}
+  @media(prefers-color-scheme:dark){${selector}{${declarations(dark)}}}
+}`;
 }

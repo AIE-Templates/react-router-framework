@@ -1,4 +1,4 @@
-import { Rating, useDirection, useMantineColorScheme } from "@mantine/core";
+import { Rating, useComputedColorScheme, useDirection, useMantineColorScheme } from "@mantine/core";
 import { VISUAL_DEFAULTS, visualRecordKernel } from "@repo/shared";
 import { act, render, screen } from "@testing-library/react";
 import { Activity, useEffect, useLayoutEffect, type PropsWithChildren } from "react";
@@ -118,8 +118,16 @@ it("reconciles a preference changed by a child layout effect before Mantine subs
 function VisualProbe() {
   const { resolved } = useVisualState();
   const { colorScheme } = useMantineColorScheme();
+  const computedScheme = useComputedColorScheme();
   const { dir } = useDirection();
-  return <output data-scheme={colorScheme}>{JSON.stringify({ resolved, colorScheme, dir })}</output>;
+  return (
+    <output
+      data-scheme={colorScheme}
+      data-computed-scheme={computedScheme}
+      dir={dir}
+      data-reduced-motion={resolved.reducedMotion}
+    />
+  );
 }
 function ConnectedVisualTree({
   manager,
@@ -132,6 +140,21 @@ function ConnectedVisualTree({
     </VisualManagerContext.Provider>
   );
 }
+it("updates the Mantine preference when another window changes the stored scheme", () => {
+  const manager = createVisualManager({ host: window });
+  render(<ConnectedVisualTree manager={manager} />);
+  const probe = screen.getByRole("status");
+  expect(probe).toHaveAttribute("data-scheme", "auto");
+
+  const peer = createVisualManager({ host: window });
+  act(() => {
+    peer.actions.setColorSchemePreference("dark");
+    window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEYS.visualPreferences }));
+  });
+  expect(probe).toHaveAttribute("data-scheme", "dark");
+  expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
+});
+
 it("restores current system preferences in Mantine after suspended effects and a failed save", () => {
   let matches = false;
   vi.stubGlobal("matchMedia", (query: string) => ({
@@ -148,26 +171,35 @@ it("restores current system preferences in Mantine after suspended effects and a
       <ConnectedVisualTree manager={manager} />
     </Activity>,
   );
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+  const probe = screen.getByRole("status");
+  expect(probe).toHaveAttribute("data-computed-scheme", "light");
+  const quota = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("quota");
   });
-  act(() => manager.actions.setDirection("rtl"));
-  view.rerender(
-    <Activity mode="hidden">
-      <ConnectedVisualTree manager={manager} />
-    </Activity>,
-  );
-  matches = true;
-  view.rerender(
-    <Activity mode="visible">
-      <ConnectedVisualTree manager={manager} />
-    </Activity>,
-  );
-  expect(screen.getByRole("status")).toHaveTextContent('"colorScheme":"dark"');
-  expect(screen.getByRole("status")).toHaveTextContent('"reducedMotion":true');
-  expect(screen.getByRole("status")).toHaveTextContent('"dir":"rtl"');
-  expect(manager.getStatus().storage.local).toBe("failed");
-  expect(document.documentElement.dataset.colorScheme).toBe("dark");
-  expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
+  try {
+    act(() => manager.actions.setDirection("rtl"));
+    view.rerender(
+      <Activity mode="hidden">
+        <ConnectedVisualTree manager={manager} />
+      </Activity>,
+    );
+    matches = true;
+    view.rerender(
+      <Activity mode="visible">
+        <ConnectedVisualTree manager={manager} />
+      </Activity>,
+    );
+    expect(probe).toHaveAttribute("data-scheme", "auto");
+    expect(probe).toHaveAttribute("data-computed-scheme", "dark");
+    expect(probe).toHaveAttribute("data-reduced-motion", "true");
+    expect(probe).toHaveAttribute("dir", "rtl");
+    expect(manager.getStatus().storage.local).toBe("failed");
+    expect(document.documentElement.dataset.colorScheme).toBe("dark");
+    expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
+  } finally {
+    quota.mockRestore();
+  }
+  act(() => manager.actions.retry());
+  expect(manager.getStatus().storage.local).toBe("ok");
   view.unmount();
 });

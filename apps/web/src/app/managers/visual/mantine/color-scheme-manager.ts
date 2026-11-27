@@ -1,5 +1,5 @@
 import type { MantineColorScheme, MantineColorSchemeManager } from "@mantine/core";
-import { visualRecordKernel } from "@repo/shared";
+import { VISUAL_DEFAULTS, visualRecordKernel } from "@repo/shared";
 
 import type { VisualManager } from "~/managers/visual/manager";
 /** Mantine can call set from its own subscription; equal values must not write again. */
@@ -15,7 +15,10 @@ export function createMantineColorSchemeManager(visual: VisualManager): MantineC
       // Mantine already adopted the request, but a concurrent Core record can win the commit.
       syncSubscriber?.(value);
     },
-    clear: () => visual.actions.resetColorSchemePreference(),
+    clear: () => {
+      visual.actions.resetColorSchemePreference();
+      syncSubscriber?.(VISUAL_DEFAULTS.colorScheme);
+    },
     subscribe: (notify) => {
       release?.();
       let previous: MantineColorScheme | undefined;

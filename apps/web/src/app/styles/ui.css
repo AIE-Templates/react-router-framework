@@ -6,9 +6,12 @@
   .mantine-focus-auto:focus-visible {
     outline-color: var(--app-color-ring);
   }
+  :root[data-reduced-motion="reduce"] .mantine-Button-root::before,
   :root[data-reduced-motion="reduce"]
     :is(
       .mantine-Button-root,
+      .mantine-Button-inner,
+      .mantine-Button-loader,
       .mantine-Input-input,
       .mantine-Select-dropdown,
       .mantine-Combobox-dropdown,
@@ -23,9 +26,12 @@
     animation-duration: 0s !important;
   }
   @media (prefers-reduced-motion: reduce) {
+    :root:not([data-reduced-motion]) .mantine-Button-root::before,
     :root:not([data-reduced-motion])
       :is(
         .mantine-Button-root,
+        .mantine-Button-inner,
+        .mantine-Button-loader,
         .mantine-Input-input,
         .mantine-Select-dropdown,
         .mantine-Combobox-dropdown,
