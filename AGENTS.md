@@ -8,6 +8,8 @@ Before changing Router routes, loaders, actions or integration, read `.agents/sk
 
 ## Checks and tests
 
+Run full test suites through Orca on the Windows host. Use a temporary branch to sync work in progress when needed.
+
 After changes run `pnpm lint:fix`, then `pnpm fmt`. Before completion run `pnpm exec oxlint --deny-warnings --format=agent`, `pnpm typecheck` and `pnpm test` (use `pnpm exec vitest run` for a finite run).
 
 Unit tests use Vitest and Testing Library, colocated as *.test.ts(x). Each package has a Vitest project. Use createRoutesStub when components need Router context; invoke loaders/actions directly. Keep environment examples synchronized with new variables, document purpose/defaults and never commit .env files.
