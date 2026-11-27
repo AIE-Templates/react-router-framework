@@ -60,14 +60,14 @@ export function createVisualMirror(
       writeDurably(fs, temp, value);
       renameWithRetry(fs, temp, file);
       pending = false;
-    } catch {
+    } catch (err) {
       pending = true;
       try {
         fs.rmSync(temp, { force: true });
       } catch {
         // A subsequent attempt replaces the temporary file.
       }
-      log.warn({}, "visual mirror write failed");
+      log.warn({ err }, "visual mirror write failed");
     }
   }
   function retryPending() {

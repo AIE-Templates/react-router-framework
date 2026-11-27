@@ -20,7 +20,7 @@ export default defineConfig({
         },
       }
     : undefined,
-  define: { APP_SSR: JSON.stringify(routerConfig.ssr) },
+  define: { APP_SSR: JSON.stringify(routerConfig.ssr !== false) },
   environments: {
     ssr: {
       resolve: {

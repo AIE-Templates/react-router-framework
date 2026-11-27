@@ -43,7 +43,7 @@ it.each(["dark", "light"] as const)("keeps fixed %s across prepaint, hydration a
     configurable: true,
     value: {
       visualSeed: { record: raw, pending: false, fixedAppearance: fixed },
-      readVisual: () => ({ record: mirror, pending: false }),
+      readVisual: () => ({ record: mirror, pending: false, fixedAppearance: fixed }),
       pushVisual,
     },
   });
@@ -68,6 +68,33 @@ it.each(["dark", "light"] as const)("keeps fixed %s across prepaint, hydration a
     expect(manager.getSnapshot().resolved.colorScheme).toBe(fixed);
     expect(manager.getSnapshot().preferences).toEqual(global);
     expect(visualRecordKernel.decode(localStorage.getItem(key)).record?.preferences).toEqual(global);
+  } finally {
+    disconnect();
+  }
+});
+
+it("recovers a fixed window appearance on connect after the document-start read failed", () => {
+  const raw = visualRecordKernel.encode({
+    version: 1,
+    stamp: { t: 1, id: "a" },
+    preferences: { colorScheme: "light" },
+  });
+  localStorage.setItem(STORAGE_KEYS.visualPreferences, raw);
+  const bridge = {
+    visualSeed: null,
+    readVisual: () => ({ record: raw, pending: false, fixedAppearance: "dark" }),
+    pushVisual: vi.fn<DesktopBridge["pushVisual"]>(),
+  } satisfies Pick<DesktopBridge, "visualSeed" | "readVisual" | "pushVisual">;
+  Object.defineProperty(window, "desktop", { configurable: true, value: bridge });
+  runInNewContext(visualScript(desktopVisualPrepaint), { window, document });
+  const manager = createVisualManager({ host: window, nativeSource: desktopVisualSource });
+  expect(manager.getSnapshot().resolved.colorScheme).toBe("light");
+  const disconnect = manager.connect();
+  try {
+    expect(manager.getSnapshot().resolved.colorScheme).toBe("dark");
+    expect(document.documentElement.dataset.colorScheme).toBe("dark");
+    expect(manager.getSnapshot().preferences.colorScheme).toBe("light");
+    expect(bridge.pushVisual).not.toHaveBeenCalled();
   } finally {
     disconnect();
   }
@@ -105,7 +132,7 @@ it.each([true, false])(
       expect(localStorage.getItem(STORAGE_KEYS.visualPreferences)).toBe(raw);
       expect(document.cookie.includes(visualCookie.name + "=")).toBe(ssr);
       readVisual.mockReturnValue({ record: raw, pending: false });
-      window.dispatchEvent(new Event("pageshow"));
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
       expect(manager.getStatus().storage.native).toBe("ok");
     } finally {
       release();
@@ -181,11 +208,11 @@ it("E19 hands successive SPA edits between windows through the live bridge alone
     readVisual.mockClear();
     b.actions.setReducedMotionPreference("reduce");
     await Promise.resolve();
-    expect(readVisual).toHaveBeenCalledOnce();
+    expect(readVisual).toHaveBeenCalledTimes(2);
     const both = { direction: "rtl", reducedMotion: "reduce" };
     expect(b.getSnapshot().preferences).toEqual(both);
     expect(visualRecordKernel.decode(record).record?.preferences).toEqual(both);
-    window.dispatchEvent(new Event("pageshow"));
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
     expect(a.getSnapshot().preferences).toEqual(both);
     expect(pushVisual).toHaveBeenCalledTimes(2);
     expect(readCookie).not.toHaveBeenCalled();
