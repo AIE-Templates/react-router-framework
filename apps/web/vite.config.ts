@@ -6,7 +6,7 @@ import routerConfig from "./react-router.config.ts";
 import { honoServer } from "./src/host/vite-plugin.ts";
 
 export default defineConfig({
-  define: { APP_SSR: JSON.stringify(routerConfig.ssr) },
+  define: { APP_SSR: JSON.stringify(routerConfig.ssr !== false) },
   environments: {
     ssr: {
       resolve: {

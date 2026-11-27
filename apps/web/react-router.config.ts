@@ -10,7 +10,7 @@ import { expand } from "dotenv-expand";
 // the environment win.
 expand(loadDotenv({ path: join(import.meta.dirname, ".env"), quiet: true }));
 
-export default {
+const config: Config = {
   appDirectory: "src/app",
   // Server-side render by default. SSR=false builds a SPA instead: a static shell that React Router
   // fills in the browser, without server rendering or server loaders (except the root route's, which
@@ -25,4 +25,6 @@ export default {
     // optimization. Experimental in Router 8.5: recheck cold SSR/SPA development when upgrading.
     unstable_optimizeDeps: true,
   },
-} satisfies Config;
+};
+
+export default config;
