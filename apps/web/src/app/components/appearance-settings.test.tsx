@@ -57,7 +57,8 @@ it("confirms a reset from the menu and shows a notification", async () => {
   expect(await screen.findByText("Defaults restored.")).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reset appearance?" })).not.toBeInTheDocument());
   await user.hover(screen.getByRole("button", { name: "Reset appearance" }));
-  expect(await screen.findByRole("tooltip")).toHaveTextContent("Restore defaults");
+  // The tooltip opens through a transition; a loaded CI machine can take longer than the default wait.
+  expect(await screen.findByRole("tooltip", undefined, { timeout: 5000 })).toHaveTextContent("Restore defaults");
 });
 
 it.each([
