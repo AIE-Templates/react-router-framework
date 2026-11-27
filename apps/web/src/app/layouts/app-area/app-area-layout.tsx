@@ -2,7 +2,7 @@ import { useId, type ReactNode } from "react";
 
 import { WindowColumn, WindowLayout } from "~/layouts/app-shell/window-layout";
 import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
-import { getInteractiveProps } from "~/managers/environment/dom-props";
+import { getInteractiveProps } from "~/platform/chrome-adapter/dom-props";
 
 export interface AppAreaLayoutProps {
   areaId: string;
