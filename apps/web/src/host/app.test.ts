@@ -50,7 +50,7 @@ describe("host app", () => {
     expect(createHostApp()).not.toBe(getHostApp());
   });
 
-  it("leaves cache headers of SSR documents and data to the application, like React Router", async () => {
+  it("leaves SSR cache headers to the application except for HEAD on a nonce document", async () => {
     const app = createHostApp({ csp: defaultPolicy(false) });
     const headers = {
       Cookie:
@@ -65,6 +65,9 @@ describe("host app", () => {
       expect(response.status).toBe(200);
       expect(response.headers.has("cache-control")).toBe(false);
     }
+    const head = await app.request("/settings", { method: "HEAD", headers });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("cache-control")).toBe("no-store");
   });
 
   it("runs middleware from `extend` after the API and before React Router", async () => {
