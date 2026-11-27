@@ -1,3 +1,4 @@
+import { PRODUCT_HEADER_HEIGHT } from "@repo/shared";
 import { useState } from "react";
 import { Link, useMatch, useSearchParams } from "react-router";
 
@@ -21,7 +22,7 @@ export default function DemoLayout() {
   const basic = params.get("shell") === "basic";
   if (params.get("layout") === "editor") {
     return (
-      <BasicShell title="Editor" headerMode={headerMode}>
+      <BasicShell title="Editor" headerMinHeight={PRODUCT_HEADER_HEIGHT} headerMode={headerMode}>
         <EditorArea />
       </BasicShell>
     );
@@ -29,7 +30,7 @@ export default function DemoLayout() {
   const area = <CrmArea basic={basic} report={Boolean(report)} draft={draft} />;
   if (basic) {
     return (
-      <BasicShell title="CRM" headerMode={headerMode}>
+      <BasicShell title="CRM" headerMinHeight={PRODUCT_HEADER_HEIGHT} headerMode={headerMode}>
         {area}
       </BasicShell>
     );
@@ -39,6 +40,7 @@ export default function DemoLayout() {
   return (
     <NavigationShell
       title={report ? "Reports" : "Sales"}
+      headerMinHeight={PRODUCT_HEADER_HEIGHT}
       headerMode={headerMode}
       navigationOpen={switcherOpen}
       onNavigationOpenChange={setSwitcherOpen}

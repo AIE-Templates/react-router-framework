@@ -13,7 +13,6 @@ import { desktopContext, shellContext } from "~/platform/electron/shell";
 
 import { createHostApp, createLoadContext, developmentShell, getHostApp } from "./app";
 import { defaultPolicy } from "./csp";
-import { createWebApp } from "./web-app";
 
 const desktop: Shell = { kind: "desktop", platform: "darwin", osVersion: "26.1" };
 
@@ -81,30 +80,21 @@ describe("host app", () => {
     expect(createHostApp()).not.toBe(getHostApp());
   });
 
-  it.each([false, true])("marks SSR documents and data private with visual cookie present=%s", async (withCookie) => {
+  it("leaves cache headers of SSR documents and data to the application, like React Router", async () => {
     const app = createHostApp({ csp: defaultPolicy(false) });
-    const record = visualRecordKernel.encode({
-      version: 1,
-      stamp: { t: 1, id: "a" },
-      preferences: { direction: "rtl" },
-    });
-    const headers = withCookie ? { Cookie: cookieName("visual") + "=" + encodeURIComponent(record) } : undefined;
-    for (const method of ["GET", "HEAD"]) {
-      const response = await app.request("/settings", { method, headers });
+    const headers = {
+      Cookie:
+        cookieName("visual") +
+        "=" +
+        encodeURIComponent(
+          visualRecordKernel.encode({ version: 1, stamp: { t: 1, id: "a" }, preferences: { direction: "rtl" } }),
+        ),
+    };
+    for (const path of ["/settings", "/settings.data"]) {
+      const response = await app.request(path, { headers });
       expect(response.status).toBe(200);
-      expect(response.headers.get("cache-control")).toBe("private, no-store");
-      expect(response.headers.get("content-type")).toContain("text/html");
+      expect(response.headers.has("cache-control")).toBe(false);
     }
-    const data = await app.request("/settings.data", { headers });
-    expect(data.status).toBe(200);
-    expect(data.headers.get("cache-control")).toBe("private, no-store");
-    expect((await data.text()).includes("rtl")).toBe(withCookie);
-  });
-
-  it("honors a SPA host override on data requests that reach the Router in an SSR build", async () => {
-    const response = await createWebApp({ ssr: false }).request("/settings.data");
-    expect(response.status).toBe(200);
-    expect(response.headers.has("cache-control")).toBe(false);
   });
 
   it("runs middleware from `extend` after the API and before React Router", async () => {
