@@ -6,7 +6,7 @@
 
 Host composition lives in `apps/web/src/host`: `app.ts` combines `createServerApp` with React Router as `createHostApp`, `web-app.ts` adds static assets and SPA fallback as `createWebApp`, `vite-plugin.ts` adapts development and prerendering, and `server.ts` is the native Node production entry only. Host middleware extends the same Hono application chain before Router fallback rather than wrapping it in a second Hono app, preserving a single request-ID, logging and error chain.
 
-SSR documents and Router `.data` responses carry no `Cache-Control`, as in React Router, so they are not cached by default. If the deployment adds automatic caching (for example a CDN or proxy caching HTML), configure caching for these responses to suit the application: a shared cache could otherwise serve one user's cookie-dependent content, such as session data or visual preferences, to other users. The static SPA shell, prerendered HTML, and prerendered `.data` files are served earlier with `Cache-Control: no-cache` so they can revalidate.
+The host leaves `Cache-Control` unset for SSR documents and Router `.data` responses by default, except that `HEAD` on a nonce-protected document sends `Cache-Control: no-store` so its fresh nonce cannot replace the policy on a cached `GET`. If the deployment adds automatic caching (for example a CDN or proxy caching HTML), configure caching for these responses to suit the application: a shared cache could otherwise serve one user's cookie-dependent content, such as session data or visual preferences, to other users. The static SPA shell, prerendered HTML, and prerendered `.data` files are served earlier with `Cache-Control: no-cache` so they can revalidate.
 
 API route chains live in `packages/server/src/routes/` and mount under `/api` in `src/api.ts` so `ApiType` retains full inference. Unknown `/api/*` paths return JSON 404. Workspace consumers resolve source via the `@repo/source` export condition while external consumers use `dist`; keep both export targets synchronized and keep one Hono version across all packages.
 
@@ -22,7 +22,7 @@ The Fullstack root loader identifies the host as `WEB_SHELL`. Only trust forward
 
 The web host owns CSP (`apps/web/src/host/csp.ts`), configurable through `createWebApp` and `createHostApp` (or `false` to disable deliberately). Production `script-src` excludes `unsafe-inline`; development permits Vite and HMR under its own policy. Cross-origin API destinations must be added to `connect-src`.
 
-SSR generates one per-document nonce shared across `ServerRouter`, React streaming, `Links`, `ScrollRestoration` and `Scripts`. Both hydration sides receive the same nonce prop; root revalidation must not replace the active document nonce, and root error rendering recovers it from the document. Static SPA and prerendered HTML derive `sha256` content hashes for inline scripts; `GET` and `HEAD` return identical CSP headers, and document byte ranges are disabled.
+SSR generates one per-document nonce shared across `ServerRouter`, React streaming, `Links`, `ScrollRestoration` and `Scripts`. Both hydration sides receive the same nonce prop; root revalidation must not replace the active document nonce, and root error rendering recovers it from the document. For static SPA and prerendered HTML, `GET` derives inline-script `sha256` hashes from the exact HTML bytes it serves. `HEAD` returns the same CSP for the same representation. Document byte ranges are disabled.
 
 ## Streaming, deferred errors and logging (SRV-04)
 
