@@ -752,42 +752,51 @@ it.each([true, false])("publishes live fixed appearance on connect and retry (pr
   expect(prepaint).toHaveBeenCalledTimes(handoff ? 1 : 0);
 });
 
-it.each(["ok", "failed"] as const)(
-  "adopts the native record recovered during a stale push returning %s",
-  async (result) => {
-    const older = raw(1, { direction: "ltr" });
-    const newer = raw(2, { direction: "rtl" });
-    writeVisualCookie(window, older);
-    localStorage.setItem(key, older);
-    const reply = pushGate();
-    let mirror: string | null = null;
-    const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending: !mirror || result === "failed" }));
-    const push = vi.fn<NativeBridge["push"]>(() => reply.promise);
-    const manager = tab({ nativeSource: nativeSource(read, push) });
-    expect(manager.getSnapshot().preferences.direction).toBe("ltr");
-    mirror = newer;
-    reply.resolve(result);
-    await reply.promise;
-    expect(manager.getSnapshot().preferences.direction).toBe("rtl");
-    expect([cookie(), local()]).toEqual([newer, newer]);
-    expect(manager.getStatus().storage.native).toBe(result);
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(push).toHaveBeenCalledExactlyOnceWith(older);
-  },
-);
+it("adopts the newer native record when a stale push succeeds", async () => {
+  const older = raw(1, { direction: "ltr" });
+  const newer = raw(2, { direction: "rtl" });
+  writeVisualCookie(window, older);
+  localStorage.setItem(key, older);
+  const reply = pushGate();
+  let mirror: string | null = null;
+  const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending: !mirror }));
+  const push = vi.fn<NativeBridge["push"]>(() => reply.promise);
+  const manager = tab({ nativeSource: nativeSource(read, push) });
+  expect(manager.getSnapshot().preferences.direction).toBe("ltr");
+  mirror = newer;
+  reply.resolve("ok");
+  await reply.promise;
+  expect(manager.getSnapshot().preferences.direction).toBe("rtl");
+  expect([cookie(), local()]).toEqual([newer, newer]);
+  expect(manager.getStatus().storage.native).toBe("ok");
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(push).toHaveBeenCalledExactlyOnceWith(older);
+});
 
-it("does not repeat a failed push while the mirror remains unreadable", async () => {
+it("keeps a refused push failed until explicit retry repairs the empty mirror", async () => {
   const value = raw(1);
   localStorage.setItem(key, value);
   const reply = pushGate();
-  const read = vi.fn<NativeBridge["read"]>(() => ({ record: null, pending: true }));
-  const push = vi.fn<NativeBridge["push"]>().mockReturnValueOnce(reply.promise).mockReturnValue(pushGate().promise);
+  let mirror: string | null = null;
+  const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending: false }));
+  const push = vi
+    .fn<NativeBridge["push"]>(async (record) => {
+      mirror = record;
+      return "ok" as const;
+    })
+    .mockReturnValueOnce(reply.promise);
   const manager = tab({ nativeSource: nativeSource(read, push) });
   reply.resolve("failed");
   await reply.promise;
-  expect(read).toHaveBeenCalledTimes(2);
-  expect(push).toHaveBeenCalledExactlyOnceWith(value);
   expect(manager.getStatus().storage.native).toBe("failed");
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(push).toHaveBeenCalledExactlyOnceWith(value);
+
+  manager.actions.retry();
+  await Promise.resolve();
+  expect(push).toHaveBeenCalledTimes(2);
+  expect(mirror).toBe(value);
+  expect(manager.getStatus().storage.native).toBe("ok");
 });
 
 it("retires the pending push on last disconnect", async () => {
