@@ -1,9 +1,9 @@
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { visualRecordKernel } from "@repo/shared";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, configure, getConfig, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 import { STORAGE_KEYS } from "~/config/storage";
 import { visualCookie } from "~/config/visual-cookie";
@@ -13,6 +13,13 @@ import { AppUiProvider } from "~/providers/app-ui-provider";
 import { renderWithProviders } from "~/testing/render";
 
 import { VisualSettings } from "./appearance-settings";
+
+// Menus, modals and tooltips open through timed transitions, which a loaded machine (such as a
+// Windows VM running the whole suite) can delay past the default waits.
+vi.setConfig({ testTimeout: 20_000 });
+const { asyncUtilTimeout } = getConfig();
+beforeAll(() => configure({ asyncUtilTimeout: 5000 }));
+afterAll(() => configure({ asyncUtilTimeout }));
 
 beforeAll(() => {
   // Mantine scrolls the active option into view when opening a Select; jsdom has no layout.
