@@ -96,7 +96,7 @@ for (const upstream of ["127.0.0.1", "app.desktop"]) {
       const snapshots = [];
       for (const site of ["https", "jar"] as const) {
         const domain = site === "jar" ? upstream : new URL(fixture.origins.https).hostname;
-        const parent = site === "jar" ? "desktop" : "test";
+        const parent = site === "jar" ? "invalid" : "test";
         await fixture.visit(site);
         await fixture.set([
           "sid=host; Path=/",

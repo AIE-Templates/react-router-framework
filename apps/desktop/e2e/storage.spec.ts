@@ -154,7 +154,7 @@ test("a server's Set-Cookie round-trips through the main process to later reques
       .filter((cookie) => cookie.name.startsWith("e2e-"))
       .map((cookie) => `${cookie.domain} ${cookie.hostOnly} ${cookie.path}`),
   );
-  expect(domains).toEqual(Array.from({ length: 5 }, () => "app.desktop true /"));
+  expect(domains).toEqual(Array.from({ length: 5 }, () => "app.invalid true /"));
 });
 
 test("a path-scoped cookie reaches only its path, and Max-Age=0 deletes", async ({ desktop: { page } }) => {
@@ -194,7 +194,7 @@ test("Electron's cookie store matches paths, expiry and Secure the way a browser
   // What the jar relies on from `cookies.get({ url })`, on a throwaway in-memory partition.
   const result = await app.evaluate(async ({ session }) => {
     const cookies = session.fromPartition("e2e-cookie-semantics").cookies;
-    const origin = "https://app.desktop";
+    const origin = "https://app.invalid";
     const base = { secure: false, httpOnly: false, sameSite: "lax" as const };
     await cookies.set({ ...base, url: `${origin}/`, name: "root", value: "1", path: "/" });
     await cookies.set({ ...base, url: `${origin}/a`, name: "a", value: "1", path: "/a" });
@@ -211,7 +211,7 @@ test("Electron's cookie store matches paths, expiry and Secure the way a browser
       aSlash: await names(`${origin}/a/`),
       abc: await names(`${origin}/a/b/c`),
       ax: await names(`${origin}/ax`),
-      http: await names("http://app.desktop/"),
+      http: await names("http://app.invalid/"),
     };
     // An expired set deletes exactly that name and path; over an HttpOnly cookie only when it is
     // HttpOnly itself (Chromium refuses to replace one otherwise), which is why the jar deletes that way.

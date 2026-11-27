@@ -43,7 +43,13 @@ Each request passes through one logging/error/request-ID chain. Use context.get(
 
 ## CSP
 
-SSR has one per-document nonce shared by ServerRouter, React streaming, Links, ScrollRestoration and Scripts. Both hydration sides use the same nonce prop. Root revalidation must not replace the active document nonce; root error rendering recovers it from the document. Static SPA/prerendered documents use content hashes for inline scripts; GET/HEAD policies match and document ranges are disabled. Production script-src excludes unsafe-inline. Development permits Vite/HMR using its own policy. Configure csp in createWebApp/createHostApp, or false to disable it deliberately. Add cross-origin API destinations to connect-src.
+The template allows images and fonts from any HTTPS origin, API requests to any HTTPS origin, and WebSocket connections to any WSS endpoint. Each directive also includes `'self'`, which covers the web origin and Electron's `app://app`. Use explicit `https://` URLs for external resources shared with Electron. Development also permits HTTP and WS connections for local services and inline scripts for Vite/HMR.
+
+Production scripts load from the same origin. Inline scripts use a per-document nonce for SSR or content hashes for static SPA and prerendered HTML. ServerRouter, React streaming, Links, ScrollRestoration and Scripts share the SSR nonce across hydration and root revalidation. Root error rendering recovers it from the document. Static HTML uses the same hash policy for GET and HEAD and disables document ranges. The defaults also block plugins and embedding by other pages, and limit form submissions to the same origin.
+
+**Production deployment.** Narrow `img-src`, `font-src` and `connect-src` to the origins your application uses. For example, an app serving its own fonts and calling only its own API can use `font-src 'self'` and `connect-src 'self'`. If images come from a CDN, use `img-src 'self' https://images.example.com`. Keep `data:` or `blob:` in the relevant directive if a feature uses embedded assets or image previews. For a live connection, add its exact `wss://` origin to `connect-src`.
+
+Edit `defaultPolicy()` in `src/host/csp.ts` to apply the policy to both Web and Electron. For a host-specific policy, pass the complete directive map as `csp` to `createWebApp` or `createHostApp`. This replaces the defaults. Passing `false` disables the host's CSP.
 
 ## Environment and deployment
 

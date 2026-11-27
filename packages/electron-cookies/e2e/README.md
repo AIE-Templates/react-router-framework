@@ -23,7 +23,7 @@ reader on the jar side so they can also reach the parser.
 The privileged scheme defaults to `fixture://app`. Its handler forwards GET requests to the
 HTTP server, calls the package's jar with the real path, headers, signal and initiator, waits
 for response cookie storage, and strips Set-Cookie before returning the response.
-The jar uses the profile's persistent Chromium store under `https://app.desktop`.
+The jar uses the profile's persistent Chromium store under `https://<scheme>.invalid` (default `https://fixture.invalid`).
 Native requests go through Chromium's HTTP stack. Playwright inspects records in the main
 process and normalizes only the site hostname, preserving the domain-cookie leading dot.
 Partitioned identity and invalid UTF-8 are compared on the wire. The same sandboxed preload runs in
