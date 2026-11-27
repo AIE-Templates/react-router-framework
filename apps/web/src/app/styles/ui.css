@@ -46,6 +46,8 @@
       animation-duration: 0s !important;
     }
   }
+  .mantine-Select-dropdown,
+  .mantine-Combobox-dropdown,
   .mantine-Modal-content,
   .mantine-Popover-dropdown,
   .mantine-Menu-dropdown,

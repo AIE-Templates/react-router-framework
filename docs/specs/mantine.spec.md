@@ -11,8 +11,9 @@ Prepaint and the first connection each select the first valid startup source in 
 (native mirror in Electron, cookie in SSR, then local storage). The first connection repairs differing
 sources with the selected record and its original stamp. With no valid source, it uses defaults and
 writes nothing. A command committed before connection switches that reconciliation to runtime ordering.
-After hydration, a fixed window appearance from VisualManager takes precedence through `forceColorScheme`.
-The window override leaves the shared preference record intact.
+After hydration, Mantine subscribes to VisualManager state for the fixed window appearance. If a live
+native read supplies or clears the override on connect or retry, `forceColorScheme` follows it even
+when storage status stays the same. The window override leaves the shared preference record intact.
 
 The effective preference combines the sparse record with the product defaults and can be `auto`.
 Mantine's `setColorScheme` writes only when its argument differs from that preference, so mounting
@@ -33,8 +34,9 @@ still go through VisualManager.
 Static theme and component defaults are centralized in visual/mantine/theme.ts. Motion defaults
 use the manager's resolved preference, with zero-duration transitions in reduced mode and CSS
 fallback before hydration. Both the explicit reduced preference and the system fallback disable the
-loading Button transitions on its root, `::before`, inner element and loader. Portal interaction surfaces are no-drag; the transparent portal root
-is not. The sample exercises Select, Button, Tooltip, Popover, Menu, Modal, a confirm modal and a
+loading Button transitions on its root, `::before`, inner element and loader. Global no-drag styles
+cover portal interaction surfaces, including Select and Combobox dropdowns and Modal content.
+The transparent portal root stays outside the rule. The sample exercises Select, Button, Tooltip, Popover, Menu, Modal, a confirm modal and a
 notification; notifications are no-drag and follow the reduced-motion CSS.
 
 ## Source and style ownership
@@ -81,4 +83,4 @@ and runtime initialization are validated in production builds, not inferred from
 
 `vite-plugins/styles.ts` supplies identical Sass injection and module naming to Vite and Vitest. `_mantine.scss` contains tools only, with breakpoints configured from `config/breakpoints.ts`; existing Core modules remain CSS. The build integration test in `vite-plugins/styles-pipeline.test.ts` compiles disposable fixtures through the project PostCSS configuration, including a separate preset expansion probe.
 
-`styles/ui.css` owns Mantine package styles, focus-ring color, reduced-motion and no-drag rules. Both palettes derive semantic colors from Core tokens; font families, default radius and breakpoints use the same application sources. `vite-plugins/visual-fallback.ts` loads the dynamic generator with Vite's module runner so application aliases resolve, and registers its dependencies for invalidation. It never ships a frozen copy of theme variables.
+`styles/ui.css` owns Mantine package styles, focus-ring color, reduced-motion and no-drag rules. The resolver applies the same nine Core color token mappings in both its light and dark sections to override Mantine's scheme-specific defaults. Font families, default radius and breakpoints use the same application sources. `vite-plugins/visual-fallback.ts` loads the dynamic generator with Vite's module runner so application aliases resolve, and registers its dependencies for invalidation. It never ships a frozen copy of theme variables.

@@ -9,6 +9,14 @@ import { renderWithProviders } from "~/testing/render";
 
 const uiStyles = readFileSync(join(import.meta.dirname, "ui.css"), "utf8");
 
+it("marks Select and Combobox dropdowns as no-drag in the global stylesheet", () => {
+  // jsdom's CSSOM drops Electron's -webkit-app-region declaration.
+  const selectors = [...uiStyles.matchAll(/([^{}]+)\{[^{}]*-webkit-app-region:\s*no-drag\s*;[^{}]*\}/g)]
+    .flatMap((match) => match[1].split(","))
+    .map((selector) => selector.trim());
+  expect(selectors).toEqual(expect.arrayContaining([".mantine-Select-dropdown", ".mantine-Combobox-dropdown"]));
+});
+
 it.each(["preference", "media"] as const)("disables loading Button transitions for the reduced-motion %s", (source) => {
   const view = renderWithProviders(<Button loading>Save</Button>);
   const button = screen.getByRole("button", { name: "Save" });

@@ -82,6 +82,15 @@ it.each([
   }
 });
 
+it("escapes script delimiters and line separators in inline configuration and preserves their values", () => {
+  const storageKey = "</script>\u2028\u2029";
+  const script = visualScript(undefined, { ...visualBootstrapConfig, storageKey });
+  expect(script).toContain("\\u003c/script>\\u2028\\u2029");
+  const host = { document, localStorage, frameworkVisualBootstrap: undefined as VisualBootstrapRecord | undefined };
+  runInNewContext(script, { window: host, document: document.implementation.createHTMLDocument() });
+  expect(host.frameworkVisualBootstrap?.storageKey).toBe(storageKey);
+});
+
 it("activates the dark semantic palette and a compiled Tailwind dark utility before hydration", async () => {
   const page = document.implementation.createHTMLDocument();
   const root = page.documentElement;

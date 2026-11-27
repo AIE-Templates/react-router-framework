@@ -155,6 +155,36 @@ it("updates the Mantine preference when another window changes the stored scheme
   expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
 });
 
+it("follows a fixed window appearance first reported by a live retry", () => {
+  let fixedAppearance: "dark" | undefined;
+  const manager = createVisualManager({
+    host: window,
+    nativeSource: {
+      prepaint: () => undefined,
+      connect: () => ({
+        read: () => ({ record: null, pending: false, fixedAppearance }),
+        push: async () => "ok",
+      }),
+    },
+  });
+  const subscribeStatus = vi.spyOn(manager, "subscribeStatus");
+  render(<ConnectedVisualTree manager={manager} />);
+  const probe = screen.getByRole("status");
+  const status = manager.getStatus();
+  expect(probe).toHaveAttribute("data-scheme", "auto");
+
+  fixedAppearance = "dark";
+  act(() => manager.actions.retry());
+  expect(manager.getStatus()).toBe(status);
+  expect(probe).toHaveAttribute("data-scheme", "dark");
+
+  fixedAppearance = undefined;
+  act(() => manager.actions.retry());
+  expect(probe).toHaveAttribute("data-scheme", "auto");
+  // A render from useVisualState can otherwise mask a subscription to the wrong store.
+  expect(subscribeStatus).not.toHaveBeenCalled();
+});
+
 it("restores current system preferences in Mantine after suspended effects and a failed save", () => {
   let matches = false;
   vi.stubGlobal("matchMedia", (query: string) => ({
