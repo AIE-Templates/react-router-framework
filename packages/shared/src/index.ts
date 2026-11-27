@@ -1,3 +1,4 @@
+export { PRODUCT_HEADER_HEIGHT } from "./product-window.ts";
 export { APP_ID, cookieSafe, storageKey, cookieName } from "./app-identity.ts";
 
 export { DESKTOP_PLATFORMS, type DesktopPlatform, type Shell, WEB_SHELL } from "./shell.ts";
@@ -10,6 +11,7 @@ export {
   type OverlayAppearance,
   type OverlayAppearanceDeclaration,
   parseOverlayDeclaration,
+  supportsOverlayAppearance,
   type OverlayAppearanceResult,
   isDesktopWindowState,
   parseDesktopBootstrap,

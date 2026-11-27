@@ -115,6 +115,8 @@ Read environment through `~/managers/environment/hooks`; interactive and drag DO
 
 Colors use Core semantic variables; viewport media widths come from `~/config/breakpoints`. CSS Modules use the components layer. `tests/architecture/styles.test.ts` checks real CSS/SCSS and TS/TSX source, including inline CSS strings. The window safety stylesheet stays inline and unlayered in `layouts/app-shell/chrome-safety.ts`.
 
+Custom layouts read `--app-window-safe-top`, `--app-window-safe-left` and `--app-window-safe-right` for native control clearance. The document reserves the top inset by default. To lay out edge to edge, put `data-window-safe-area-owner=""` on the visible element responsible for clearance. Mark drag surfaces with `getDragRegionProps()` and pointer targets with `getInteractiveProps()`. Removing or hiding the owner restores the document reservation. The geometry remains available in either mode.
+
 ## Host integration tests
 
 `src/host/api.integration.test.ts` exercises the real in-process BFF; the fake-client component test remains beside `src/app/lib/api.ts`. `src/host/root.integration.test.tsx` exercises the actual root loader and CSP nonce handoff. Host tests explicitly select Node or jsdom and import application code through `~/`; generated route argument types are inferred from the exported function. Pure component tests remain colocated.
