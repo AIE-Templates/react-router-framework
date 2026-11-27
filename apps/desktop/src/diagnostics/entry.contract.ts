@@ -41,7 +41,13 @@ export interface MainRunContext {
   exit: (code: number) => Promise<void>;
 }
 
+declare global {
+  /** Released by Playwright after installing the first-frame observation. */
+  var e2eReleaseFirstWindow: (() => void) | undefined;
+}
+
 export interface MainDiagnosticRun {
+  readonly firstWindowGate?: Promise<void>;
   /** What this process runs, and what the utility must be told (`utilityDebugEnv`, ~/debug-env.ts). */
   readonly modes: DiagnosticModes;
   /**

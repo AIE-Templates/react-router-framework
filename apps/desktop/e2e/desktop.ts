@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { realpathSync } from "node:fs";
 
-import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
+import { _electron as electron, expect, type ElectronApplication, type Page, test as base } from "@playwright/test";
 
 import { listProcesses } from "../scripts/child-run.ts";
 import {
@@ -42,6 +42,8 @@ export function targetProcesses(target: Target): number[] {
   return appProcesses(command, processDir);
 }
 
+type BeforeFirstWindow = (app: ElectronApplication) => Promise<void>;
+
 export interface Launched {
   app: ElectronApplication;
   page: Page;
@@ -59,7 +61,11 @@ export interface Launched {
  * (scripts/launch.ts); where it cannot, launchSpec has said so and Playwright adds `--no-sandbox`. A
  * launch that fails any of this is closed before the error reaches the caller.
  */
-export async function launch(target: Target, userDataDir: string): Promise<Launched> {
+export async function launch(
+  target: Target,
+  userDataDir: string,
+  beforeFirstWindow?: BeforeFirstWindow,
+): Promise<Launched> {
   const spec = launchSpec(target, "test", { userDataDir });
   await checkLaunchInputs(spec);
   const env: Record<string, string> = {};
@@ -72,7 +78,11 @@ export async function launch(target: Target, userDataDir: string): Promise<Launc
   const app = await electron.launch({
     executablePath: spec.command,
     // Exercise the real permission policy without accessing the user's camera or microphone.
-    args: [...spec.args, "--use-fake-device-for-media-stream"],
+    args: [
+      ...spec.args,
+      "--use-fake-device-for-media-stream",
+      ...(beforeFirstWindow ? ["--e2e-hold-first-window"] : []),
+    ],
     cwd: spec.cwd,
     env,
     // Playwright otherwise adds `--no-sandbox` on Linux by itself, silently.
@@ -93,6 +103,17 @@ export async function launch(target: Target, userDataDir: string): Promise<Launc
     });
     if (main.pid !== launcher.pid && (process.platform !== "win32" || main.startedAt === undefined))
       throw new Error("Cannot verify the identity of the launched Electron main process");
+    if (beforeFirstWindow) {
+      await expect.poll(() => app.evaluate(() => typeof globalThis.e2eReleaseFirstWindow)).toBe("function");
+      try {
+        await beforeFirstWindow(app);
+      } finally {
+        await app.evaluate(() => {
+          globalThis.e2eReleaseFirstWindow!();
+          globalThis.e2eReleaseFirstWindow = undefined;
+        });
+      }
+    }
     const page = await app.firstWindow();
     // Playwright reads the app's stdout itself, so the startup line is out of reach: the main process
     // of every non-release build exposes its profile instead (src/main.ts).
@@ -211,7 +232,7 @@ interface Fixtures {
   /** A fresh user data directory for this test, shared by its launches; deleted afterwards. */
   userDataDir: string;
   /** Launch the app for this test; every app launched through it is quit after the test. */
-  launchApp: () => Promise<Launched>;
+  launchApp: (beforeFirstWindow?: BeforeFirstWindow) => Promise<Launched>;
   /** The first launch, for tests that need only one. */
   desktop: Launched;
 }
@@ -234,8 +255,8 @@ export const test = base.extend<Fixtures & Options>({
   },
   launchApp: async ({ target, userDataDir }, provide) => {
     const launched: Launched[] = [];
-    await provide(async () => {
-      const app = await launch(target, userDataDir);
+    await provide(async (beforeFirstWindow) => {
+      const app = await launch(target, userDataDir, beforeFirstWindow);
       launched.push(app);
       return app;
     });
@@ -254,4 +275,4 @@ export const test = base.extend<Fixtures & Options>({
   },
 });
 
-export { expect } from "@playwright/test";
+export { expect };

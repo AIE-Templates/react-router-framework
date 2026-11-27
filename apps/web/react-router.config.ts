@@ -6,6 +6,7 @@ import { config as loadDotenv } from "dotenv";
 import { expand } from "dotenv-expand";
 
 import { CLIENT_DIGEST_FILE, clientDigest } from "../../build-tools/web-client-integrity.ts";
+import { WEB_RENDER_MODE_FILE } from "../../build-tools/web-render-mode.ts";
 
 // Load .env, if any, for `react-router dev` and `react-router build`: this file is the first thing they
 // load, so this config and server code (through Vite) see the same variables as server.ts does in
@@ -14,7 +15,8 @@ import { CLIENT_DIGEST_FILE, clientDigest } from "../../build-tools/web-client-i
 expand(loadDotenv({ path: join(import.meta.dirname, ".env"), quiet: true }));
 
 export default {
-  buildEnd({ reactRouterConfig: { buildDirectory } }) {
+  buildEnd({ reactRouterConfig: { buildDirectory, ssr } }) {
+    writeFileSync(join(buildDirectory, WEB_RENDER_MODE_FILE), ssr ? "ssr\n" : "spa\n");
     writeFileSync(join(buildDirectory, CLIENT_DIGEST_FILE), clientDigest(join(buildDirectory, "client")) + "\n");
   },
   appDirectory: "src/app",

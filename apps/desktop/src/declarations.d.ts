@@ -6,6 +6,9 @@
  */
 declare const DESKTOP_BUILD_PROFILE: "dev" | "test" | "release";
 
+/** The rendering mode of the Web app this main process hosts. */
+declare const DESKTOP_SSR: boolean;
+
 /**
  * The main process's build profile for the Playwright fixtures (e2e/desktop.ts), which evaluate it in
  * the main process; set by src/main.ts in dev and test builds, never in release builds.

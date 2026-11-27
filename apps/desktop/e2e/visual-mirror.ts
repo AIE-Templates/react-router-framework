@@ -19,3 +19,10 @@ export async function isSsrBuild(page: Page): Promise<boolean> {
     return ssr;
   });
 }
+
+/** The original document loader seed, before any renderer repair or revalidation. */
+export function firstVisualSeed(page: Page) {
+  return page.evaluate(
+    () => Reflect.get(window, "__reactRouterContext").state.loaderData.root.managersInitialState.visual,
+  );
+}

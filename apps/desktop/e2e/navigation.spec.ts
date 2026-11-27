@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { cookieName, storageKey, visualRecordKernel } from "@repo/shared";
 
 import { expect, quit, targetProcesses, test, waitForApp, type Launched } from "./desktop.ts";
-import { pushVisual, isSsrBuild } from "./visual-mirror.ts";
+import { firstVisualSeed, pushVisual, isSsrBuild } from "./visual-mirror.ts";
 
 interface NavigationProbe {
   externalUrls: string[];
@@ -192,6 +192,7 @@ async function expectWebReplicas(page: Page, raw: string | null, ssr: boolean) {
 async function expectRestoredTheme({ app, page }: Launched, raw: string, ssr: boolean) {
   expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
   expect(await page.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: raw, pending: false });
+  expect(await firstVisualSeed(page)).toEqual(ssr ? visualRecordKernel.decode(raw).record : undefined);
   await expectWebReplicas(page, raw, ssr);
   expect(await page.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap"))).toMatchObject({
     record: visualRecordKernel.decode(raw).record,

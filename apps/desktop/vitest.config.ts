@@ -5,7 +5,7 @@ const conditions = ["@repo/source", ...defaultServerConditions];
 
 export default defineConfig({
   // What vite.base.config.ts compiles into the bundles; source imported by unit tests needs it too.
-  define: { DESKTOP_BUILD_PROFILE: JSON.stringify("test") },
+  define: { DESKTOP_SSR: "true", DESKTOP_BUILD_PROFILE: JSON.stringify("test") },
   environments: { ssr: { resolve: { conditions } } },
   resolve: { conditions, tsconfigPaths: true },
   test: {

@@ -2,6 +2,9 @@
 // output and exit status. Dependency-free and erasable TypeScript with no `~/` imports: plain Node
 // imports this file from scripts/ as well.
 
+/** Present in the main bundle only when the matching Web build uses SSR. */
+export const VISUAL_COOKIE_FAILED_MESSAGE = "visual cookie update failed before first window";
+
 /** The Chromium switches that open a remote debugging endpoint, without their `--` prefix. */
 export const REMOTE_DEBUGGING_SWITCHES = ["remote-debugging-port", "remote-debugging-pipe"] as const;
 export type RemoteDebuggingSwitch = (typeof REMOTE_DEBUGGING_SWITCHES)[number];
