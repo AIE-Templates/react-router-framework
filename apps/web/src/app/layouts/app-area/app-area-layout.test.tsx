@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
-import { getInteractiveProps } from "~/managers/environment/dom-props";
+import { getInteractiveProps } from "~/platform/chrome-adapter/dom-props";
 import { AppRoot } from "~/providers/app-root";
 
 import { AppAreaLayout } from "./app-area-layout";
