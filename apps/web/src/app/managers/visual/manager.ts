@@ -195,8 +195,8 @@ export function createVisualManager({
     if (latestPush !== operation) return;
     latestPush = undefined;
     storage.native = result;
-    if (result === "unavailable") publishStatus();
-    else reconcile("event", target);
+    if (result === "ok") reconcile("event", target);
+    else publishStatus();
   }
   function available(store: keyof typeof storage) {
     return storage[store] !== "absent" && storage[store] !== "unavailable";
