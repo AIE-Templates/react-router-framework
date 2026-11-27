@@ -502,9 +502,10 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     }
     const next = await launchApp(async (app) => {
       await app.evaluate(({ app: electronApp }) => {
-        electronApp.once("browser-window-created", (_event, win) => {
-          Reflect.set(globalThis, "e2eInitialBackground", win.getBackgroundColor().toLowerCase());
-        });
+        // Read after the constructor applies its options; Windows emits the event before that.
+        electronApp.once("browser-window-created", (_event, win) =>
+          queueMicrotask(() => Reflect.set(globalThis, "e2eInitialBackground", win.getBackgroundColor().toLowerCase())),
+        );
       });
       await app.context().addInitScript((keyName) => {
         if (location.protocol !== "app:" || window.top !== window) return;

@@ -349,6 +349,7 @@ test("ten sibling popups stagger on the display and share one system theme liste
 });
 
 test("a fullscreen child receives its own SSR window state on reload", async ({ desktop: { app, page } }) => {
+  test.skip(!(await isSsrBuild(page)), "SPA documents are static and carry no per-window state");
   const opened = app.waitForEvent("window");
   await page.evaluate(() => {
     window.open("/?fullscreen", "_blank", "noopener");
