@@ -215,13 +215,14 @@ describe("window chrome bridge", () => {
         reason: "appearance-owner-conflict",
       });
       declare("shell", 4, null);
+      expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#17191d", symbolColor: "#f3f4f6", height: 0 });
       declare("other", 5, { color: "#abcdef" });
       expect(declare("shell", 6, null)).toMatchObject({ appearance: { color: "#abcdef" } });
       expect(declare("other", 5, null)).toMatchObject({ status: "rejected" });
       expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#17191d");
       win.webContents.emit(retireEvent);
       expect(declare("other", 7, { height: 40 })).toMatchObject({ reason: "stale-document" });
-      expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#17191d", symbolColor: "#f3f4f6", height: 48 });
+      expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#17191d", symbolColor: "#f3f4f6" });
       dispose();
     },
   );

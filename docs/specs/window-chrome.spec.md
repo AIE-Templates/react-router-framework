@@ -12,12 +12,7 @@ Unrecognized or missing `DESKTOP_CHROME_MODE` requests the default. There is no 
 
 ## Appearance and height (CHR-02)
 
-| Platform         | Native-overlay configuration                                                                                                     |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| macOS            | Hidden title bar, overlay height 48; preserve native traffic-light size and horizontal placement; no custom trafficLightPosition |
-| Windows          | Hidden title bar and overlay height 48; web content 48 CSS px plus a separate 1px divider                                        |
-| Linux            | Hidden title bar and overlay height 36; web header defaults to 3rem and respects WCO geometry                                    |
-| System-decorated | No custom titleBarStyle or overlay; title bar remains outside page content                                                       |
+The window creation policy accepts an optional `overlayHeight`. An omitted height uses Electron’s system default on all three platforms. The desktop composition root explicitly requests the demo product’s `PRODUCT_HEADER_HEIGHT` (48). macOS uses native traffic-light placement. Windows and Linux also accept runtime overrides. With system decoration the host omits all overlay options.
 
 These alignment values assume default fonts and 100% page zoom. Electron API units must not be equated with zoomed CSS pixels. Do not rescale WCO/DOM coordinates using display scale or derive viewport coordinates by simply dividing screen DIP by page zoom.
 
@@ -29,7 +24,7 @@ Shared contracts are browser-safe with no Node or Electron runtime dependency. B
 
 Window state contains monotonically increasing `revision`, `focused`, `maximized` and `fullscreen`. Overlay appearance contains optional `color`, `symbolColor` and `height`; results are applied with accepted appearance, unsupported with reason, or rejected with reason.
 
-`AppEnvironment` contains effective shell, mode, enhancement status (`pending`, `available`, `unavailable`), optional window state, and bounded diagnostics (`invalid-bootstrap`, `host-mismatch`, `bridge-failed`). Missing window state means unknown, not an invented all-false state. Diagnostics reveal differing field names, not full payloads.
+`AppEnvironment` contains effective shell, mode, enhancement status (`pending`, `available`, `unavailable`), the live `canSetOverlayAppearance` capability, optional window state, and bounded diagnostics (`invalid-bootstrap`, `host-mismatch`, `bridge-failed`). Missing window state means unknown, not an invented all-false state. Diagnostics reveal differing field names, not full payloads.
 
 The runtime provides `getSnapshot()`, `getServerSnapshot()`, `subscribe(listener)`, `connect(bridge)` and `declareOverlayAppearance(owner, appearance)`. Subscriptions/connections return cleanup functions. Construction does not access the DOM or call the bridge. Snapshot references remain stable without state changes, supporting `useSyncExternalStore`.
 
@@ -47,11 +42,11 @@ Appearance updates allow only color, symbolColor and height, with at least one v
 
 The host shares one system theme listener across open windows. Each window following the system applies the update with its own appearance overrides. Main issues one visual token to the current trusted document for theme and declaration writes. A committed main-document navigation or renderer exit retires the token. Same-document navigation keeps it.
 
-The theme layer owns window background and default overlay colors. Appearance writes only change the overlay layer and never change the background. Omitted colors inherit the current theme and an omitted height inherits the window policy height. System or explicit theme changes retain all declared overrides. `declareOverlayAppearance` accepts an owner token, increasing revision and a complete appearance snapshot or null release. Removed fields return to their current defaults; stale revisions and conflicting active owners are rejected. An old owner release cannot clear another owner. A committed main-document navigation or renderer exit clears the window’s override; cancelled or failed navigation attempts retain the current document state. Each window’s App Shell owns its overlay declaration. Components observe window state through `useAppEnvironment()`. Every IPC checks the registered window, current main frame and trusted app URL; lifecycle cleanup invalidates listeners, tokens and asynchronous results.
+The theme layer owns window background and default overlay colors. Appearance writes only change the overlay layer and never change the background. Omitted colors inherit the current theme and an omitted height inherits the window policy height. System or explicit theme changes retain all declared overrides. `declareOverlayAppearance` accepts an owner token, increasing revision and a complete appearance snapshot or null release. Removed fields return to their current defaults; stale revisions and conflicting active owners are rejected. An old owner release cannot clear another owner. A committed main-document navigation or renderer exit clears the window’s override; cancelled or failed navigation attempts retain the current document state. A layout can opt into a window-scoped declaration through `useOverlayAppearance()`; the stock App Shell uses it for its optional override. Components observe window state through `useAppEnvironment()`. Every IPC checks the registered window, current main frame and trusted app URL; lifecycle cleanup invalidates listeners, tokens and asynchronous results.
 
 ## Geometry and interaction (CHR-05)
 
-WCO CSS environment variables supply safety geometry. Root fallback and fused handoff follow LAY-04 and LAY-05 in [the layout specification](./layout.spec.md). A custom area shares the shell’s native control clearance and drag handling through `WindowLayout` and `WindowColumn`. Do not invent measured button rectangles when geometry is unavailable.
+The browser exposes WCO geometry independently of the preload and layout. The environment stylesheet provides `--app-window-area-{x,y,width,height}` and `--app-window-safe-{top,left,right}` in physical viewport CSS coordinates. A regular browser tab has zero insets. Any UI can read these values directly, including before hydration. The document’s optional fallback and the stock shell’s fusion policy are consumers described in LAY-04 and LAY-05 in [the layout specification](./layout.spec.md).
 
 `getDragRegionProps()` adds `data-window-drag`; `getInteractiveProps()` adds `data-window-interactive`, preserving caller props. Drag regions are explicit. Buttons, inputs and portal surfaces require no-drag. A transparent full-window portal root must not erase every drag region. Native drag, double-click, system menu, resize and Snap behavior use the native path rather than JavaScript window-manager emulation.
 

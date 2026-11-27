@@ -10,23 +10,25 @@ export interface ChromePolicy {
 }
 
 export function chromeAppearance(dark: boolean): OverlayAppearance & { color: string } {
-  return { color: dark ? "#17191d" : "#ffffff", symbolColor: dark ? "#f3f4f6" : "#202124", height: 36 };
+  return { color: dark ? "#17191d" : "#ffffff", symbolColor: dark ? "#f3f4f6" : "#202124" };
 }
 
 /** Supported desktop platforms use native overlay unless system decoration is requested. */
 export function resolveChromePolicy({
   platform,
+  overlayHeight,
   requestedMode = "native-overlay",
   themePreference = VISUAL_DEFAULTS.colorScheme,
   darkColors = false,
 }: {
   platform: string;
   requestedMode?: ChromeMode;
+  overlayHeight?: number;
   themePreference?: VisualPreferences["colorScheme"];
   darkColors?: boolean;
 }): ChromePolicy {
   const dark = themePreference === "dark" || (themePreference !== "light" && darkColors);
-  const appearance = { ...chromeAppearance(dark), height: platform === "win32" ? 48 : 36 };
+  const appearance = { ...chromeAppearance(dark), ...(overlayHeight !== undefined && { height: overlayHeight }) };
   const base = {
     platform,
     requestedMode,
@@ -47,12 +49,14 @@ export function chromeWindowOptions(policy: ChromePolicy): {
   titleBarOverlay?: boolean | OverlayAppearance;
 } {
   if (policy.resolvedMode !== "native-overlay") return { backgroundColor: policy.backgroundColor };
+  const height = policy.appearance.height;
+  const macOverlay = height === undefined ? true : { height };
   return {
     backgroundColor: policy.backgroundColor,
     titleBarStyle: "hidden",
     // Electron 45's WindowButtonsProxy centers the actual AppKit button frames in this height.
     // Keep native margins: trafficLightPosition supplies a y margin that can disable that centering.
     // https://github.com/electron/electron/blob/v45.0.0/shell/browser/ui/cocoa/window_buttons_proxy.mm
-    titleBarOverlay: policy.platform === "darwin" ? { height: 48 } : policy.appearance,
+    titleBarOverlay: policy.platform === "darwin" ? macOverlay : policy.appearance,
   };
 }

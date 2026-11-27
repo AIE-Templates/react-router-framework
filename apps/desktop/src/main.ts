@@ -9,7 +9,13 @@ import {
   type CookieIpcOptions,
 } from "@repo/electron-cookies/main";
 import type { PortFetch } from "@repo/port-fetch";
-import { DESKTOP_PREFS_IPC, shellFromEnv, type DesktopBootstrap, type DesktopRequest } from "@repo/shared";
+import {
+  DESKTOP_PREFS_IPC,
+  PRODUCT_HEADER_HEIGHT,
+  shellFromEnv,
+  type DesktopBootstrap,
+  type DesktopRequest,
+} from "@repo/shared";
 import { app, type BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session } from "electron";
 
 import type { DebugEnv } from "~/debug-env.contract.ts";
@@ -300,6 +306,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
   const currentChromePolicy = () =>
     resolveChromePolicy({
       platform: shell.platform,
+      overlayHeight: PRODUCT_HEADER_HEIGHT,
       requestedMode: requested === "system-decorated" || requested === "custom-controls" ? requested : "native-overlay",
       themePreference: visualMirror.colorScheme(),
       darkColors: nativeTheme.shouldUseDarkColors,

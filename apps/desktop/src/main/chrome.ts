@@ -6,6 +6,7 @@ import {
   type OverlayAppearance,
   type OverlayAppearanceResult,
   parseOverlayDeclaration,
+  supportsOverlayAppearance,
 } from "@repo/shared";
 import { type IpcMainEvent, type IpcMainInvokeEvent, nativeTheme, type WebFrameMain } from "electron";
 
@@ -97,7 +98,7 @@ export function installWindowChrome(
     const active = subscription;
     if (trusted(event) && active && active.token === token && active.frame === event.senderFrame) clear();
   };
-  const overlayAvailable = policy.resolvedMode === "native-overlay" && policy.platform !== "darwin";
+  const overlayAvailable = supportsOverlayAppearance(policy.platform, policy.resolvedMode);
   const isDark = () => {
     if (fixedAppearance) return fixedAppearance === "dark";
     const preference = mirror.colorScheme();
@@ -106,14 +107,18 @@ export function installWindowChrome(
   const applyOverlay = (): OverlayAppearanceResult => {
     if (!overlayAvailable) return { status: "unsupported", reason: "native-overlay-appearance-unavailable" };
     const dark = isDark();
-    const merged = { ...chromeAppearance(dark), height: policy.appearance.height, ...override };
+    const merged = { ...policy.appearance, ...chromeAppearance(dark), ...override };
     try {
       if (
         merged.color !== appearance.color ||
         merged.symbolColor !== appearance.symbolColor ||
         merged.height !== appearance.height
-      )
-        win.setTitleBarOverlay(merged);
+      ) {
+        // Electron 45 keeps omitted fields on updates. Zero restores system sizing on Windows/Linux.
+        win.setTitleBarOverlay(
+          appearance.height !== undefined && merged.height === undefined ? { ...merged, height: 0 } : merged,
+        );
+      }
       appearance = merged;
       return { status: "applied", appearance: { ...appearance } };
     } catch {

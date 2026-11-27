@@ -95,7 +95,7 @@ function nativeOptions({ session, preloadPath, chrome, appVersion, fixedAppearan
           fixedAppearance
             ? {
                 ...policy,
-                appearance: { ...chromeAppearance(fixedAppearance === "dark"), height: policy.appearance.height },
+                appearance: { ...policy.appearance, ...chromeAppearance(fixedAppearance === "dark") },
                 backgroundColor: chromeAppearance(fixedAppearance === "dark").color,
               }
             : policy,
