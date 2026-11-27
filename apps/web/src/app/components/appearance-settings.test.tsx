@@ -1,3 +1,4 @@
+import { MantineThemeProvider } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { visualRecordKernel } from "@repo/shared";
@@ -34,18 +35,26 @@ afterEach(() => {
   document.cookie = visualCookie.name + "=; Path=/; Max-Age=0";
 });
 
+function renderFloatingSettings(manager = createVisualManager({ host: window })) {
+  // jsdom gives the trigger and viewport zero size, so Floating UI would hide the open overlay.
+  const floatingDefaults = { defaultProps: { hideDetached: false } };
+  render(
+    <VisualManagerContext.Provider value={manager}>
+      <AppUiProvider>
+        <MantineThemeProvider theme={{ components: { Menu: floatingDefaults, Tooltip: floatingDefaults } }}>
+          <VisualSettings />
+        </MantineThemeProvider>
+      </AppUiProvider>
+    </VisualManagerContext.Provider>,
+  );
+}
+
 // Focus return after the menu item unmounts depends on browser timing; jsdom cannot observe it.
 it("confirms a reset from the menu and shows a notification", async () => {
   const user = userEvent.setup();
   const manager = createVisualManager({ host: window });
   act(() => manager.actions.setDirection("rtl"));
-  render(
-    <VisualManagerContext.Provider value={manager}>
-      <AppUiProvider>
-        <VisualSettings />
-      </AppUiProvider>
-    </VisualManagerContext.Provider>,
-  );
+  renderFloatingSettings(manager);
   await user.click(screen.getByRole("button", { name: "Preview options" }));
   await user.click(await screen.findByRole("menuitem", { name: "Reset with confirmation" }));
   expect(await screen.findByRole("dialog", { name: "Reset appearance?" })).toHaveTextContent(
@@ -60,13 +69,7 @@ it("confirms a reset from the menu and shows a notification", async () => {
 
 it("describes the direct reset as restoring defaults", async () => {
   const user = userEvent.setup();
-  render(
-    <VisualManagerContext.Provider value={createVisualManager({ host: window })}>
-      <AppUiProvider>
-        <VisualSettings />
-      </AppUiProvider>
-    </VisualManagerContext.Provider>,
-  );
+  renderFloatingSettings();
   await user.hover(screen.getByRole("button", { name: "Reset appearance" }));
   expect(await screen.findByRole("tooltip")).toHaveTextContent("Restore defaults");
 });
