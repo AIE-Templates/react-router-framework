@@ -1,43 +1,39 @@
 import type { ChromeMode, WindowChromeBridge, Shell } from "@repo/shared";
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
-import { EnvironmentContext } from "~/managers/environment/context";
-import { createWindowChromeRuntime } from "~/managers/environment/runtime";
+import { EnvironmentProvider } from "~/managers/environment/environment-provider";
 import type { ManagersInitialState } from "~/managers/initial-state";
 import { ManagersRegistry } from "~/managers/registry";
+import { ChromeAdapterProvider } from "~/platform/chrome-adapter/chrome-adapter-provider";
 import { desktopVisualSource } from "~/platform/electron/visual-source";
-
-declare global {
-  interface Window {
-    desktop?: WindowChromeBridge;
-  }
-}
 
 /** Initial environment seeds hydration only; a confirmed preload identity survives route revalidation. */
 export function AppRoot({
   shell,
   mode,
   fullscreen,
+  chromeBridge,
   children,
   managersInitialState,
 }: {
   shell?: Shell;
   mode?: ChromeMode;
   fullscreen?: boolean;
+  chromeBridge?: WindowChromeBridge | null;
   children: ReactNode;
   managersInitialState?: ManagersInitialState;
 }) {
-  const [runtime] = useState(() => createWindowChromeRuntime({ shell, mode, fullscreen }));
-  useEffect(() => runtime.connect(window.desktop), [runtime]);
   return (
-    <EnvironmentContext.Provider value={runtime}>
-      <ManagersRegistry
-        nativeSource={desktopVisualSource}
-        initialShell={shell?.kind}
-        initialState={managersInitialState}
-      >
-        {children}
-      </ManagersRegistry>
-    </EnvironmentContext.Provider>
+    <ChromeAdapterProvider initial={{ shell, mode, fullscreen }} bridge={chromeBridge}>
+      <EnvironmentProvider>
+        <ManagersRegistry
+          nativeSource={desktopVisualSource}
+          initialShell={shell?.kind}
+          initialState={managersInitialState}
+        >
+          {children}
+        </ManagersRegistry>
+      </EnvironmentProvider>
+    </ChromeAdapterProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { WINDOW_CHROME_CSS } from "~/managers/environment/window-geometry";
+import { WINDOW_CHROME_CSS } from "~/platform/chrome-adapter/window-geometry";
 
 // The stock shell shares its primary header between fused styles and drawer anchoring.
 const primaryPath =

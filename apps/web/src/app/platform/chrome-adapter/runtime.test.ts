@@ -1,7 +1,7 @@
 import type { WindowChromeBridge, DesktopWindowState, OverlayAppearanceResult } from "@repo/shared";
 import { describe, expect, it, vi } from "vitest";
 
-import { createWindowChromeRuntime } from "./runtime";
+import { createChromeAdapter } from "./runtime";
 
 function bridge() {
   let listener: ((state: DesktopWindowState) => void) | undefined;
@@ -26,24 +26,47 @@ function bridge() {
   return {
     value,
     release,
-    emit: (revision: number) => listener?.({ revision, focused: true, maximized: false, fullscreen: false }),
+    emit: (revision: number, fullscreen = false) =>
+      listener?.({ revision, focused: true, maximized: false, fullscreen }),
   };
 }
 
 describe("document window chrome runtime", () => {
   it("preserves initial mode and fullscreen facts without requiring a host request protocol", () => {
-    const runtime = createWindowChromeRuntime({
+    const runtime = createChromeAdapter({
       shell: { kind: "desktop", platform: "darwin", osVersion: "26" },
       mode: "native-overlay",
       fullscreen: true,
     });
-    expect(runtime.getServerSnapshot()).toMatchObject({ mode: "native-overlay", fullscreen: true });
+    expect(runtime.getServerSnapshot().chrome).toMatchObject({ mode: "native-overlay", fullscreen: true });
     runtime.connect(bridge().value);
-    expect(runtime.getSnapshot().diagnostic).toBeUndefined();
+    expect(runtime.getSnapshot().chrome.diagnostic).toBeUndefined();
+  });
+
+  it("keeps the server seed stable and retires it on disconnect", () => {
+    const adapter = createChromeAdapter({ fullscreen: true });
+    const server = adapter.getServerSnapshot();
+    const first = bridge();
+    const stop = adapter.connect(first.value);
+    const waiting = adapter.getSnapshot();
+    expect(adapter.getSnapshot()).toBe(waiting);
+    expect(waiting.chrome.fullscreen).toBe(true);
+    first.emit(1);
+    expect(adapter.getSnapshot().chrome.fullscreen).toBe(false);
+    stop();
+    expect(adapter.getSnapshot().chrome.fullscreen).toBeUndefined();
+    const next = bridge();
+    adapter.connect(next.value);
+    first.emit(2, true);
+    expect(adapter.getSnapshot().chrome.fullscreen).toBeUndefined();
+    next.emit(1, true);
+    expect(adapter.getSnapshot().chrome.fullscreen).toBe(true);
+    expect(adapter.getServerSnapshot()).toBe(server);
+    expect(server.chrome.fullscreen).toBe(true);
   });
 
   it.each(["darwin", "win32", "linux"] as const)("reports live overlay capability on %s", (platform) => {
-    const runtime = createWindowChromeRuntime();
+    const runtime = createChromeAdapter();
     const host = bridge().value;
     const stop = runtime.connect({
       ...host,
@@ -53,43 +76,47 @@ describe("document window chrome runtime", () => {
         shell: { kind: "desktop", platform, osVersion: "test" },
       },
     });
-    expect(runtime.getSnapshot().canSetOverlayAppearance).toBe(platform !== "darwin");
+    expect(runtime.getSnapshot().chrome.canSetOverlayAppearance).toBe(platform !== "darwin");
     stop();
-    expect(runtime.getSnapshot().canSetOverlayAppearance).toBe(false);
+    expect(runtime.getSnapshot().chrome.canSetOverlayAppearance).toBe(false);
   });
 
   it("lets preload replace mismatched SSR facts and reports only differing field names", () => {
-    const runtime = createWindowChromeRuntime({ shell: { kind: "desktop", platform: "win32", osVersion: "10" } });
+    const runtime = createChromeAdapter({ shell: { kind: "desktop", platform: "win32", osVersion: "10" } });
     runtime.connect(bridge().value);
     expect(runtime.getSnapshot()).toMatchObject({
       shell: { platform: "darwin", osVersion: "26" },
-      mode: "native-overlay",
-      diagnostic: "host-mismatch",
-      diagnosticFields: ["platform", "osVersion", "mode"],
+      chrome: {
+        mode: "native-overlay",
+        diagnostic: "host-mismatch",
+        diagnosticFields: ["platform", "osVersion", "mode"],
+      },
     });
   });
 
   it("keeps the serialized identity until connect and retains the server snapshot", () => {
-    const runtime = createWindowChromeRuntime();
+    const runtime = createChromeAdapter();
     const initial = runtime.getServerSnapshot();
     const host = bridge();
     expect(runtime.getSnapshot().shell.kind).toBe("web");
     runtime.connect(host.value);
     expect(runtime.getSnapshot()).toMatchObject({
       shell: { kind: "desktop" },
-      enhancement: "available",
-      mode: "native-overlay",
+      chrome: {
+        enhancement: "available",
+        mode: "native-overlay",
+      },
     });
     expect(runtime.getServerSnapshot()).toBe(initial);
     expect(initial.shell.kind).toBe("web");
   });
 
   it("does not call invalid or ordinary web bridges and reports unsupported writes", async () => {
-    const runtime = createWindowChromeRuntime();
+    const runtime = createChromeAdapter();
     const host = bridge();
     runtime.connect({ ...host.value, bootstrap: null });
     expect(host.value.subscribeWindowState).not.toHaveBeenCalled();
-    expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
+    expect(runtime.getSnapshot().chrome).toMatchObject({ enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
     expect(await runtime.declareOverlayAppearance("shell", { color: "#ffffff" })).toMatchObject({
       status: "unsupported",
     });
@@ -98,31 +125,31 @@ describe("document window chrome runtime", () => {
   });
 
   it("rejects a bridge missing the window-scoped declaration method before subscribing", () => {
-    const runtime = createWindowChromeRuntime();
+    const runtime = createChromeAdapter();
     const host = bridge();
     Reflect.deleteProperty(host.value, "declareOverlayAppearance");
     runtime.connect(host.value);
-    expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
+    expect(runtime.getSnapshot().chrome).toMatchObject({ enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
     expect(host.value.subscribeWindowState).not.toHaveBeenCalled();
   });
 
   it("drops stale revisions and old document callbacks, resets revision on reconnect, and releases subscriptions", () => {
-    const runtime = createWindowChromeRuntime();
+    const runtime = createChromeAdapter();
     const old = bridge();
     const notify = vi.fn<() => void>();
     const unsubscribe = runtime.subscribe(notify);
     const stop = runtime.connect(old.value);
     old.emit(10);
     old.emit(9);
-    expect(runtime.getSnapshot().windowState?.revision).toBe(10);
+    expect(runtime.getSnapshot().chrome.windowState?.revision).toBe(10);
     stop();
     expect(old.release).toHaveBeenCalledOnce();
     const current = bridge();
     runtime.connect(current.value);
-    expect(runtime.getSnapshot().windowState).toBeUndefined();
+    expect(runtime.getSnapshot().chrome.windowState).toBeUndefined();
     current.emit(1);
     old.emit(20);
-    expect(runtime.getSnapshot().windowState?.revision).toBe(1);
+    expect(runtime.getSnapshot().chrome.windowState?.revision).toBe(1);
     unsubscribe();
     notify.mockClear();
     current.emit(2);
@@ -130,17 +157,17 @@ describe("document window chrome runtime", () => {
   });
 
   it("keeps a failed bridge unavailable without blocking the initial document", () => {
-    const runtime = createWindowChromeRuntime({ shell: { kind: "desktop", platform: "win32", osVersion: "10" } });
+    const runtime = createChromeAdapter({ shell: { kind: "desktop", platform: "win32", osVersion: "10" } });
     const host = bridge();
     host.value.subscribeWindowState = () => {
       throw new Error("disconnected");
     };
     expect(() => runtime.connect(host.value)).not.toThrow();
-    expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "bridge-failed" });
+    expect(runtime.getSnapshot().chrome).toMatchObject({ enhancement: "unavailable", diagnostic: "bridge-failed" });
   });
 });
 
-it("preserves declaration order when a provider recreates its runtime on the same document bridge", async () => {
+it.each(["direct", "cached wrapper"])("preserves declaration order across remounts with a %s bridge", async (kind) => {
   const host = bridge();
   let acceptedRevision = 0;
   host.value.declareOverlayAppearance = async ({ revision, appearance }) => {
@@ -148,13 +175,14 @@ it("preserves declaration order when a provider recreates its runtime on the sam
     acceptedRevision = revision;
     return { status: "applied", appearance: appearance ?? { height: 48 } };
   };
-  const first = createWindowChromeRuntime();
-  const disconnect = first.connect(host.value);
+  const documentBridge = kind === "direct" ? host.value : { ...host.value };
+  const first = createChromeAdapter();
+  const disconnect = first.connect(documentBridge);
   await first.declareOverlayAppearance("first", { height: 40 });
   await first.declareOverlayAppearance("first", null);
   disconnect();
-  const replacement = createWindowChromeRuntime();
-  const release = replacement.connect(host.value);
+  const replacement = createChromeAdapter();
+  const release = replacement.connect(documentBridge);
   expect(await replacement.declareOverlayAppearance("replacement", { height: 50 })).toMatchObject({
     status: "applied",
   });
@@ -162,7 +190,7 @@ it("preserves declaration order when a provider recreates its runtime on the sam
 });
 
 it("makes old connection cleanup harmless after a newer connection has taken over", () => {
-  const runtime = createWindowChromeRuntime();
+  const runtime = createChromeAdapter();
   const first = bridge();
   const stopFirst = runtime.connect(first.value);
   const second = bridge();
@@ -170,28 +198,28 @@ it("makes old connection cleanup harmless after a newer connection has taken ove
   stopFirst();
   stopFirst();
   second.emit(1);
-  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "available", windowState: { revision: 1 } });
+  expect(runtime.getSnapshot().chrome).toMatchObject({ enhancement: "available", windowState: { revision: 1 } });
   expect(second.release).not.toHaveBeenCalled();
   stopSecond();
   expect(second.release).toHaveBeenCalledOnce();
-  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", windowState: undefined });
+  expect(runtime.getSnapshot().chrome).toMatchObject({ enhancement: "unavailable", windowState: undefined });
 });
 
 it("contains a bridge cleanup failure and permits a fresh connection", () => {
-  const runtime = createWindowChromeRuntime();
+  const runtime = createChromeAdapter();
   const host = bridge();
   host.release.mockImplementationOnce(() => {
     throw new Error("bridge lost during cleanup");
   });
   const stop = runtime.connect(host.value);
   expect(stop).not.toThrow();
-  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "unavailable", diagnostic: "bridge-failed" });
+  expect(runtime.getSnapshot().chrome).toMatchObject({ enhancement: "unavailable", diagnostic: "bridge-failed" });
   runtime.connect(bridge().value);
-  expect(runtime.getSnapshot()).toMatchObject({ enhancement: "available", diagnostic: undefined });
+  expect(runtime.getSnapshot().chrome).toMatchObject({ enhancement: "available", diagnostic: undefined });
 });
 
 it("releases a submitted owner even while its declaration response is still pending", async () => {
-  const runtime = createWindowChromeRuntime();
+  const runtime = createChromeAdapter();
   const host = bridge();
   let finish!: (result: OverlayAppearanceResult) => void;
   const applied: OverlayAppearanceResult = { status: "applied", appearance: { height: 40 } };
