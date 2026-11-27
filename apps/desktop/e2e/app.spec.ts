@@ -21,6 +21,37 @@ test("a reload serves and hydrates the document again", async ({ desktop: { page
   expect(await page.evaluate(() => typeof window.desktop?.subscribeWindowState)).toBe("function");
 });
 
+test("a custom layout can own native clearance independently of its drag region", async ({ desktop: { page } }) => {
+  await page.goto("app://app/no-such-page");
+  await waitForApp(page);
+  const fallback = page.locator(".root-chrome-fallback");
+  const handle = await page.locator(".root-content").evaluateHandle((content) => {
+    const wrapper = document.createElement("section");
+    const surface = document.createElement("header");
+    surface.setAttribute("data-window-drag", "");
+    wrapper.append(surface);
+    content.append(wrapper);
+    return wrapper;
+  });
+  try {
+    await expect(fallback).not.toHaveCSS("display", "none");
+    await handle.evaluate((el) => el.firstElementChild!.setAttribute("data-window-safe-area-owner", ""));
+    await expect(fallback).toHaveCSS("display", "none");
+    await handle.evaluate((el) => {
+      el.hidden = true;
+    });
+    await expect(fallback).not.toHaveCSS("display", "none");
+    await handle.evaluate((el) => {
+      el.hidden = false;
+    });
+    await expect(fallback).toHaveCSS("display", "none");
+  } finally {
+    await handle.evaluate((el) => el.remove());
+    await handle.dispose();
+  }
+  await expect(fallback).not.toHaveCSS("display", "none");
+});
+
 function startPendingRequest(page: Page, owner: "old" | "new") {
   return page.evaluateHandle((body) => {
     const controller = new AbortController();

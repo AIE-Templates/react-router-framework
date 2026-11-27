@@ -7,9 +7,11 @@ describe("chrome policy", () => {
     const policy = resolveChromePolicy({ platform });
     expect(policy).toMatchObject({ requestedMode: "native-overlay", resolvedMode: "native-overlay" });
     expect(policy.fallbackReason).toBeUndefined();
-    expect(chromeWindowOptions(policy)).toMatchObject({
+    const overlay = chromeWindowOptions(policy).titleBarOverlay;
+    expect(overlay).toEqual(platform === "darwin" ? true : { color: "#ffffff", symbolColor: "#202124" });
+    expect(chromeWindowOptions(resolveChromePolicy({ platform, overlayHeight: 48 }))).toMatchObject({
       titleBarStyle: "hidden",
-      titleBarOverlay: { height: platform === "linux" ? 36 : 48 },
+      titleBarOverlay: { height: 48 },
     });
     expect(resolveChromePolicy({ platform, requestedMode: "system-decorated" }).resolvedMode).toBe("system-decorated");
   });
@@ -24,7 +26,7 @@ describe("chrome policy", () => {
     });
   });
   it("centers native mac controls in the 48-unit header without assuming a button size or position", () => {
-    const policy = resolveChromePolicy({ platform: "darwin", themePreference: "dark" });
+    const policy = resolveChromePolicy({ platform: "darwin", overlayHeight: 48, themePreference: "dark" });
     expect(chromeWindowOptions(policy)).toEqual({
       backgroundColor: "#17191d",
       titleBarStyle: "hidden",

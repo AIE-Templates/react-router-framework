@@ -19,6 +19,17 @@ async function setPref(page: Page, key: string, value: string | null): Promise<u
   ] as const);
 }
 
+// CDP can lose no-store response bodies after the hydrated Router consumes them.
+function committedPreference(page: Page, key: string) {
+  return page.evaluate((name) => {
+    const router: { state: { loaderData: { root: { desktop: DesktopRequest } } } } = Reflect.get(
+      window,
+      "__reactRouterDataRouter",
+    );
+    return router.state.loaderData.root.desktop.prefs[name];
+  }, key);
+}
+
 /**
  * Whether the server rendered the preference: the reloaded document's serialized loader data (the
  * root loader returns the desktop facts, preferences included) and a fresh SSR document request.
@@ -98,11 +109,14 @@ test("open peer windows revalidate on preference writes and removals", async ({ 
     [page, peer, VALUE],
     [peer, page, null],
   ] as const) {
+    // Direct bridge writes notify peers only. Seed the original writer's loader before testing removal.
+    if (value === null) await reload(receiver);
+    await expect.poll(() => committedPreference(receiver, KEY)).toBe(value === null ? VALUE : undefined);
     const updated = receiver.waitForResponse((response) => new URL(response.url()).pathname.endsWith(".data"));
     expect(await setPref(source, KEY, value)).toEqual({ status: "applied" });
     const response = await updated;
     expect(response.ok()).toBe(true);
-    expect((await response.text()).includes(VALUE)).toBe(value !== null);
+    await expect.poll(() => committedPreference(receiver, KEY)).toBe(value ?? undefined);
   }
 });
 
@@ -132,19 +146,7 @@ test("a burst of preference changes reaches the peer's loaders with the final va
       if (update.status !== "applied") throw new Error("Preference rejected");
     }
   }, final);
-  // Read the data the peer's hydrated Router actually committed. CDP can lose an earlier
-  // no-store response body even after the Router consumed it.
-  await expect
-    .poll(() =>
-      peer.evaluate(() => {
-        const router: { state: { loaderData: { root: { desktop: DesktopRequest } } } } = Reflect.get(
-          window,
-          "__reactRouterDataRouter",
-        );
-        return router.state.loaderData.root.desktop.prefs.burst;
-      }),
-    )
-    .toBe(final);
+  await expect.poll(() => committedPreference(peer, "burst")).toBe(final);
   expect(failures).toEqual([]);
   expect(requests).toBeGreaterThan(0);
   expect(requests).toBeLessThan(60);
