@@ -42,9 +42,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 function Document({ children }: { children: React.ReactNode }) {
-  const environment = useAppEnvironment();
+  const { shell, chrome } = useAppEnvironment();
   const visual = useVisualManager().getServerSnapshot();
-  const { shell, fullscreen, windowState } = environment;
   useEffect(() => {
     // Evidence that the client bundle ran and hydration finished, for tests and smoke checks.
     document.documentElement.dataset.hydrated = "true";
@@ -56,16 +55,12 @@ function Document({ children }: { children: React.ReactNode }) {
       {...visualServerAttributes(visual)}
       data-shell={shell.kind}
       data-platform={shell.kind === "desktop" ? shell.platform : undefined}
-      data-titlebar={
-        shell.kind === "desktop" ? (environment.mode === "system-decorated" ? "native" : "custom") : undefined
-      }
-      data-chrome-mode={shell.kind === "desktop" ? environment.mode : undefined}
-      data-chrome-enhancement={environment.enhancement}
-      data-chrome-diagnostic={environment.diagnostic}
-      data-chrome-diagnostic-fields={environment.diagnosticFields?.join(",")}
-      data-fullscreen={
-        windowState ? String(windowState.fullscreen) : fullscreen !== undefined ? String(fullscreen) : undefined
-      }
+      data-titlebar={shell.kind === "desktop" ? (chrome.mode === "system-decorated" ? "native" : "custom") : undefined}
+      data-chrome-mode={shell.kind === "desktop" ? chrome.mode : undefined}
+      data-chrome-enhancement={chrome.enhancement}
+      data-chrome-diagnostic={chrome.diagnostic}
+      data-chrome-diagnostic-fields={chrome.diagnosticFields?.join(",")}
+      data-fullscreen={chrome.fullscreen?.toString()}
     >
       <head>
         <meta charSet="utf-8" />
