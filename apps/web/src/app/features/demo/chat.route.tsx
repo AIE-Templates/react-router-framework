@@ -1,3 +1,4 @@
+import { PRODUCT_HEADER_HEIGHT } from "@repo/shared";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { AppAreaLayout } from "~/layouts/app-area/app-area-layout";
@@ -36,7 +37,7 @@ export default function Chat() {
   }
 
   return (
-    <BasicShell title="Chat demo">
+    <BasicShell headerMinHeight={PRODUCT_HEADER_HEIGHT} title="Chat demo">
       <AppAreaLayout areaId="chat" contentAs="main" title="Chat demo">
         <div className={classes.chat}>
           <h1 id="chat-title">Design review</h1>

@@ -1,3 +1,5 @@
+import { PRODUCT_HEADER_HEIGHT } from "@repo/shared";
+
 import { VisualSettings } from "~/components/appearance-settings";
 import { AppAreaLayout } from "~/layouts/app-area/app-area-layout";
 import { BasicShell } from "~/layouts/app-shell/app-shell";
@@ -8,7 +10,7 @@ export const meta = () => [{ title: "Application settings" }];
 
 export default function Settings() {
   return (
-    <BasicShell title="Application settings">
+    <BasicShell headerMinHeight={PRODUCT_HEADER_HEIGHT} title="Application settings">
       <AppAreaLayout areaId="settings" contentAs="main" title="Application settings">
         <div className={classes.settings}>
           <VisualSettings />

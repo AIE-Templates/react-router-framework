@@ -115,6 +115,7 @@ export function WindowColumn({
       <header
         className={headerClassName}
         data-window-header={primary && inWindowBand ? "primary" : "secondary"}
+        data-window-safe-area-owner={fused && inWindowBand && primary ? "" : undefined}
         data-window-drag={fused && inWindowBand ? "" : undefined}
       >
         {header}
