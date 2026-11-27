@@ -20,7 +20,7 @@ Host identity comes from entry configuration (`createWebApp({ shell })`), never 
 
 ## Content Security Policy (SRV-03)
 
-The web host owns CSP (`apps/web/src/host/csp.ts`), configurable through `createWebApp` and `createHostApp` (or `false` to disable deliberately). Production `script-src` excludes `unsafe-inline`; development permits Vite and HMR under its own policy. Cross-origin API destinations must be added to `connect-src`.
+The web host owns CSP (`apps/web/src/host/csp.ts`), configurable through `createWebApp` and `createHostApp` (or `false` to disable deliberately). Production `script-src` excludes `unsafe-inline`; development permits Vite and HMR under its own policy. The default policy permits HTTPS origins for images, fonts and connections, and WSS for WebSockets. Development also permits HTTP and WS connections. Production deployments can restrict these directives to the origins their application uses.
 
 SSR generates one per-document nonce shared across `ServerRouter`, React streaming, `Links`, `ScrollRestoration` and `Scripts`. Both hydration sides receive the same nonce prop; root revalidation must not replace the active document nonce, and root error rendering recovers it from the document. For static SPA and prerendered HTML, `GET` derives inline-script `sha256` hashes from the exact HTML bytes it serves. `HEAD` returns the same CSP for the same representation. Document byte ranges are disabled.
 

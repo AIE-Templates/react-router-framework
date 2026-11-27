@@ -4,15 +4,17 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
-import { cspMiddleware, defaultPolicy, inlineScriptHashes, serializePolicy } from "./csp";
+import { cspMiddleware, defaultPolicy, inlineScriptHashes } from "./csp";
 
 describe("defaultPolicy", () => {
-  it("allows inline scripts only through a nonce in production, and relaxes for Vite in development", () => {
-    expect(serializePolicy(defaultPolicy(false))).toContain("script-src 'self';");
-    expect(serializePolicy(defaultPolicy(false))).not.toContain("unsafe-inline'; style");
-    const development = serializePolicy(defaultPolicy(true));
-    expect(development).toContain("script-src 'self' 'unsafe-inline'");
-    expect(development).toContain("connect-src 'self' ws: wss:");
+  it.each([false, true])("allows HTTPS images, fonts and connections (development=%s)", (development) => {
+    const policy = defaultPolicy(development);
+    expect(policy["img-src"]).toEqual(["'self'", "https:", "data:", "blob:"]);
+    expect(policy["font-src"]).toEqual(["'self'", "https:", "data:"]);
+    expect(policy["connect-src"]).toEqual(
+      development ? ["'self'", "https:", "wss:", "http:", "ws:"] : ["'self'", "https:", "wss:"],
+    );
+    expect(policy["script-src"]).toEqual(development ? ["'self'", "'unsafe-inline'"] : ["'self'"]);
   });
 });
 
