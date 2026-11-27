@@ -86,6 +86,8 @@ Read environment through `~/managers/environment/hooks`; interactive and drag DO
 
 Colors use Core semantic variables; viewport media widths come from `~/config/breakpoints`. CSS Modules use the components layer. `tests/architecture/styles.test.ts` checks real CSS/SCSS and TS/TSX source, including inline CSS strings. The window safety stylesheet stays inline and unlayered in `layouts/app-shell/chrome-safety.ts`.
 
+Custom layouts read `--app-window-safe-top`, `--app-window-safe-left` and `--app-window-safe-right` for native control clearance. The document reserves the top inset by default. To lay out edge to edge, put `data-window-safe-area-owner=""` on the visible element responsible for clearance. Mark drag surfaces with `getDragRegionProps()` and pointer targets with `getInteractiveProps()`. Removing or hiding the owner restores the document reservation. The geometry remains available in either mode.
+
 ## Mantine UI
 
 `AppUiProvider` composes the Mantine providers. Extend the adapters in `src/app/managers/visual/mantine` to map application tokens to component themes. The appearance panel in `src/app/components/appearance-settings.tsx` demonstrates Select, Button and portalled surfaces.

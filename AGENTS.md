@@ -8,6 +8,8 @@ Before changing Router routes, loaders, actions or integration, read `.agents/sk
 
 ## Checks and tests
 
+Run full test suites through Orca on the Windows host. Use a temporary branch to sync work in progress when needed.
+
 After changes run `pnpm lint:fix`, then `pnpm fmt`. Before completion run `pnpm exec oxlint --deny-warnings --format=agent`, `pnpm typecheck` and `pnpm test` (use `pnpm exec vitest run` for a finite run).
 
 Unit tests use Vitest and Testing Library, colocated as *.test.ts(x). Each package has a Vitest project. Use createRoutesStub when components need Router context; invoke loaders/actions directly. Keep environment examples synchronized with new variables, document purpose/defaults and never commit .env files.
@@ -46,7 +48,7 @@ Async results belong to the resource, identity and operation that started them. 
 
 Compose global providers in AppRoot. Components read useAppEnvironment from ~/managers/environment/hooks; never infer host identity from user agents, query parameters or data-shell. Do not call the bridge during rendering. Root loader data seeds hydration; confirmed preload identity survives revalidation.
 
-Choose app areas from the page layout. The same routes and features can share one area or span several. BasicShell frames one area; NavigationShell also hosts the area switcher. Implement each area's layout to suit the product. For fused headers, render WindowLayout inside the shell and put each header and its content in a WindowColumn. Mark one visible column primary. AppAreaLayout uses these primitives for the CRM demo. For a custom layout with a separate title bar, use the shell's standalone header mode. Keep native control geometry and window IPC in the shell and host integration. See docs/specs/layout.spec.md for the fused header contract.
+Choose app areas from the page layout. The same routes and features can share one area or span several. BasicShell frames one area; NavigationShell also hosts the area switcher. Implement each area's layout to suit the product. For fused headers, render WindowLayout inside the shell and put each header and its content in a WindowColumn. Mark one visible column primary. AppAreaLayout uses these primitives for the CRM demo. For a custom layout with a separate title bar, use the shell's standalone header mode. Read native control geometry from the environment CSS variables. A custom layout can claim the root reservation with data-window-safe-area-owner independently of its drag regions. Window IPC stays in host integration. See docs/specs/layout.spec.md for the fused header contract.
 
 Mark top interactive elements with getInteractiveProps and drag regions with getDragRegionProps. Inline CHROME_SAFETY_CSS and retain .root-chrome-fallback outside route children for normal, fallback and error documents. Safety geometry cannot depend on provider/bootstrap readiness. CHROME_SAFETY_CSS remains inline and unlayered; the global stylesheet entry rule does not move it into styles/. Environment runtime/context/hooks/dom-props live in managers/environment. AppRoot creates the environment runtime directly; it is not a ManagersRegistry member. The reusable appearance panel lives in components/appearance-settings.tsx.
 
