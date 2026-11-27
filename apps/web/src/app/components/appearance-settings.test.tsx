@@ -56,9 +56,19 @@ it("confirms a reset from the menu and shows a notification", async () => {
   expect(manager.getSnapshot().preferences).toEqual({});
   expect(await screen.findByText("Defaults restored.")).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reset appearance?" })).not.toBeInTheDocument());
+});
+
+it("describes the direct reset as restoring defaults", async () => {
+  const user = userEvent.setup();
+  render(
+    <VisualManagerContext.Provider value={createVisualManager({ host: window })}>
+      <AppUiProvider>
+        <VisualSettings />
+      </AppUiProvider>
+    </VisualManagerContext.Provider>,
+  );
   await user.hover(screen.getByRole("button", { name: "Reset appearance" }));
-  // The tooltip opens through a transition; a loaded CI machine can take longer than the default wait.
-  expect(await screen.findByRole("tooltip", undefined, { timeout: 5000 })).toHaveTextContent("Restore defaults");
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Restore defaults");
 });
 
 it.each([
