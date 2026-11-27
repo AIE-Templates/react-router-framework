@@ -34,7 +34,7 @@ export default defineConfig(async () => {
   // which may have been produced in a different shell or with a different .env.
   const ssr =
     process.env[BUILD_PROFILE_ENV] === "dev"
-      ? (await import("../web/react-router.config.ts")).default.ssr
+      ? (await import("../web/react-router.config.ts")).default.ssr !== false
       : webBuildSsr(resolve(import.meta.dirname, "../web/build"));
   return { ...config, define: { ...config.define, DESKTOP_SSR: JSON.stringify(ssr) } };
 });

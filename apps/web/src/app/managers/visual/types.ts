@@ -29,7 +29,7 @@ export interface NativeVisualSource {
   /** Live bridge discovery. Called on connection and when re-probing unavailable stores. */
   connect(host: Window):
     | {
-        read(): { record: string | null; pending: boolean };
+        read(): { record: string | null; pending: boolean; fixedAppearance?: "light" | "dark" };
         push(raw: string): Promise<Exclude<StoreStatus, "absent">>;
       }
     | undefined;

@@ -3,10 +3,10 @@ import { cookieName } from "./app-identity.ts";
 import type { DesktopPrefs } from "./desktop-headers.ts";
 
 /**
- * Small user preferences that client code writes and server rendering reads (theme, locale, sidebar
- * width). The web shell keeps each one in an application-prefixed cookie; the desktop shell, which has no
- * cookies under `app://`, keeps them in the main process and sends them as `x-desktop-prefs`. Both
- * shells apply the same rules, so a key that works in one works in the other.
+ * Small display preferences that client code writes and server rendering reads (locale, sidebar width).
+ * Web uses application-prefixed cookies. Desktop stores preferences in prefs.json and sends them as
+ * `x-desktop-prefs`. Ordinary `app://app` cookies use the desktop cookie shim. Both shells apply
+ * the same preference limits.
  */
 export type PreferenceValue = string | number | boolean;
 

@@ -14,7 +14,7 @@ import { WEB_RENDER_MODE_FILE } from "../../build-tools/web-render-mode.ts";
 // the environment win.
 expand(loadDotenv({ path: join(import.meta.dirname, ".env"), quiet: true }));
 
-export default {
+const config: Config = {
   buildEnd({ reactRouterConfig: { buildDirectory, ssr } }) {
     writeFileSync(join(buildDirectory, WEB_RENDER_MODE_FILE), ssr ? "ssr\n" : "spa\n");
     writeFileSync(join(buildDirectory, CLIENT_DIGEST_FILE), clientDigest(join(buildDirectory, "client")) + "\n");
@@ -33,4 +33,6 @@ export default {
     // optimization. Experimental in Router 8.5: recheck cold SSR/SPA development when upgrading.
     unstable_optimizeDeps: true,
   },
-} satisfies Config;
+};
+
+export default config;
