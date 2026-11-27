@@ -113,7 +113,7 @@ The template already uses operation ownership checks in `src/app/managers/visual
 
 ### Shared components
 
-Read environment through `~/managers/environment/hooks`; interactive and drag DOM props come from `~/managers/environment/dom-props`. The runtime is still created by AppRoot. Reuse `~/components/appearance-settings` for appearance UI. Ordinary component tests may use `renderWithProviders` from `~/testing/render`; route-dependent components still need an explicit Router context, and provider lifecycle tests can mount providers directly.
+Read environment through `~/managers/environment/hooks`; read window facts from its `chrome` field. Independent layouts mount `ChromeAdapterProvider` and read `useChromeSnapshot()` for shell and chrome or `useChromeState()` for chrome alone. Drag and interactive props live in `~/platform/chrome-adapter/dom-props`. Reuse `~/components/appearance-settings` for appearance UI. Ordinary component tests may use `renderWithProviders` from `~/testing/render`; route-dependent components still need an explicit Router context, and provider lifecycle tests can mount providers directly.
 
 Colors use Core semantic variables; viewport media widths come from `~/config/breakpoints`. CSS Modules use the components layer. `tests/architecture/styles.test.ts` checks real CSS/SCSS and TS/TSX source, including inline CSS strings. The window safety stylesheet stays inline and unlayered in `layouts/app-shell/chrome-safety.ts`.
 
