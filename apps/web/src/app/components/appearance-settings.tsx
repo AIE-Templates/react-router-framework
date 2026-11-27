@@ -49,7 +49,6 @@ export function VisualSettings() {
         onOptionSubmit={(value) => {
           if (value === "auto" || value === "light" || value === "dark") actions.setColorSchemePreference(value);
         }}
-        styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Select
         label="Direction"
@@ -57,7 +56,6 @@ export function VisualSettings() {
         value={preferences.direction}
         data={["ltr", "rtl"].map((value) => ({ value, label: value.toUpperCase() }))}
         onOptionSubmit={(value) => actions.setDirection(value === "rtl" ? "rtl" : "ltr")}
-        styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Select
         label="Motion"
@@ -71,7 +69,6 @@ export function VisualSettings() {
         onOptionSubmit={(value) => {
           if (value === "auto" || value === "reduce" || value === "full") actions.setReducedMotionPreference(value);
         }}
-        styles={{ dropdown: { WebkitAppRegion: "no-drag" } }}
       />
       <Group gap="xs">
         <Tooltip label="Restore defaults">
@@ -107,7 +104,6 @@ export function VisualSettings() {
         title="Appearance preview"
         returnFocus={false}
         onExitTransitionEnd={() => previewButton.current?.focus()}
-        styles={{ content: { WebkitAppRegion: "no-drag" } }}
       >
         <Text>Direction and motion follow your global settings.</Text>
         <Button mt="md" onClick={() => setOpened(false)}>
