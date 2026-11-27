@@ -70,6 +70,9 @@ export function createVisualRecordKernel(defaults: Readonly<VisualPreferences>) 
   function behind(current: VisualRecord | undefined, target: VisualRecord) {
     return !current || compare(current, target) < 0;
   }
+  function atStart(sources: { native?: VisualRecord; cookie?: VisualRecord; local?: VisualRecord }) {
+    return sources.native ?? sources.cookie ?? sources.local;
+  }
   function pick(records: readonly (VisualRecord | undefined)[]) {
     let latest: VisualRecord | undefined;
     for (const record of records) if (record && behind(latest, record)) latest = record;
@@ -88,7 +91,7 @@ export function createVisualRecordKernel(defaults: Readonly<VisualPreferences>) 
     if (!Number.isSafeInteger(t)) throw new RangeError("Visual timestamp exceeds safe integer precision");
     return { t, id: random() };
   }
-  return { decode, encode, compare, behind, pick, effective, nextStamp };
+  return { decode, encode, compare, behind, atStart, pick, effective, nextStamp };
 }
 
 export const visualRecordKernel = createVisualRecordKernel(VISUAL_DEFAULTS);

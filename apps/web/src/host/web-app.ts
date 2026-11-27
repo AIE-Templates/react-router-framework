@@ -79,28 +79,30 @@ function defaultClientDir(): string {
  * React Router `.data` files, so they revalidate and never point at assets from an old deploy.
  * Static HTML documents (the SPA shell at `/` and `/index.html`, prerendered pages) get the
  * Content-Security-Policy with their inline scripts allowed by hash, like the shell served by
- * `spaShell()`: they cannot carry a per-request nonce. The hashes come from the whole file on disk,
- * resolved the way `serveStatic` resolves it (the path itself, or `index.html` inside a directory),
- * so GET and HEAD carry the same policy, and HTML files never serve byte ranges (a partial body
- * would not match the hashes of the whole).
+ * `spaShell()`: they cannot carry a per-request nonce. GET hashes the bytes it sends; HEAD hashes
+ * the same representation and omits the body. HTML files never serve byte ranges.
  */
-function staticFiles(clientDir: string, cacheControl: string, csp?: HostAppOptions["csp"]): MiddlewareHandler {
-  const serve = serveStatic({ root: clientDir });
-  const policies = documentPolicies(csp);
+function staticFiles(
+  clientDir: string,
+  cacheControl: string,
+  csp?: HostAppOptions["csp"],
+): MiddlewareHandler<{ Variables: { staticFile: string } }> {
+  const serve = serveStatic({
+    root: clientDir,
+    onFound: (file, c) => c.set("staticFile", file),
+  });
   return async (c, next) => {
     // Static files answer GET and HEAD only; leave other methods untouched (and their bodies intact).
     if (c.req.method !== "GET" && c.req.method !== "HEAD") return next();
     const { path } = c.req;
-    const file = await resolveStaticFile(clientDir, path);
-    const isHtml = file !== undefined && /\.html?$/i.test(file);
-    const isDocument = isHtml || !/\.\w+$/.test(path) || /\.(html|data)$/.test(path);
     const range = c.req.raw.headers.get("range");
+    const file = range === null ? undefined : await resolveStaticFile(clientDir, path);
     if (file && range !== null) {
       const validator = c.req.raw.headers.get("if-range");
       const bytes = /^bytes=(\d+-\d*|-\d+)$/i.exec(range)?.[1];
       // This host only emits Last-Modified. An entity tag cannot match that validator.
       const effective =
-        !isHtml && bytes && (validator === null || validator === (await stat(file)).mtime.toUTCString())
+        !/\.html?$/i.test(file) && bytes && (validator === null || validator === (await stat(file)).mtime.toUTCString())
           ? `bytes=${bytes}`
           : undefined;
       if (range !== effective) {
@@ -113,6 +115,8 @@ function staticFiles(clientDir: string, cacheControl: string, csp?: HostAppOptio
       await next();
     });
     if (found && response && (response.ok || response.status === 416)) {
+      const isHtml = response.headers.get("content-type")?.startsWith("text/html");
+      const isDocument = isHtml || !/\.\w+$/.test(path) || /\.(html|data)$/.test(path);
       // Range is evaluated only after cache preconditions, including for unsatisfiable ranges.
       const status = preconditionStatus(c.req.raw.headers, response.headers.get("Last-Modified"));
       if (status) {
@@ -126,31 +130,18 @@ function staticFiles(clientDir: string, cacheControl: string, csp?: HostAppOptio
       }
       if (!response.ok) return response;
       response.headers.set("Cache-Control", isDocument ? "no-cache" : cacheControl);
-      if (csp && response.status === 200 && response.headers.get("content-type")?.startsWith("text/html")) {
-        // From the file when it was resolved; otherwise from the body, so no document goes without.
-        const policy = file
-          ? await policies.forFile(file)
-          : serializePolicy(csp, inlineScriptHashes(await response.clone().text()));
-        response.headers.set("Content-Security-Policy", policy);
+      if (csp && response.status === 200 && isHtml) {
+        const head = c.req.method === "HEAD";
+        const bytes = head ? await readFile(c.var.staticFile) : await response.arrayBuffer();
+        response.headers.set(
+          "Content-Security-Policy",
+          serializePolicy(csp, inlineScriptHashes(new TextDecoder().decode(bytes))),
+        );
+        response.headers.set("Content-Length", String(bytes.byteLength));
+        return new Response(head ? null : bytes, response);
       }
     }
     return response;
-  };
-}
-
-/** The Content-Security-Policy for a static HTML file, from its full content; cached until it changes on disk. */
-function documentPolicies(csp: HostAppOptions["csp"]) {
-  const cache = new Map<string, { mtimeMs: number; policy: string }>();
-  return {
-    async forFile(file: string): Promise<string> {
-      if (!csp) return "";
-      const { mtimeMs } = await stat(file);
-      const cached = cache.get(file);
-      if (cached?.mtimeMs === mtimeMs) return cached.policy;
-      const policy = serializePolicy(csp, inlineScriptHashes(await readFile(file, "utf8")));
-      cache.set(file, { mtimeMs, policy });
-      return policy;
-    },
   };
 }
 

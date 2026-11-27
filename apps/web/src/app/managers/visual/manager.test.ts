@@ -80,15 +80,15 @@ it.each(["web", "desktop"] as const)(
 
 it.each(["missing", "invalid", "divergent"])("E11/E18 interleave two connects with %s replicas", (scenario) => {
   const divergent = scenario === "divergent";
-  const winner = raw(2, { direction: "rtl" });
+  const winner = raw(1, { direction: "rtl" });
   if (divergent) {
-    localStorage.setItem(key, raw(1, { reducedMotion: "full" }));
+    localStorage.setItem(key, raw(2, { reducedMotion: "full" }));
     writeVisualCookie(window, winner);
   } else if (scenario === "invalid") localStorage.setItem(key, "{}");
   const write = vi.spyOn(Storage.prototype, "setItem");
   const writeCookie = vi.spyOn(document, "cookie", "set");
   const second = createVisualManager({ host: window });
-  // The first connect already read local. Finish the second connect before the first selects a winner.
+  // Finish the second connect while the first is observing the cookie.
   const header = document.cookie;
   const gate = vi.spyOn(document, "cookie", "get").mockImplementationOnce(() => {
     releases.push(second.connect());
@@ -175,6 +175,7 @@ it("re-reads storage on events, repairs deletion from memory and skips equal tar
 it.each(["local", "cookie"] as const)(
   "E3 rechecks %s immediately before repair and skips a newly updated target",
   (store) => {
+    const manager = tab();
     const old = raw(1, { direction: "rtl" });
     const newer = raw(2, { direction: "ltr" });
     if (store === "local") {
@@ -188,7 +189,7 @@ it.each(["local", "cookie"] as const)(
     }
     const write = vi.spyOn(Storage.prototype, "setItem");
     const setCookie = vi.spyOn(document, "cookie", "set");
-    const manager = tab();
+    restore();
     expect(local()).toBe(newer);
     expect(cookie()).toBe(newer);
     expect(write).toHaveBeenCalledTimes(store === "local" ? 0 : 1);
@@ -203,12 +204,12 @@ it("E2 converges after two overlapping non-empty field edits based on the same s
   const b = tab();
   const now = vi.spyOn(Date, "now").mockReturnValue(10);
   const writes = vi.spyOn(Storage.prototype, "setItem");
-  const oldCookie = document.cookie;
-  // B already sampled local. A completes both writes while B's cookie read is returning its old snapshot.
-  const gate = vi.spyOn(document, "cookie", "get").mockImplementationOnce(() => {
+  const oldLocal = local();
+  // B already sampled the cookie. A completes both writes before B finishes its local read.
+  const gate = vi.spyOn(Storage.prototype, "getItem").mockImplementationOnce(() => {
     a.actions.setDirection("rtl");
     now.mockReturnValue(11);
-    return oldCookie;
+    return oldLocal;
   });
   try {
     b.actions.setReducedMotionPreference("reduce");
@@ -254,7 +255,7 @@ it.each([true, false])(
     }
   },
 );
-it.each(["local", "memory"])("E3/E4 repairs a stale backfill when the winner survives in %s", (survivor) => {
+it.each(["local", "memory"])("E3/E4 starts from the stale cookie when a newer edit survives in %s", (survivor) => {
   const a = tab();
   const closeA = releases.at(-1)!;
   a.actions.setDirection("rtl");
@@ -273,14 +274,15 @@ it.each(["local", "memory"])("E3/E4 repairs a stale backfill when the winner sur
     expect(cookie()).toBe(old);
     if (survivor === "local") closeA();
     else localStorage.setItem(key, old);
-    const observable = records.decode(survivor === "local" ? current : old).record!;
+    const observable = records.decode(old).record!;
     window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window);
     expect(window.frameworkVisualBootstrap.record).toEqual(observable);
     const reopened = tab();
     expect(reopened.getSnapshot().preferences).toEqual(observable.preferences);
     if (survivor === "memory") restore();
-    expect(reopened.getSnapshot().preferences).toEqual({ direction: "rtl", colorScheme: "dark" });
-    expect([local(), cookie()]).toEqual([current, current]);
+    const expected = survivor === "memory" ? current : old;
+    expect(reopened.getSnapshot().preferences).toEqual(records.decode(expected).record!.preferences);
+    expect([local(), cookie()]).toEqual([expected, expected]);
   } finally {
     gate.mockRestore();
   }
@@ -379,8 +381,10 @@ it.each(["retry", "pageshow"])("recovers local quota failure on %s without produ
     setter.mockRestore();
   }
   const target = cookie();
+  document.cookie = visualCookie.name + "=; Max-Age=0; Path=/";
   if (trigger === "retry") manager.actions.retry();
   else restore();
+  expect(cookie()).toBe(target);
   expect(local()).toBe(target);
   expect(manager.getStatus().storage.local).toBe("ok");
 });
@@ -665,8 +669,7 @@ it("E11 interleaves two window connections before the first repairs its stale lo
   const second = createVisualManager({ host: window, ...options });
   const writeLocal = vi.spyOn(Storage.prototype, "setItem");
   const writeCookie = vi.spyOn(document, "cookie", "set");
-  // The first window has sampled both stale Web copies. Finish the second connection
-  // inside its synchronous native read, before it can start backfilling either copy.
+  // Finish the second connection during the first native read, before the first window repairs its peers.
   read.mockImplementationOnce(() => {
     releases.push(second.connect());
     return { record: winner, pending: false };
@@ -828,7 +831,7 @@ describe.each([
     ]);
 
     const cold = restart === "cold restart";
-    const surviving = cold && failLocal && failCookie && failNative ? old : edited;
+    const surviving = cold && failNative ? old : edited;
     const next = cold ? openMirror() : mirror;
     next.push.mockClear();
     const localWrite = vi.spyOn(Storage.prototype, "setItem");
@@ -838,8 +841,8 @@ describe.each([
     await Promise.resolve();
     expect(restored.getSnapshot().preferences).toEqual(records.decode(surviving).record?.preferences);
     expect([local(), cookie()]).toEqual([surviving, surviving]);
-    expect(localWrite).toHaveBeenCalledTimes(Number(failLocal && surviving === edited));
-    expect(cookieWrite).toHaveBeenCalledTimes(Number(failCookie && surviving === edited));
+    expect(localWrite).toHaveBeenCalledTimes(Number((failLocal ? old : edited) !== surviving));
+    expect(cookieWrite).toHaveBeenCalledTimes(Number((failCookie ? old : edited) !== surviving));
     const retriesNative = restart !== "refresh" && failNative && surviving === edited;
     expect(next.push.mock.calls).toEqual(retriesNative ? [[edited]] : []);
     expect(restored.getStatus().storage).toEqual({
@@ -855,4 +858,272 @@ describe.each([
     expect(readFile()).toBe(surviving);
     expect(restored.getStatus().storage.native).toBe("ok");
   });
+});
+
+it.each([
+  ["D1", false, false, false],
+  ["D2", true, false, false],
+  ["D3", false, true, false],
+  ["D4", false, false, true],
+  ["D5", true, true, false],
+  ["D6", true, false, true],
+  ["D7", false, true, true],
+  ["D8", true, true, true],
+] as const)(
+  "%s preserves successful writes and retries the same record across independent failures",
+  async (_, failLocal, failCookie, failNative) => {
+    const old = raw(1, { direction: "ltr" });
+    localStorage.setItem(key, old);
+    writeVisualCookie(window, old);
+    let mirror = old;
+    let pending = false;
+    let diskFault = failNative;
+    const push = vi.fn<(value: string) => Promise<"ok" | "failed">>(async (value: string) => {
+      mirror = value;
+      pending = diskFault;
+      return pending ? ("failed" as const) : ("ok" as const);
+    });
+    const adapter = nativeSource(() => ({ record: mirror, pending }), push);
+    const manager = tab({ nativeSource: adapter });
+    const localFault = failLocal
+      ? vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+          throw new Error("quota");
+        })
+      : undefined;
+    const cookieFault = failCookie ? vi.spyOn(document, "cookie", "set").mockImplementation(() => {}) : undefined;
+    try {
+      manager.actions.setDirection("rtl");
+      await Promise.resolve();
+      expect(manager.getSnapshot().preferences.direction).toBe("rtl");
+      expect(manager.getStatus().storage).toEqual({
+        local: failLocal ? "failed" : "ok",
+        cookie: failCookie ? "failed" : "ok",
+        native: failNative ? "failed" : "ok",
+      });
+      expect(local()).toBe(failLocal ? old : mirror);
+      expect(cookie()).toBe(failCookie ? old : mirror);
+      // A refresh still sees main's in-memory record, even when every durable write failed.
+      const refreshed = tab({ nativeSource: adapter });
+      expect(refreshed.getSnapshot().preferences.direction).toBe("rtl");
+      expect(refreshed.getStatus().storage.native).toBe(failNative ? "failed" : "ok");
+      expect(push).toHaveBeenCalledTimes(1);
+    } finally {
+      localFault?.mockRestore();
+      cookieFault?.mockRestore();
+      diskFault = false;
+    }
+    const original = mirror;
+    manager.actions.retry();
+    await Promise.resolve();
+    expect(manager.getStatus().storage).toEqual({ local: "ok", cookie: "ok", native: "ok" });
+    expect([local(), cookie(), mirror]).toEqual([original, original, original]);
+  },
+);
+
+it.each([
+  ["E8 cold restart", "native", "newer", "newer", "native"],
+  ["cleared Web storage", "native", null, null, "native"],
+  ["missing cookie", null, null, "newer", "newer"],
+  ["invalid native and cookie", "invalid", "invalid", "newer", "newer"],
+  ["invalid native", "invalid", "cookie", "newer", "cookie"],
+  ["first launch", null, null, null, null],
+] as const)(
+  "starts from the first valid replica and repairs its peers after %s",
+  (_, nativeValue, cookieValue, localValue, expected) => {
+    const wires = {
+      native: raw(1, { direction: "rtl" }),
+      cookie: raw(2, { colorScheme: "dark" }),
+      newer: raw(3, { reducedMotion: "full" }),
+      invalid: "{}",
+    };
+    let mirror = nativeValue && wires[nativeValue];
+    if (cookieValue) writeVisualCookie(window, wires[cookieValue]);
+    if (localValue) localStorage.setItem(key, wires[localValue]);
+    const push = vi.fn<(value: string) => Promise<"ok">>(async (value) => {
+      mirror = value;
+      return "ok";
+    });
+    const adapter = nativeSource(() => ({ record: mirror, pending: false }), push);
+    adapter.prepaint = () => ({ record: mirror });
+    const winner = expected && wires[expected];
+    const localWrite = vi.spyOn(Storage.prototype, "setItem");
+    const cookieWrite = vi.spyOn(document, "cookie", "set");
+    window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window, adapter.prepaint);
+    expect(window.frameworkVisualBootstrap.record).toEqual(records.decode(winner).record);
+    const manager = tab({ nativeSource: adapter });
+    expect(manager.getSnapshot().preferences).toEqual(records.decode(winner).record?.preferences ?? {});
+    expect([mirror, cookie(), local()]).toEqual([winner, winner, winner]);
+    expect(push).toHaveBeenCalledTimes(Number(nativeValue !== expected));
+    expect(cookieWrite).toHaveBeenCalledTimes(Number(cookieValue !== expected));
+    expect(localWrite).toHaveBeenCalledTimes(Number(localValue !== expected));
+  },
+);
+
+it.each([true, false])("rolls back a failed cookie write at start, with the writer still open: %s", (open) => {
+  const old = raw(1, { direction: "ltr" });
+  writeVisualCookie(window, old);
+  const writer = tab();
+  const fault = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
+  try {
+    writer.actions.setDirection("rtl");
+    expect(writer.getStatus().storage.cookie).toBe("failed");
+  } finally {
+    fault.mockRestore();
+  }
+  const edit = local();
+  if (!open) releases.pop()!();
+  window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window);
+  expect(window.frameworkVisualBootstrap.record).toEqual(records.decode(old).record);
+  const reader = tab();
+  expect(reader.getSnapshot().preferences.direction).toBe("ltr");
+  expect(local()).toBe(old);
+  signal();
+  expect(reader.getSnapshot().preferences.direction).toBe(open ? "rtl" : "ltr");
+  expect([local(), cookie()]).toEqual(open ? [edit, edit] : [old, old]);
+});
+
+it.each([null, raw(1, { direction: "ltr" })])(
+  "first connect re-reads all stores after prepaint (cookie %s)",
+  (current) => {
+    const stale = raw(2, { direction: "rtl" });
+    localStorage.setItem(key, stale);
+    window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window);
+    const manager = createVisualManager({ host: window });
+    expect(manager.getSnapshot().preferences.direction).toBe("rtl");
+    localStorage.clear();
+    if (current) writeVisualCookie(window, current);
+    releases.push(manager.connect());
+    expect(manager.getSnapshot().preferences).toEqual(records.decode(current).record?.preferences ?? {});
+    expect([cookie(), local()]).toEqual([current, current]);
+  },
+);
+
+it("preserves a command before first connect and uses runtime ordering on reconnect", () => {
+  const old = raw(1, { direction: "rtl" });
+  writeVisualCookie(window, old);
+  localStorage.setItem(key, raw(2, { reducedMotion: "reduce" }));
+  const manager = createVisualManager({ host: window });
+  manager.actions.setColorSchemePreference("dark");
+  const edit = local();
+  expect(records.decode(edit).record?.preferences).toEqual({ colorScheme: "dark", reducedMotion: "reduce" });
+  for (let i = 0; i < 2; i++) {
+    writeVisualCookie(window, old);
+    localStorage.removeItem(key);
+    const disconnect = manager.connect();
+    try {
+      expect([cookie(), local()]).toEqual([edit, edit]);
+      expect(manager.getSnapshot().preferences).toEqual(records.decode(edit).record!.preferences);
+    } finally {
+      disconnect();
+    }
+  }
+});
+
+it("writes native, cookie, then local and propagates a newer cookie readback to every replica", () => {
+  let mirror: string | null = null;
+  const push = vi.fn<(value: string) => Promise<"ok">>(async (value) => {
+    mirror = value;
+    return "ok";
+  });
+  const a = tab({ nativeSource: nativeSource(() => ({ record: mirror, pending: false }), push) });
+  const peer = tab();
+  const setter = Object.getOwnPropertyDescriptor(Document.prototype, "cookie")!.set!.bind(document);
+  const write = vi.spyOn(Storage.prototype, "setItem");
+  const gate = vi.spyOn(document, "cookie", "set").mockImplementationOnce((value) => {
+    setter(value);
+    write.mockImplementationOnce(() => {
+      throw new Error("quota");
+    });
+    peer.actions.setDirection("rtl");
+  });
+  try {
+    a.actions.setColorSchemePreference("dark");
+    expect(peer.getStatus().storage.local).toBe("failed");
+    const winner = cookie();
+    expect(records.decode(winner).record?.preferences).toEqual({ direction: "rtl", colorScheme: "dark" });
+    expect(a.getSnapshot()).toEqual(peer.getSnapshot());
+    expect([mirror, local()]).toEqual([winner, winner]);
+    expect(push.mock.invocationCallOrder[0]).toBeLessThan(gate.mock.invocationCallOrder[0]);
+    expect(gate.mock.invocationCallOrder[0]).toBeLessThan(write.mock.invocationCallOrder[0]);
+  } finally {
+    gate.mockRestore();
+    write.mockRestore();
+  }
+  peer.actions.retry();
+  expect(peer.getStatus().storage.local).toBe("ok");
+  expect(local()).toBe(cookie());
+});
+
+it("keeps an equal pending native retry live across pageshow", async () => {
+  const reply = pushGate();
+  const value = raw(1, { direction: "rtl" });
+  let pending = true;
+  const push = vi.fn<() => typeof reply.promise>(() => reply.promise);
+  const manager = tab({ nativeSource: nativeSource(() => ({ record: value, pending }), push) });
+  try {
+    manager.actions.retry();
+    restore();
+    expect(push).toHaveBeenCalledExactlyOnceWith(value);
+    expect(manager.getStatus().storage.native).toBe("failed");
+    pending = false;
+    reply.resolve("ok");
+    await reply.promise;
+    expect(manager.getStatus().storage.native).toBe("ok");
+  } finally {
+    reply.resolve("ok");
+  }
+});
+
+it.each([false, true])("invalidates a push after a native read failure (rediscovery: %s)", async (rediscover) => {
+  const reply = pushGate();
+  const read = vi.fn<() => { record: string | null; pending: boolean }>(() => ({ record: local(), pending: false }));
+  const adapter = nativeSource(read, () => reply.promise);
+  const manager = tab({ initialShell: "desktop", nativeSource: adapter });
+  const discovery = vi.spyOn(adapter, "connect");
+  try {
+    manager.actions.setDirection("rtl");
+    read.mockImplementationOnce(() => {
+      throw new Error("ipc");
+    });
+    restore();
+    if (rediscover) {
+      discovery.mockReturnValueOnce(undefined);
+      manager.actions.retry();
+    }
+    expect(manager.getStatus().storage.native).toBe("unavailable");
+    reply.resolve("ok");
+    await reply.promise;
+    expect(manager.getStatus().storage.native).toBe("unavailable");
+  } finally {
+    discovery.mockRestore();
+    reply.resolve("ok");
+  }
+  manager.actions.retry();
+  expect(manager.getStatus().storage.native).toBe("ok");
+});
+
+it("first connection retires the pre-connect push when it rediscovers the bridge", async () => {
+  const reply = pushGate();
+  let mirror: string | null = null;
+  const adapter = nativeSource(
+    () => ({ record: mirror, pending: true }),
+    (value) => {
+      mirror = value;
+      return reply.promise;
+    },
+  );
+  const manager = createVisualManager({ host: window, nativeSource: adapter });
+  try {
+    manager.actions.setDirection("rtl");
+    releases.push(manager.connect());
+    expect(manager.getStatus().storage.native).toBe("failed");
+    reply.resolve("ok");
+    await reply.promise;
+    expect(manager.getStatus().storage.native).toBe("failed");
+    manager.actions.retry();
+    await reply.promise;
+    expect(manager.getStatus().storage.native).toBe("ok");
+  } finally {
+    reply.resolve("ok");
+  }
 });
