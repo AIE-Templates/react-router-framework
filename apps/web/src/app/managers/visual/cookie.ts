@@ -1,4 +1,4 @@
-import { visualCookie } from "~/config/visual-cookie";
+import { serializeVisualCookie } from "@repo/shared";
 
 /** Included verbatim in the inline script. Malformed escaping is an invalid value, not a missing cookie. */
 export function readVisualCookie(header: string, name: string): string | null {
@@ -15,7 +15,6 @@ export function readVisualCookie(header: string, name: string): string | null {
   }
 }
 
-export function writeVisualCookie(host: Window, raw: string, name = visualCookie.name) {
-  const secure = host.location.protocol === "https:" ? "; Secure" : "";
-  host.document.cookie = `${name}=${encodeURIComponent(raw)}; Path=/; SameSite=Lax; Max-Age=${visualCookie.maxAge}${secure}`;
+export function writeVisualCookie(host: Window, raw: string, name?: string) {
+  host.document.cookie = serializeVisualCookie(raw, host.location.protocol === "https:", name);
 }
