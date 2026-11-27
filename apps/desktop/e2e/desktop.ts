@@ -144,9 +144,17 @@ export async function launch(
 }
 
 /** Waits until the page is the hydrated desktop document. */
+/**
+ * Waits until the document hydrated and React Router finished its initial matches. In SPA builds the
+ * root can hydrate while child route modules are still loading; a host fault in that window makes
+ * React Router reload the page, so a test acting on a "ready" page must wait for both.
+ */
 export async function waitForApp(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => document.documentElement.dataset.hydrated === "true" && document.documentElement.dataset.shell === "desktop",
+    () =>
+      document.documentElement.dataset.hydrated === "true" &&
+      document.documentElement.dataset.shell === "desktop" &&
+      Reflect.get(window, "__reactRouterDataRouter")?.state.initialized === true,
   );
 }
 
