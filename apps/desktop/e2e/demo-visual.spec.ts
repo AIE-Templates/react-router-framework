@@ -402,7 +402,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
         expect(await child.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: pending, pending: false });
         await expect(child.locator("html")).toHaveAttribute("data-color-scheme", "dark");
         if (!page.isClosed()) {
-          await page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+          await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
           await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeHidden();
         }
       }

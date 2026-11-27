@@ -208,7 +208,7 @@ test("a full relaunch restores the committed desktop theme before hydration", as
   await expectWebReplicas(first.page, null, ssr);
   expect(await first.page.evaluate(() => window.desktop!.readVisual())).toEqual({ record: null, pending: false });
   const raw = await pushVisual(first.page, { colorScheme: "dark", direction: "rtl" });
-  await first.page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+  await first.page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
   await expectWebReplicas(first.page, raw, ssr);
 
   // Retire the manager before clearing its replicas. An active document could repair them.
@@ -228,7 +228,7 @@ test("a crash with stale Web replicas restores the newer native record before hy
   const first = await launchApp();
   const ssr = await isSsrBuild(first.page);
   const old = await pushVisual(first.page, { colorScheme: "light", direction: "ltr" });
-  await first.page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+  await first.page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
   await expectWebReplicas(first.page, old, ssr);
   // A clean shutdown makes the older Chromium copies durable.
   await quit(first);
