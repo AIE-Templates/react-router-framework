@@ -22,17 +22,39 @@ export function createVisualMirror(
   const file = join(userData, "visual.json");
   const temp = file + ".tmp";
   let record: VisualRecord | undefined;
-  try {
-    const stored = withFileRetry(() => fs.readFileSync(file), fs);
-    record = records.decode(stored).record;
-  } catch (err) {
-    if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
-      log.warn({ err }, "visual mirror read failed");
-    }
-  }
-  let raw = record ? records.encode(record) : null;
+  let raw: string | null = null;
+  let unread = true;
   let pending = false;
   const listeners = new Set<() => void>();
+
+  function adopt(next: VisualRecord | undefined, encoded = next ? records.encode(next) : null) {
+    const previousColor = records.effective(record).colorScheme;
+    record = next;
+    raw = encoded;
+    if (records.effective(next).colorScheme !== previousColor) {
+      for (const notify of listeners) {
+        try {
+          notify();
+        } catch {
+          log.warn({}, "applying native visual appearance failed");
+        }
+      }
+    }
+  }
+  function readDiskIfUnread() {
+    if (!unread) return;
+    let stored: string;
+    try {
+      stored = withFileRetry(() => fs.readFileSync(file), fs);
+    } catch (err) {
+      if (err instanceof Error && "code" in err && err.code === "ENOENT") unread = false;
+      else log.warn({ err }, "visual mirror read failed");
+      return;
+    }
+    unread = false;
+    adopt(records.decode(stored).record);
+  }
+  readDiskIfUnread();
   function persist(value: string) {
     try {
       writeDurably(fs, temp, value);
@@ -49,10 +71,14 @@ export function createVisualMirror(
     }
   }
   function retryPending() {
+    readDiskIfUnread();
     if (pending && raw !== null) persist(raw);
   }
   return {
-    read: (): VisualMirrorSnapshot => ({ record: raw, pending }),
+    read(): VisualMirrorSnapshot {
+      readDiskIfUnread();
+      return { record: raw, pending: unread || pending };
+    },
     colorScheme: () => records.effective(record).colorScheme,
     retryPending,
     push(input: unknown): "ok" | "failed" {
@@ -62,25 +88,16 @@ export function createVisualMirror(
         log.warn({}, "invalid visual mirror record");
         return "failed";
       }
+      readDiskIfUnread();
+      if (unread) return "failed";
       const order = record ? records.compare(next, record) : 1;
       if (order <= 0) {
         retryPending();
         return pending && order === 0 ? "failed" : "ok";
       }
       const encoded = records.encode(next);
-      const previousColor = records.effective(record).colorScheme;
       persist(encoded);
-      raw = encoded;
-      record = next;
-      if (records.effective(next).colorScheme !== previousColor) {
-        for (const notify of listeners) {
-          try {
-            notify();
-          } catch {
-            log.warn({}, "applying native visual appearance failed");
-          }
-        }
-      }
+      adopt(next, encoded);
       return pending ? "failed" : "ok";
     },
     onColorSchemeChange(listener: () => void) {

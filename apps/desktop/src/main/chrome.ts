@@ -104,10 +104,10 @@ export function installWindowChrome(
     const preference = mirror.colorScheme();
     return preference === "dark" || (preference === "auto" && nativeTheme.shouldUseDarkColors);
   };
-  const applyOverlay = (): OverlayAppearanceResult => {
+  const applyOverlay = (candidate: OverlayAppearance): OverlayAppearanceResult => {
     if (!overlayAvailable) return { status: "unsupported", reason: "native-overlay-appearance-unavailable" };
     const dark = isDark();
-    const merged = { ...policy.appearance, ...chromeAppearance(dark), ...override };
+    const merged = { ...policy.appearance, ...chromeAppearance(dark), ...candidate };
     try {
       if (
         merged.color !== appearance.color ||
@@ -133,7 +133,7 @@ export function installWindowChrome(
     } catch {
       log.warn({}, "window background update failed");
     }
-    applyOverlay();
+    applyOverlay(override);
   };
   const declareAppearance = (event: IpcMainInvokeEvent, input: unknown): OverlayAppearanceResult => {
     if (!trusted(event)) return { status: "rejected", reason: "untrusted-sender" };
@@ -153,14 +153,14 @@ export function installWindowChrome(
     if (next.appearance !== null && owner !== undefined && owner !== next.owner)
       return { status: "rejected", reason: "appearance-owner-conflict" };
     declarationRevision = next.revision;
-    if (next.appearance !== null) {
-      owner = next.owner;
-      override = next.appearance;
-    } else if (owner === next.owner) {
-      owner = undefined;
-      override = {};
+    const candidate = next.appearance ?? (owner === next.owner ? {} : override);
+    const result = applyOverlay(candidate);
+    if (result.status === "applied") {
+      override = candidate;
+      if (next.appearance !== null) owner = next.owner;
+      else if (owner === next.owner) owner = undefined;
     }
-    return applyOverlay();
+    return result;
   };
   const releaseTheme = mirror.onColorSchemeChange(applyTheme);
   const themeChanged = () => {

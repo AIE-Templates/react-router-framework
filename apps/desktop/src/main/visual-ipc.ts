@@ -8,6 +8,7 @@ export function installVisualIpc(
   ipc: Pick<IpcMain, "on" | "handle">,
   mirror: VisualMirror,
   trusted: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
+  fixedAppearanceFor: (contentsId: number) => "light" | "dark" | undefined,
   log: Pick<Logger, "warn">,
 ) {
   ipc.on(DESKTOP_VISUAL_IPC.read, (event) => {
@@ -16,7 +17,8 @@ export function installVisualIpc(
       event.returnValue = null;
       return;
     }
-    event.returnValue = mirror.read();
+    const fixedAppearance = fixedAppearanceFor(event.sender.id);
+    event.returnValue = { ...mirror.read(), ...(fixedAppearance && { fixedAppearance }) };
   });
   ipc.handle(DESKTOP_VISUAL_IPC.push, (event, raw: unknown) => {
     if (!trusted(event)) {

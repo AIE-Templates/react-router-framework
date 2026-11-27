@@ -6,7 +6,7 @@ import type { NativeVisualSource } from "~/managers/visual/types";
 export function desktopVisualPrepaint(host: Window) {
   const bridge: Partial<DesktopBridge> | undefined = host.desktop;
   if (!bridge) return undefined;
-  const fixed = bridge.bootstrap?.fixedAppearance;
+  const fixed = bridge.visualSeed?.fixedAppearance;
   return {
     record: bridge.visualSeed?.record ?? null,
     fixedAppearance: fixed === "light" || fixed === "dark" ? fixed : undefined,

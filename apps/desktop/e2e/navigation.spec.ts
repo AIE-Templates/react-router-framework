@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { cookieName, storageKey, visualRecordKernel } from "@repo/shared";
 
 import { expect, quit, targetProcesses, test, waitForApp, type Launched } from "./desktop.ts";
-import { pushVisual, visualCookieEnabled } from "./visual-mirror.ts";
+import { pushVisual, isSsrBuild } from "./visual-mirror.ts";
 
 interface NavigationProbe {
   externalUrls: string[];
@@ -203,7 +203,7 @@ async function expectRestoredTheme({ app, page }: Launched, raw: string, ssr: bo
 
 test("a full relaunch restores the committed desktop theme before hydration", async ({ launchApp }) => {
   const first = await launchApp();
-  const ssr = await visualCookieEnabled(first.page);
+  const ssr = await isSsrBuild(first.page);
   await expectWebReplicas(first.page, null, ssr);
   expect(await first.page.evaluate(() => window.desktop!.readVisual())).toEqual({ record: null, pending: false });
   const raw = await pushVisual(first.page, { colorScheme: "dark", direction: "rtl" });
@@ -225,7 +225,7 @@ test("a crash with stale Web replicas restores the newer native record before hy
   target,
 }) => {
   const first = await launchApp();
-  const ssr = await visualCookieEnabled(first.page);
+  const ssr = await isSsrBuild(first.page);
   const old = await pushVisual(first.page, { colorScheme: "light", direction: "ltr" });
   await first.page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
   await expectWebReplicas(first.page, old, ssr);

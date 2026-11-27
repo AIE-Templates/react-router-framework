@@ -42,8 +42,7 @@ it.each(["dark", "light"] as const)("keeps fixed %s across prepaint, hydration a
   Object.defineProperty(window, "desktop", {
     configurable: true,
     value: {
-      bootstrap: { fixedAppearance: fixed },
-      visualSeed: { record: raw, pending: false },
+      visualSeed: { record: raw, pending: false, fixedAppearance: fixed },
       readVisual: () => ({ record: mirror, pending: false }),
       pushVisual,
     },

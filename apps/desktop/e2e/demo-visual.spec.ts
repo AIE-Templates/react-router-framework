@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { cookieName, DESKTOP_VISUAL_IPC, storageKey, visualRecordKernel } from "@repo/shared";
 
-import { expect, quit, targetProcesses, test, waitForApp } from "./desktop.ts";
-import { visualCookieEnabled } from "./visual-mirror.ts";
+import { expect, quit, test, waitForApp } from "./desktop.ts";
+import { isSsrBuild } from "./visual-mirror.ts";
 
 async function choose(page: Page, label: string, value: string, option: string) {
   const control = page.getByRole("combobox", { name: label, exact: true });
@@ -123,6 +123,26 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     await expect(home.locator("html")).toHaveAttribute("data-color-scheme", "light");
   });
 
+  test("an editor retaining its light opener paints with its own fixed appearance", async ({
+    desktop: { app, page },
+  }) => {
+    await choose(page, "Color scheme", "light", "Light");
+    await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("light");
+    const opened = app.waitForEvent("window");
+    await page.evaluate(() => {
+      window.open("/?layout=editor");
+    });
+    const editor = await opened;
+    await waitForApp(editor);
+    expect(await editor.evaluate(() => window.opener?.location.href)).toBe(page.url());
+    expect(await editor.evaluate(() => window.desktop!.visualSeed?.fixedAppearance)).toBe("dark");
+    expect(
+      await editor.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.resolved.colorScheme),
+    ).toBe("dark");
+    await expect(editor.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+    await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "light");
+  });
+
   test("settings update Home and Chat while all three windows keep their state", async ({
     desktop: { app, page: home },
   }) => {
@@ -168,7 +188,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       const html = new DOMParser().parseFromString(await response.text(), "text/html").documentElement;
       return [html.dataset.colorScheme, html.dir, html.dataset.reducedMotion];
     });
-    if (await visualCookieEnabled(chat)) expect(ssr).toEqual(["dark", "rtl", "reduce"]);
+    if (await isSsrBuild(chat)) expect(ssr).toEqual(["dark", "rtl", "reduce"]);
     else expect(ssr).toEqual([undefined, "ltr", undefined]);
     await expect(home.locator(".app-shell")).toHaveAttribute("data-header-mode", "standalone");
     await expect(chat.locator(".app-shell")).toHaveAttribute("data-header-mode", "fused");
@@ -298,6 +318,11 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       // A new command must save both the unsaved motion preference and the new direction.
       await choose(page, "Direction", "ltr", "LTR");
       await expect(notice).toBeHidden();
+      const recovered = await page.evaluate((key) => localStorage.getItem(key), preferenceKey);
+      expect(visualRecordKernel.decode(recovered).record?.preferences).toMatchObject({
+        direction: "ltr",
+        reducedMotion: "reduce",
+      });
       await page.reload();
       await waitForApp(page);
       await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
@@ -442,7 +467,9 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       .toBe(await page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences")));
   });
 
-  test("cold launch repairs the mirror after exit before native delivery", async ({ launchApp, target }) => {
+  test("cold launch repairs the mirror from localStorage after a clean quit before native delivery", async ({
+    launchApp,
+  }) => {
     const first = await launchApp();
     const key = storageKey("visual-preferences");
     const systemDark = await first.app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
@@ -453,7 +480,6 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     expect(visualRecordKernel.decode(old).record?.preferences.colorScheme).toBe(previous);
     const held = await holdNativePush(first.app, first.page);
     let wire: string | null;
-    let killed = false;
     try {
       await choose(first.page, "Color scheme", "auto", "System");
       await held.evaluate((gate) => gate.wait());
@@ -463,20 +489,10 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
         document.cookie = name + "=; Path=/; Max-Age=0";
       }, cookieName("visual"));
       expect(await first.page.evaluate(() => document.cookie)).not.toContain(cookieName("visual") + "=");
-      await first.app.evaluate(async ({ session }) => {
-        const appSession = session.fromPartition("persist:app");
-        appSession.flushStorageData();
-        await appSession.cookies.flushStore();
-      });
       expect(await first.page.evaluate(() => window.desktop!.readVisual().record)).toBe(old);
-      process.kill(first.pid, "SIGKILL");
-      killed = true;
-      await expect.poll(() => targetProcesses(target), { timeout: 10000 }).toEqual([]);
     } finally {
-      if (!killed) {
-        await held.evaluate((gate) => gate.restore());
-        await held.dispose();
-      }
+      // Keep delivery gated through shutdown. A clean quit lets Chromium finish persisting localStorage.
+      await quit(first);
     }
     const next = await launchApp();
     expect(await next.page.evaluate(() => window.desktop!.visualSeed?.record)).toBe(old);

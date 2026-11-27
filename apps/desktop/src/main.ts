@@ -337,6 +337,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     ipcMain,
     visualMirror,
     (event) => isTrustedSender(event, registry.byContentsId(event.sender.id)),
+    registry.fixedAppearanceFor,
     log,
   );
   installPrefsIpc(

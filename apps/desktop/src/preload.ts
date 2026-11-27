@@ -229,5 +229,10 @@ function readVisual(): VisualMirrorSnapshot {
     typeof value.pending !== "boolean"
   )
     throw new Error("Visual mirror unavailable");
-  return { record: value.record, pending: value.pending };
+  const fixed = "fixedAppearance" in value ? value.fixedAppearance : undefined;
+  return {
+    record: value.record,
+    pending: value.pending,
+    ...((fixed === "light" || fixed === "dark") && { fixedAppearance: fixed }),
+  };
 }
