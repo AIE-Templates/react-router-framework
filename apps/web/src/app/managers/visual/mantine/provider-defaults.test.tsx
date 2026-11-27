@@ -57,27 +57,40 @@ it("mounts with effective defaults and only persists a changed Mantine preferenc
   expect(cookie).toHaveBeenCalledTimes(2);
 });
 
-it("restores Mantine's scheme when a concurrent cookie write keeps the previous scheme", () => {
-  const { result } = renderHook(useAppearance, { wrapper: Providers });
-  const peer = createVisualManager({ host: window });
-  // The peer sees the pending dark record in local storage and writes a newer light record before read-back.
-  const cookie = vi
-    .spyOn(document, "cookie", "set")
-    .mockImplementationOnce(() => peer.actions.setColorSchemePreference("light"));
-  try {
+it.each(["set", "clear"] as const)(
+  "restores Mantine's scheme when a peer wins a %s before cookie read-back",
+  (operation) => {
+    const { result } = renderHook(useAppearance, { wrapper: Providers });
     act(() => result.current.mantine.setColorScheme("dark"));
-    expect(result.current.visual.getSnapshot().preferences.colorScheme).toBe("light");
+    const peer = createVisualManager({ host: window });
+    const changeScheme = () =>
+      operation === "clear"
+        ? result.current.mantine.clearColorScheme()
+        : result.current.mantine.setColorScheme("light");
+
+    // Let the peer observe the command's stamp in the cookie before it writes the winning record.
+    const write = Object.getOwnPropertyDescriptor(Document.prototype, "cookie")!.set!.bind(document);
+    const cookie = vi.spyOn(Document.prototype, "cookie", "set").mockImplementationOnce((value: string) => {
+      write(value);
+      peer.actions.setColorSchemePreference("dark");
+    });
+    try {
+      act(changeScheme);
+      expect(result.current.visual.getSnapshot().preferences.colorScheme).toBe("dark");
+      expect(result.current.mantine.colorScheme).toBe("dark");
+      expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
+    } finally {
+      cookie.mockRestore();
+    }
+
+    act(changeScheme);
+    expect(result.current.visual.getSnapshot().preferences).toEqual(
+      operation === "clear" ? {} : { colorScheme: "light" },
+    );
     expect(result.current.mantine.colorScheme).toBe("light");
     expect(document.documentElement.dataset.mantineColorScheme).toBe("light");
-  } finally {
-    cookie.mockRestore();
-  }
-
-  act(() => result.current.mantine.setColorScheme("dark"));
-  expect(result.current.visual.getSnapshot().preferences.colorScheme).toBe("dark");
-  expect(result.current.mantine.colorScheme).toBe("dark");
-  expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
-});
+  },
+);
 
 it("clears to the configured Mantine default even when the effective preference stays the same", () => {
   const { result } = renderHook(useAppearance, { wrapper: Providers });

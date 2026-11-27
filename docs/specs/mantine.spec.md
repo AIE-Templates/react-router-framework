@@ -7,6 +7,10 @@ render, the color scheme adapter reads the effective preference from the VisualM
 seeded by the request cookie. Each subscription immediately delivers the effective client preference
 and follows subsequent changes. This also picks up changes made before subscription or while effects
 were disconnected. Mantine takes its `defaultColorScheme` from `VISUAL_DEFAULTS.colorScheme`.
+Prepaint and the first connection each select the first valid startup source in upstream order
+(native mirror in Electron, cookie in SSR, then local storage). The first connection repairs differing
+sources with the selected record and its original stamp. With no valid source, it uses defaults and
+writes nothing. A command committed before connection switches that reconciliation to runtime ordering.
 After hydration, a fixed window appearance from VisualManager takes precedence through `forceColorScheme`.
 The window override leaves the shared preference record intact.
 
@@ -15,6 +19,8 @@ Mantine's `setColorScheme` writes only when its argument differs from that prefe
 with defaults and receiving subscription updates leave storage untouched. To record an explicit user
 choice equal to the default, call `visual.actions.setColorSchemePreference(value)`.
 Mantine's `clearColorScheme` removes only the color scheme field and restores the product default.
+If a concurrent record wins during either command, the adapter corrects Mantine's optimistic
+preference to match the effective winner, even when Core's effective preference stays the same.
 
 Core CSS reads data-color-scheme. The UI integration's data-only configuration adds
 data-mantine-color-scheme to the same prepaint script and runtime mapping. Core owns both root
@@ -26,15 +32,16 @@ still go through VisualManager.
 
 Static theme and component defaults are centralized in visual/mantine/theme.ts. Motion defaults
 use the manager's resolved preference, with zero-duration transitions in reduced mode and CSS
-fallback before hydration. Portal interaction surfaces are no-drag; the transparent portal root
+fallback before hydration. Both the explicit reduced preference and the system fallback disable the
+loading Button transitions on its root, `::before`, inner element and loader. Portal interaction surfaces are no-drag; the transparent portal root
 is not. The sample exercises Select, Button, Tooltip, Popover, Menu, Modal, a confirm modal and a
 notification; notifications are no-drag and follow the reduced-motion CSS.
 
 ## Source and style ownership
 
 The reusable VisualSettings panel and its tests live in components/appearance-settings; its
-colocated CSS Module uses the components layer. Native-control defaults in base.css and the panel
-module exclude Mantine classes, so they do not override the library's input and button styles.
+colocated CSS Module styles only the fieldset layout and surface in the components layer. Native
+controls opt in to the defaults in `styles/base.css` with `[data-native-control]`.
 The demo preserves the Mantine TextInput while using Core's feature-local module classes and
 stable data-demo controls. Ordinary UI tests use testing/render.tsx, which already composes the
 Mantine AppUiProvider through the shared slot.
@@ -62,7 +69,9 @@ Both CSS entry paths declare theme, base, mantine, components, utilities before 
 The Vite virtual CSS module generates complete shared/light/dark variables from the same merged
 theme and custom resolver as the provider. It emits an external production asset; no generated
 source is committed. Its selectors match only when both scheme attributes are absent, using a dark
-media query for system fallback. Dynamic component states still require JavaScript.
+media query for system fallback. The default Mantine Input wrapper takes its surface, border and
+focus border from `--app-color-card`, `--app-color-input` and `--app-color-ring` while both attributes
+are absent, preserving the keyboard focus indicator even with scripts blocked. Dynamic component states still require JavaScript.
 
 SSR style tags accept the document nonce through AppUiProvider. Static HTML continues to use the
 host's actual inline-script hashes. No additional script-src allowance is needed. UI-library CSS
