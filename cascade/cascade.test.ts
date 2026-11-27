@@ -41,7 +41,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
   function cascade(extra: string[] = [], env = process.env) {
     const result = spawnSync(process.execPath, [script, "--repo", repo, "--topology", topology, ...extra], {
       encoding: "utf8",
-      env,
+      env: { ...env, TMPDIR: dir, TMP: dir, TEMP: dir },
     });
     const logs = join(repo, ".git/cascade");
     const latest = readdirSync(logs)
@@ -53,6 +53,65 @@ function fixture(t: { after: (fn: () => void) => void }) {
   }
   return { dir, repo, git, initial, cascade };
 }
+
+test("temporary checkouts use LF defaults, honor explicit eol attributes, and compose Git settings", (t) => {
+  const f = fixture(t);
+  f.git("config", "core.autocrlf", "true");
+  f.git("config", "core.eol", "crlf");
+  writeFileSync(join(f.repo, ".gitattributes"), "normalized text\nwindows text eol=crlf\n");
+  for (const name of ["plain", "normalized", "windows"]) {
+    writeFileSync(join(f.repo, name), "line\r\n");
+  }
+  f.git("add", ".");
+  f.git("commit", "-qm", "add text fixtures");
+
+  const hooks = join(f.dir, "hooks");
+  mkdirSync(hooks);
+  const config = join(f.dir, "effective-config");
+  writeFileSync(
+    join(hooks, "post-checkout"),
+    '#!/bin/sh\nfor key in core.autocrlf core.eol core.longpaths rerere.enabled rerere.autoupdate; do git config --get "$key"; done > "$TEST_CONFIG"\n',
+    { mode: 0o755 },
+  );
+  const result = f.cascade(["--skip-checks", "--keep-worktree"], {
+    ...process.env,
+    TEST_CONFIG: config,
+    GIT_CONFIG_COUNT: "3",
+    GIT_CONFIG_KEY_0: "core.hooksPath",
+    GIT_CONFIG_VALUE_0: hooks,
+    GIT_CONFIG_KEY_1: "core.autocrlf",
+    GIT_CONFIG_VALUE_1: "true",
+    GIT_CONFIG_KEY_2: "core.longpaths",
+    GIT_CONFIG_VALUE_2: "false",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(config, "utf8").trim().split(/\r?\n/), ["false", "lf", "true", "true", "false"]);
+  const worktree = /^worktree kept: (.+)$/m.exec(result.stdout)?.[1];
+  assert.ok(worktree);
+  assert.equal(readFileSync(join(worktree, "plain"), "utf8"), "line\n");
+  assert.equal(readFileSync(join(worktree, "normalized"), "utf8"), "line\n");
+  assert.equal(readFileSync(join(worktree, "windows"), "utf8"), "line\r\n");
+  assert.equal(f.git("config", "--local", "core.autocrlf"), "true");
+});
+
+test("a failed worktree removal warns and preserves the branch summary, report, and exit status", (t) => {
+  const f = fixture(t);
+  const hooks = join(f.dir, "hooks");
+  mkdirSync(hooks);
+  f.git("config", "core.hooksPath", hooks);
+  // A locked worktree makes a single --force removal fail on every platform.
+  writeFileSync(
+    join(hooks, "post-checkout"),
+    '#!/bin/sh\nif ! test -f "$(git rev-parse --git-path locked)"; then git worktree lock "$(pwd)"; fi\n',
+    { mode: 0o755 },
+  );
+  const result = f.cascade(["--skip-checks"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Warning: could not remove temporary worktree .*cascade-/);
+  assert.match(result.stdout, /^updated\s+grandchild\s/m);
+  assert.match(result.stdout, /^report: .*report\.json$/m);
+  assert.deepEqual(result.results.map((r: { status: string }) => r.status), ["unchanged", "updated", "updated"]);
+});
 
 test("publishes a chain, preserves ancestry, and is idempotent", (t) => {
   const f = fixture(t);

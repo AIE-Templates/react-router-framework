@@ -70,14 +70,19 @@ const { values: options } = parseArgs({
 });
 const repo = resolve(options.repo);
 
-// rerere for this run's merges, whatever the repository's own configuration says.
-Object.assign(process.env, {
-  GIT_CONFIG_COUNT: "2",
-  GIT_CONFIG_KEY_0: "rerere.enabled",
-  GIT_CONFIG_VALUE_0: "true",
-  GIT_CONFIG_KEY_1: "rerere.autoupdate",
-  GIT_CONFIG_VALUE_1: "false",
-});
+// Append so unrelated caller settings survive and cascade takes precedence on shared keys.
+function appendGitConfig(settings: Record<string, string>) {
+  let count = Number(process.env.GIT_CONFIG_COUNT ?? 0);
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error("Invalid GIT_CONFIG_COUNT");
+  for (const [key, value] of Object.entries(settings)) {
+    process.env[`GIT_CONFIG_KEY_${count}`] = key;
+    process.env[`GIT_CONFIG_VALUE_${count}`] = value;
+    count++;
+  }
+  process.env.GIT_CONFIG_COUNT = String(count);
+}
+
+appendGitConfig({ "rerere.enabled": "true", "rerere.autoupdate": "false", "core.longpaths": "true" });
 
 function run(args: string[], cwd: string, allowFailure = false, env?: NodeJS.ProcessEnv): SpawnSyncReturns<string> {
   const [command, ...rest] = args;
@@ -290,6 +295,9 @@ function main() {
     string
   >;
   const worktree = mkdtempSync(join(tmpdir(), "cascade-"));
+  // Check existing worktrees with their usual EOL rules above. Use LF defaults for the
+  // temporary checkout, while honoring per-path eol attributes in the template.
+  appendGitConfig({ "core.autocrlf": "false", "core.eol": "lf" });
   git(repo, "worktree", "add", "--quiet", "--detach", worktree, tips.get(order[0].name)!);
 
   const results: NodeResult[] = [];
@@ -367,7 +375,14 @@ function main() {
       }
     }
   } finally {
-    if (!options["keep-worktree"]) git(repo, "worktree", "remove", "--force", worktree);
+    if (!options["keep-worktree"]) {
+      try {
+        git(repo, "worktree", "remove", "--force", worktree);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn(`Warning: could not remove temporary worktree ${worktree}: ${detail}`);
+      }
+    }
   }
 
   writeFileSync(join(runDir, "report.json"), `${JSON.stringify({ dryRun: options["dry-run"], results }, null, 2)}\n`);

@@ -93,7 +93,7 @@ Execution stages:
 
 1. **Topology validation**: Rejects duplicate branches, missing upstreams, enabled branches depending on disabled ones, and cycles; sorts enabled branches topologically.
 2. **Snapshot**: Records the starting tip of every enabled branch and fails early if any enabled branch is checked out with uncommitted changes (except under `--dry-run`).
-3. **Isolated merges**: Processes branches in a temporary detached worktree. For each upstream not yet an ancestor of the branch, creates one `--no-ff` merge commit (`--no-verify` skips staged-file hooks because full checks run on the whole tree afterward). Already-merged upstreams are skipped.
+3. **Isolated merges**: Processes branches in a temporary detached worktree. Cascade uses LF checkout defaults, honors explicit `.gitattributes` line endings, and enables Git long-path support on Windows. For each upstream not yet an ancestor of the branch, creates one `--no-ff` merge commit (`--no-verify` skips staged-file hooks because full checks run on the whole tree afterward). Already-merged upstreams are skipped.
 4. **Conflict handling**:
    - `git rerere` replays prior resolutions (shared via `.git/rr-cache`).
    - `package.json` conflicts use three-way semantic key merging across all merge bases; same-key divergence or delete-modify conflicts stop for manual resolution.
@@ -102,7 +102,7 @@ Execution stages:
 5. **Verification**: Runs `pnpm install --frozen-lockfile`, `lint`, `fmt:check`, `typecheck`, `vitest run`, and `build` with `CI=1` (preventing Lefthook from rewriting shared Git hooks). Logs are written to `.git/cascade/<timestamp>/<branch>.log`, and passing commits are recorded in `.git/cascade/verified.json`. Unverified tips (manual merges or direct source commits) are checked even when no upstream merge is pending. Electron smoke and packaged release checks are run separately before releasing Electron changes.
 6. **Atomic publication**: Moves each verified branch ref via `git update-ref --stdin` compare-and-swap against its starting tip and parent tips. Refuses to move a branch currently checked out in a worktree (detach that worktree HEAD first, or run from `main`).
 
-Run reports are written to `.git/cascade/<timestamp>/report.json`. Exit code is `1` if any branch failed, conflicted, or was blocked.
+Run reports are written to `.git/cascade/<timestamp>/report.json`. If Git cannot remove the temporary worktree, cascade warns with its path and still prints the summary and saves the report. Exit code is `1` if any branch failed, conflicted, or was blocked.
 
 ### Conflict Recovery
 
