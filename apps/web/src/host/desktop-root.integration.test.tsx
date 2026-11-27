@@ -4,10 +4,12 @@ import {
   type VisualRecord,
   type DesktopBridge,
   type DesktopRequest,
+  type DesktopWindowState,
   type Shell,
 } from "@repo/shared";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { renderToString } from "react-dom/server";
 import { createRoutesStub, RouterContextProvider, useLoaderData } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -95,12 +97,42 @@ function PeerPreference() {
 }
 
 describe("Layout", () => {
-  it("marks the document with the desktop shell's platform and per-request facts", async () => {
+  it("renders native fullscreen from loader data before connecting the renderer", () => {
+    const context = createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts });
+    const data = loader(loaderArgs(context));
+    const Stub = createRoutesStub([{ id: "root", path: "/", Component: () => <Layout>page</Layout> }], context);
+    const html = renderToString(<Stub initialEntries={["/"]} hydrationData={{ loaderData: { root: data } }} />);
+    expect(html).toContain('data-fullscreen="true"');
+  });
+
+  it("keeps host identity and clears the fullscreen seed when preload is absent", async () => {
     const html = renderLayout(createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts }));
 
-    await waitFor(() => expect(html.dataset.shell).toBe("desktop"));
+    await waitFor(() => expect(html.dataset.chromeEnhancement).toBe("unavailable"));
+    expect(html.dataset.shell).toBe("desktop");
     expect(html.dataset.platform).toBe("darwin");
     expect(html.dataset.titlebar).toBe("native");
+    expect(html.dataset.fullscreen).toBeUndefined();
+  });
+
+  it("preserves the seed until the first native state and follows later fullscreen transitions", async () => {
+    let emit!: (state: DesktopWindowState) => void;
+    window.desktop = {
+      platform: desktop.platform,
+      version: "1",
+      bootstrap: { protocolVersion: 1, shell: desktop, mode: "system-decorated" },
+      subscribeWindowState(listener) {
+        emit = listener;
+        return () => {};
+      },
+      declareOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
+    };
+    const html = renderLayout(createLoadContext(new Request("http://localhost/"), { shell: desktop, desktop: facts }));
+    await waitFor(() => expect(html.dataset.chromeEnhancement).toBe("available"));
+    expect(html.dataset.fullscreen).toBe("true");
+    act(() => emit({ revision: 1, focused: true, maximized: false, fullscreen: false }));
+    expect(html.dataset.fullscreen).toBe("false");
+    act(() => emit({ revision: 2, focused: true, maximized: false, fullscreen: true }));
     expect(html.dataset.fullscreen).toBe("true");
   });
 
