@@ -6,4 +6,4 @@ The Fullstack root loader validates the request cookie with `readVisualRequestSe
 
 In a SPA build, the root loader runs at build time without a user cookie. The browser uses local storage for visual preferences and reports the cookie store as `absent`.
 
-SSR HTML and Router `.data` responses carry the request's visual snapshot and, like React Router, no `Cache-Control`; keep them out of public caches as described in the [Fullstack host specification](fullstack-host.spec.md).
+Caching of SSR responses follows the [Fullstack host specification](fullstack-host.spec.md).
