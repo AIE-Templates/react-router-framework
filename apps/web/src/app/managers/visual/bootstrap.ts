@@ -55,11 +55,17 @@ export function visualKernel(records: typeof visualRecordKernel, cookieValue: ty
     host: Window,
     native?: NativeVisualSource["prepaint"],
   ): VisualBootstrapRecord {
-    const local = optional(() => records.decode(host.localStorage.getItem(config.storageKey)).record);
-    const name = config.cookieName;
-    const cookie = name ? optional(() => records.decode(cookieValue(host.document.cookie, name)).record) : undefined;
     const preload = optional(() => native?.(host));
-    const record = records.pick([local, cookie, records.decode(preload?.record ?? null).record]);
+    const name = config.cookieName;
+    const record = records.atStart({
+      native: records.decode(preload?.record ?? null).record,
+      get cookie() {
+        return name ? optional(() => records.decode(cookieValue(host.document.cookie, name)).record) : undefined;
+      },
+      get local() {
+        return optional(() => records.decode(host.localStorage.getItem(config.storageKey)).record);
+      },
+    });
     return {
       storageKey: config.storageKey,
       record,
