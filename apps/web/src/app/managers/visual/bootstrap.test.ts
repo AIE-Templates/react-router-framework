@@ -56,9 +56,9 @@ it.each([
             return raw === null ? "" : name + "=" + encodeURIComponent(raw);
           });
           window.name = native ?? "";
-          const expected = visualRecordKernel.pick(
-            [local, cookie, native].map((raw) => visualRecordKernel.decode(raw ?? null).record),
-          );
+          const expected = [native, cookie, local]
+            .map((raw) => visualRecordKernel.decode(raw ?? null).record)
+            .find(Boolean);
           runInNewContext(script, { window, document: page });
           const result = window.frameworkVisualBootstrap!;
           expect(result).toEqual(visualCodec.read(config, window, nativeReader));

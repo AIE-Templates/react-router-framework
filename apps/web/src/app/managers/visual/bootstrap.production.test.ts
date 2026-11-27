@@ -31,7 +31,7 @@ it.each([true, false])("runs the minified production prepaint in a fresh realm (
   const script: string = runInNewContext(chunk.code + "\nVisual.visualScript()");
   const local = {
     version: 1,
-    stamp: { t: 1, id: "a" },
+    stamp: { t: 3, id: "a" },
     preferences: { direction: "rtl", reducedMotion: "reduce" },
   } as const;
   const cookie = { version: 1, stamp: { t: 2, id: "a" }, preferences: { colorScheme: "dark" } } as const;
