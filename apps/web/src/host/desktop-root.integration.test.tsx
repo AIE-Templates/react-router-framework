@@ -137,8 +137,8 @@ describe("Layout", () => {
     try {
       document.replaceChild(document.importNode(html.documentElement, true), original);
       writeVisualCookie(window, raw);
-      const mirror = { record: raw, pending: false };
-      const seed = { ...mirror, fixedAppearance: "dark" as const };
+      // Preload returns the window's fixed appearance on every live read, as in the document-start seed.
+      const seed = { record: raw, pending: false, fixedAppearance: "dark" as const };
       const pushVisual = vi.fn<DesktopBridge["pushVisual"]>(async () => "ok");
       const bridge = {
         platform: "darwin",
@@ -147,7 +147,7 @@ describe("Layout", () => {
         subscribeWindowState: () => () => {},
         declareOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
         visualSeed: seed,
-        readVisual: () => mirror,
+        readVisual: () => seed,
         pushVisual,
       } satisfies Omit<DesktopBridge, "setPref" | "removePref">;
       window.desktop = bridge;
