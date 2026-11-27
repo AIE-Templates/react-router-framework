@@ -2,9 +2,9 @@ import type { OverlayAppearance } from "@repo/shared";
 import { useId, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 
 import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
-import { getDragRegionProps, getInteractiveProps } from "~/managers/environment/dom-props";
-import { useAppEnvironment } from "~/managers/environment/hooks";
-import { useOverlayAppearance } from "~/managers/environment/use-overlay-appearance";
+import { getDragRegionProps, getInteractiveProps } from "~/platform/chrome-adapter/dom-props";
+import { useChromeState } from "~/platform/chrome-adapter/hooks";
+import { useOverlayAppearance } from "~/platform/chrome-adapter/use-overlay-appearance";
 
 import { ShellChromeContext } from "./chrome-context";
 
@@ -44,7 +44,7 @@ function Shell({
   overlayAppearance,
   ...navigationProps
 }: BasicShellProps & Partial<NavigationShellProps>) {
-  const chrome = useAppEnvironment();
+  const chrome = useChromeState();
   useOverlayAppearance(overlayAppearance);
   const body = useRef<HTMLDivElement>(null);
   const navigationId = useId();

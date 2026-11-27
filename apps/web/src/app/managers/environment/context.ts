@@ -1,11 +1,11 @@
-import { createContext, useContext } from "react";
+import type { Shell } from "@repo/shared";
+import { createContext } from "react";
 
-import type { createWindowChromeRuntime } from "./runtime";
+import type { ChromeState } from "~/platform/chrome-adapter/runtime";
 
-export const EnvironmentContext = createContext<ReturnType<typeof createWindowChromeRuntime> | null>(null);
-
-export function useEnvironmentRuntime() {
-  const runtime = useContext(EnvironmentContext);
-  if (!runtime) throw new Error("AppRoot is required for application environment access");
-  return runtime;
+export interface AppEnvironment {
+  readonly shell: Shell;
+  readonly chrome: ChromeState;
 }
+
+export const EnvironmentContext = createContext<AppEnvironment | null>(null);
