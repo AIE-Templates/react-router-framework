@@ -10,7 +10,7 @@ The dependency direction is recommended, not lint-enforced. App imports use `~/`
 
 ## Infrastructure owners
 
-`managers/environment` contains runtime, context, hooks and DOM-prop helpers. AppRoot creates the environment runtime directly; it is not a ManagersRegistry member. Host-independent contracts remain in Core; protocols and native synchronization belong to platform-specific layers. `managers/visual` owns visual state, lifecycle and adapters. `components/appearance-settings.tsx` is shared appearance UI, not a manager implementation.
+`managers/environment` exposes the business environment. AppRoot composes its provider inside ChromeAdapterProvider, which owns the renderer adapter in `platform/chrome-adapter`. Host-independent contracts remain in Core; protocols and native synchronization belong to platform-specific layers. `managers/visual` owns visual state, lifecycle and adapters. `components/appearance-settings.tsx` is shared appearance UI, not a manager implementation.
 
 `providers` contains application composition points. Production root/entry.server code consumes them; `testing/render.tsx` composes AppRoot and AppUiProvider for ordinary UI tests. Its optional `appRoot` settings seed the real AppRoot. Router context remains explicit. Provider lifecycle/initial-state/unmount tests may mount providers directly; the helper is not mandatory for those tests. Only tests import testing utilities.
 

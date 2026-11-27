@@ -4,8 +4,8 @@ import { notifications } from "@mantine/notifications";
 import { visualRecordKernel } from "@repo/shared";
 import { useRef, useState } from "react";
 
-import { getInteractiveProps } from "~/managers/environment/dom-props";
 import { useVisualActions, useVisualState, useVisualStatus } from "~/managers/visual/hooks";
+import { getInteractiveProps } from "~/platform/chrome-adapter/dom-props";
 
 import classes from "./appearance-settings.module.css";
 
