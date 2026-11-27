@@ -128,7 +128,7 @@ it.each([
 });
 
 it.each(["E4 stale cookie", "E5 request in flight"])(
-  "%s hydrates the request snapshot and keeps the newer prepaint",
+  "%s hydrates the request snapshot and uses the current document cookie at first paint and connection",
   async (scenario) => {
     const record: VisualRecord = {
       version: 1,
@@ -151,16 +151,18 @@ it.each(["E4 stale cookie", "E5 request in flight"])(
       expect(html.dataset.colorScheme).toBe("dark");
       expect(html.dataset.reducedMotion).toBe("reduce");
       expect(document.querySelector("main")?.textContent).toBe("dark");
+      const scheme = inFlight ? "light" : "dark";
+      const winner = inFlight ? current : old;
       prepaint();
-      expect(html.dataset.colorScheme).toBe("light");
+      expect(html.dataset.colorScheme).toBe(scheme);
       expect(document.querySelector("main")?.textContent).toBe("dark");
-      expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(inFlight ? current : old);
+      expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(winner);
       await hydrate();
-      expect(document.querySelector("main")?.textContent).toBe("light");
-      expect(html.dir).toBe("rtl");
-      expect(html.dataset.colorScheme).toBe("light");
-      expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(current);
-      expect(localStorage.getItem(visualBootstrapConfig.storageKey)).toBe(current);
+      expect(document.querySelector("main")?.textContent).toBe(scheme);
+      expect(html.dir).toBe(inFlight ? "rtl" : "ltr");
+      expect(html.dataset.colorScheme).toBe(scheme);
+      expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(winner);
+      expect(localStorage.getItem(visualBootstrapConfig.storageKey)).toBe(winner);
       expect(document.head.querySelectorAll("[data-visual-init]")).toHaveLength(1);
       expect(document.head.querySelectorAll('meta[name="viewport"]')).toHaveLength(1);
       expect(document.head.querySelectorAll("#window-chrome-safety")).toHaveLength(1);

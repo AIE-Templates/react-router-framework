@@ -13,7 +13,7 @@ function record(t: number, preferences: Partial<VisualPreferences> = {}, id = "a
 }
 
 // Input digits denote record time, '-' missing, '!' invalid and 'x' unavailable.
-// The last column lists the available replicas that need the winning record.
+// Inputs are ordered upstream to downstream. The last column lists the available replicas that need the winning record.
 it.each([
   ["A1", "-", 0, ""],
   ["A2", "!", 0, ""],
@@ -22,7 +22,7 @@ it.each([
   ["B1", "-!", 0, ""],
   ["B2", "1-", 1, "1"],
   ["B3", "!1", 1, "0"],
-  ["B4", "12", 2, "0"],
+  ["B4", "12", 1, "1"],
   ["B5", "21", 2, "1"],
   ["B6", "11", 1, ""],
   ["B7", "1x", 1, ""],
@@ -32,34 +32,40 @@ it.each([
   ["C3", "-1-", 1, "02"],
   ["C4", "--1", 1, "01"],
   ["C5", "21-", 2, "12"],
-  ["C6", "12-", 2, "02"],
+  ["C6", "12-", 1, "12"],
   ["C7", "11-", 1, "2"],
   ["C8", "2-1", 2, "12"],
-  ["C9", "1-2", 2, "01"],
+  ["C9", "1-2", 1, "12"],
   ["C10", "1-1", 1, "1"],
   ["C11", "-21", 2, "02"],
-  ["C12", "-12", 2, "01"],
+  ["C12", "-12", 1, "02"],
   ["C13", "-11", 1, "0"],
   ["C14", "211", 2, "12"],
-  ["C15", "121", 2, "02"],
-  ["C16", "112", 2, "01"],
+  ["C15", "121", 1, "1"],
+  ["C16", "112", 1, "2"],
   ["C17", "221", 2, "2"],
   ["C18", "212", 2, "1"],
-  ["C19", "122", 2, "0"],
+  ["C19", "122", 1, "12"],
   ["C20", "111", 1, ""],
-] as const)("%s selects the observable maximum and repairs only lagging sources", (_, inputs, time, repair) => {
-  const sources = Array.from(
-    inputs,
-    (c) => kernel.decode(c === "!" ? "{}" : Number(c) ? kernel.encode(record(Number(c))) : null).record,
-  );
-  const best = kernel.pick(sources);
-  expect(best?.stamp.t ?? 0).toBe(time);
-  expect(kernel.pick(Array.from(sources, (_source, i) => sources[sources.length - i - 1]))).toEqual(best);
-  expect(kernel.pick([...sources, best, ...sources])).toEqual(best);
-  expect(
-    sources.flatMap((source, i) => (inputs[i] !== "x" && best && kernel.behind(source, best) ? [i] : [])).join(""),
-  ).toBe(repair);
-});
+] as const)(
+  "%s starts from the first valid upstream and repairs every different replica",
+  (_, inputs, time, repair) => {
+    const sources = Array.from(
+      inputs,
+      (c) => kernel.decode(c === "!" ? "{}" : Number(c) ? kernel.encode(record(Number(c))) : null).record,
+    );
+    const [native, cookie, local] = sources;
+    const selected = kernel.atStart({ native, cookie, local });
+    expect(selected?.stamp.t ?? 0).toBe(time);
+    expect(
+      sources
+        .flatMap((source, i) =>
+          inputs[i] !== "x" && selected && (!source || kernel.compare(source, selected) !== 0) ? [i] : [],
+        )
+        .join(""),
+    ).toBe(repair);
+  },
+);
 
 it("orders by time, code units and canonical sparse JSON, independently of key order", () => {
   const a = record(1, { direction: "rtl", colorScheme: "dark" });

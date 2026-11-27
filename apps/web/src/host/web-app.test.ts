@@ -49,6 +49,27 @@ afterEach(() => {
 describe("static files", () => {
   const web = createWebApp({ clientDir, ssr: true });
 
+  it("hashes the current HTML for HEAD and GET after a replacement with the same mtime", async () => {
+    const production = createWebApp({ clientDir, ssr: true, csp: defaultPolicy(false) });
+    const path = join(clientDir, "replace.html");
+    for (const script of ["window.page='旧'", "window.page='新'"]) {
+      const bytes = Buffer.from(`\uFEFF<script>${script}</script>`);
+      writeFileSync(path, bytes);
+      utimesSync(path, lastModified, lastModified);
+
+      const expected = createHash("sha256").update(script).digest("base64");
+      const head = await production.request("/replace.html", { method: "HEAD" });
+      const get = await production.request("/replace.html");
+      expect(head.status).toBe(200);
+      expect(get.status).toBe(200);
+      expect(head.headers.get("content-length")).toBe(String(bytes.length));
+      expect(head.body).toBeNull();
+      expect(get.headers.get("content-security-policy")).toContain(`script-src 'self' 'sha256-${expected}';`);
+      expect(head.headers.get("content-security-policy")).toBe(get.headers.get("content-security-policy"));
+      expect(Buffer.from(await get.arrayBuffer())).toEqual(bytes);
+    }
+  });
+
   it.each([
     ['"old"', 200, "icon"],
     ["Sun, 01 Jan 2023 00:00:00 GMT", 200, "icon"],
@@ -198,8 +219,7 @@ describe("without server rendering", () => {
     const prerendered = await production.request("/about");
     expect(prerendered.headers.get("content-security-policy")).toContain("script-src 'self';");
     expect(await prerendered.text()).toBe("<p>prerendered</p>");
-    // HEAD carries the same policy as GET (the hashes come from the file, not the response body),
-    // documents never serve byte ranges, and HTML under /assets is a document too.
+    // HEAD carries the same policy as GET, documents never serve byte ranges, and HTML under /assets is a document too.
     const head = await production.request("/", { method: "HEAD" });
     expect(head.headers.get("content-security-policy")).toBe(header);
     const ranged = await production.request("/", { headers: { range: "bytes=0-" } });
