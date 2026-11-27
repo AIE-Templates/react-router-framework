@@ -33,7 +33,7 @@ export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ n
   const [colorSchemeManager] = useState(() => createMantineColorSchemeManager(manager));
   // Fixed window appearance is supplied by the client host after the SSR request.
   const fixedAppearance = useSyncExternalStore(
-    manager.subscribeStatus,
+    manager.subscribe,
     () => manager.fixedAppearance,
     () => undefined,
   );

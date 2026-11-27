@@ -21,28 +21,19 @@ export const visualTheme = createTheme({
   },
 });
 export const resolvedVisualTheme = mergeMantineTheme(DEFAULT_THEME, visualTheme);
+const schemeVariables = {
+  "--mantine-color-body": "var(--app-color-background)",
+  "--mantine-color-text": "var(--app-color-foreground)",
+  "--mantine-color-bright": "var(--app-color-foreground)",
+  "--mantine-color-default-color": "var(--app-color-foreground)",
+  "--mantine-color-dimmed": "var(--app-color-muted-foreground)",
+  "--mantine-color-placeholder": "var(--app-color-muted-foreground)",
+  "--mantine-color-default": "var(--app-color-card)",
+  "--mantine-color-default-hover": "var(--app-color-muted)",
+  "--mantine-color-default-border": "var(--app-color-input)",
+};
 export const visualVariables: CSSVariablesResolver = () => ({
   variables: {},
-  light: {
-    "--mantine-color-body": "var(--app-color-background)",
-    "--mantine-color-text": "var(--app-color-foreground)",
-    "--mantine-color-bright": "var(--app-color-foreground)",
-    "--mantine-color-default-color": "var(--app-color-foreground)",
-    "--mantine-color-dimmed": "var(--app-color-muted-foreground)",
-    "--mantine-color-placeholder": "var(--app-color-muted-foreground)",
-    "--mantine-color-default": "var(--app-color-card)",
-    "--mantine-color-default-hover": "var(--app-color-muted)",
-    "--mantine-color-default-border": "var(--app-color-input)",
-  },
-  dark: {
-    "--mantine-color-body": "var(--app-color-background)",
-    "--mantine-color-text": "var(--app-color-foreground)",
-    "--mantine-color-bright": "var(--app-color-foreground)",
-    "--mantine-color-default-color": "var(--app-color-foreground)",
-    "--mantine-color-dimmed": "var(--app-color-muted-foreground)",
-    "--mantine-color-placeholder": "var(--app-color-muted-foreground)",
-    "--mantine-color-default": "var(--app-color-card)",
-    "--mantine-color-default-hover": "var(--app-color-muted)",
-    "--mantine-color-default-border": "var(--app-color-input)",
-  },
+  light: schemeVariables,
+  dark: schemeVariables,
 });

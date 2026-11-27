@@ -7,7 +7,7 @@ import { mantineCss } from "./vite-plugins/styles.ts";
 import { visualFallbackPlugin } from "./vite-plugins/visual-fallback.ts";
 
 export default defineConfig({
-  define: { APP_SSR: JSON.stringify(routerConfig.ssr) },
+  define: { APP_SSR: JSON.stringify(routerConfig.ssr !== false) },
   environments: {
     ssr: {
       resolve: {
