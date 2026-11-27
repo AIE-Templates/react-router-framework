@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
 import { useAppEnvironment } from "~/managers/environment/hooks";
+import { useOverlayAppearance } from "~/managers/environment/use-overlay-appearance";
 
 import { AppRoot } from "./app-root";
 
@@ -18,14 +19,14 @@ function Probe() {
     </span>
   );
 }
-function desktopBridge(): WindowChromeBridge {
+function desktopBridge(platform: "win32" | "darwin" = "darwin"): WindowChromeBridge {
   return {
-    platform: "darwin",
+    platform,
     version: "1",
     bootstrap: {
       protocolVersion: 1,
-      shell: { kind: "desktop", platform: "darwin", osVersion: "26" },
-      mode: "system-decorated",
+      shell: { kind: "desktop", platform, osVersion: "26" },
+      mode: platform === "darwin" ? "system-decorated" : "native-overlay",
     },
     subscribeWindowState: vi.fn<WindowChromeBridge["subscribeWindowState"]>(() => vi.fn<() => void>()),
     declareOverlayAppearance: vi.fn<WindowChromeBridge["declareOverlayAppearance"]>(async () => ({
@@ -105,7 +106,7 @@ describe("AppRoot", () => {
 function appearanceHost() {
   let owner: string | undefined;
   let color: string | undefined;
-  const host = desktopBridge();
+  const host = desktopBridge("win32");
   host.declareOverlayAppearance = async (declaration) => {
     if (declaration.appearance && owner && owner !== declaration.owner)
       return { status: "rejected", reason: "appearance-owner-conflict" };
@@ -121,6 +122,23 @@ function appearanceHost() {
   window.desktop = host;
   return { owner: () => owner, color: () => color };
 }
+function CustomWindowLayout() {
+  useOverlayAppearance({ color: "#123456" });
+  return <main>Workspace</main>;
+}
+
+it("lets a custom layout request and release an overlay without a shell", () => {
+  const host = appearanceHost();
+  const view = render(
+    <AppRoot>
+      <CustomWindowLayout />
+    </AppRoot>,
+  );
+  expect(host.color()).toBe("#123456");
+  view.unmount();
+  expect(host.owner()).toBeUndefined();
+});
+
 function AppearanceTree() {
   return (
     <AppRoot>
@@ -136,7 +154,7 @@ function editorWithAppearance(color?: string) {
   );
 }
 it("replaces the current shell declaration without releasing between prop changes", () => {
-  const host = desktopBridge();
+  const host = desktopBridge("win32");
   window.desktop = host;
   const view = render(editorWithAppearance("#123456"));
   const declaration = vi.mocked(host.declareOverlayAppearance);
