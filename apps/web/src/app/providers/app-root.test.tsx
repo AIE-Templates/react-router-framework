@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BasicShell, NavigationShell } from "~/layouts/app-shell/app-shell";
 import { useAppEnvironment } from "~/managers/environment/hooks";
-import { useOverlayAppearance } from "~/managers/environment/use-overlay-appearance";
+import { ChromeAdapterProvider } from "~/platform/chrome-adapter/chrome-adapter-provider";
+import { useChromeSnapshot } from "~/platform/chrome-adapter/hooks";
+import { useOverlayAppearance } from "~/platform/chrome-adapter/use-overlay-appearance";
 
 import { AppRoot } from "./app-root";
 
@@ -15,7 +17,7 @@ function Probe() {
   const environment = useAppEnvironment();
   return (
     <span>
-      {environment.shell.kind}:{environment.enhancement}
+      {environment.shell.kind}:{environment.chrome.enhancement}
     </span>
   );
 }
@@ -230,6 +232,44 @@ it("releases and reapplies native appearance when an Activity disconnects the pr
       <AppearanceTree />
     </Activity>,
   );
+  expect(host.color()).toBe("#123456");
+  view.unmount();
+  expect(host.owner()).toBeUndefined();
+});
+
+function IndependentShell() {
+  const { shell, chrome } = useChromeSnapshot();
+  return (
+    <BasicShell overlayAppearance={{ color: "#123456" }}>
+      <output>
+        {shell.kind}:{String(chrome.fullscreen)}
+      </output>
+    </BasicShell>
+  );
+}
+
+it("supplies shell, state and shell appearance outside the application environment", () => {
+  const host = appearanceHost();
+  const bridge = window.desktop!;
+  delete window.desktop;
+  const tree = (mode: "visible" | "hidden") => (
+    <StrictMode>
+      <Activity mode={mode}>
+        <ChromeAdapterProvider initial={{ fullscreen: true }} bridge={bridge}>
+          <IndependentShell />
+        </ChromeAdapterProvider>
+      </Activity>
+    </StrictMode>
+  );
+  const view = render(tree("visible"));
+  expect(screen.getByText("desktop:undefined")).toBeInTheDocument();
+  expect(host.color()).toBe("#123456");
+  view.rerender(tree("hidden"));
+  expect(host.owner()).toBeUndefined();
+  view.rerender(tree("visible"));
+  const state = vi.mocked(bridge.subscribeWindowState).mock.lastCall![0];
+  act(() => state({ focused: true, maximized: false, fullscreen: true, revision: 1 }));
+  expect(screen.getByText("desktop:true")).toBeInTheDocument();
   expect(host.color()).toBe("#123456");
   view.unmount();
   expect(host.owner()).toBeUndefined();

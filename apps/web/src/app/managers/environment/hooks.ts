@@ -1,8 +1,9 @@
-import { useSyncExternalStore } from "react";
+import { useContext } from "react";
 
-import { useEnvironmentRuntime } from "./context";
+import { EnvironmentContext } from "./context";
 
 export function useAppEnvironment() {
-  const runtime = useEnvironmentRuntime();
-  return useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getServerSnapshot);
+  const environment = useContext(EnvironmentContext);
+  if (!environment) throw new Error("AppRoot is required for application environment access");
+  return environment;
 }
