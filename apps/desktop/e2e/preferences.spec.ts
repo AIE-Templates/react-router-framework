@@ -1,7 +1,11 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { Page } from "@playwright/test";
 import type { DesktopRequest } from "@repo/shared";
 
 import { expect, quit, test, waitForApp } from "./desktop.ts";
+import { isSsrBuild } from "./visual-mirror.ts";
 
 // Preferences under app://app (HOST-08): the page writes them through the preload bridge, the main
 // process keeps them (and prefs.json in the user data directory) and sends them with every request
@@ -50,6 +54,7 @@ async function reload(page: Page): Promise<void> {
 test("a preference set from the page reaches server rendering after a reload, and its removal too", async ({
   desktop: { page },
 }) => {
+  test.skip(!(await isSsrBuild(page)), "Request-time preference rendering requires SSR");
   expect(await rendered(page)).toEqual({ document: false, fetched: false });
   expect(await setPref(page, KEY, VALUE)).toEqual({ status: "applied" });
   // No reload needed for requests: the very next one carries it.
@@ -65,6 +70,7 @@ test("a preference set from the page reaches server rendering after a reload, an
 test("invalid preferences are rejected and change nothing", async ({ desktop: { page } }) => {
   expect(await setPref(page, "bad key", VALUE)).toEqual({ status: "rejected", reason: "invalid-key" });
   expect(await setPref(page, KEY, "x".repeat(5000))).toEqual({ status: "rejected", reason: "invalid-value" });
+  if (!(await isSsrBuild(page))) return;
   // A forged header from the page is replaced by the main process's own.
   const forged = await page.evaluate(async (value) => {
     const html = await (
@@ -75,14 +81,20 @@ test("invalid preferences are rejected and change nothing", async ({ desktop: { 
   expect(forged).toBe(false);
 });
 
-test("a preference survives quitting and relaunching on the same user data", async ({ launchApp }) => {
+test("a preference survives quitting and relaunching on the same user data", async ({ launchApp, userDataDir }) => {
   const first = await launchApp();
   expect(await first.page.evaluate(() => window.desktop!.readVisual())).toEqual({ record: null, pending: false });
   expect(await setPref(first.page, KEY, VALUE)).toEqual({ status: "applied" });
   // Quit right after writing: the store writes prefs.json before answering.
   await quit(first);
   const second = await launchApp();
-  expect(await rendered(second.page)).toEqual({ document: true, fetched: true });
+  if (await isSsrBuild(second.page)) expect(await rendered(second.page)).toEqual({ document: true, fetched: true });
+  // A second write serializes the relaunched main process's in-memory preferences in either build.
+  expect(await setPref(second.page, "afterRestart", "yes")).toEqual({ status: "applied" });
+  const file = join(userDataDir, "prefs.json");
+  expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ [KEY]: VALUE, afterRestart: "yes" });
+  expect(await setPref(second.page, KEY, null)).toEqual({ status: "applied" });
+  expect(JSON.parse(await readFile(file, "utf8"))).not.toHaveProperty(KEY);
   expect(await second.page.evaluate(() => window.desktop!.visualSeed)).toEqual({ record: null, pending: false });
 });
 
@@ -99,6 +111,7 @@ test("desktop writes enforce the application-prefixed cookie budget", async ({ d
 });
 
 test("open peer windows revalidate on preference writes and removals", async ({ desktop: { app, page } }) => {
+  test.skip(!(await isSsrBuild(page)), "Peer loader revalidation requires SSR");
   const opened = app.waitForEvent("window");
   await page.evaluate(() => {
     window.open("/?peer=1");
@@ -123,6 +136,7 @@ test("open peer windows revalidate on preference writes and removals", async ({ 
 test("a burst of preference changes reaches the peer's loaders with the final value", async ({
   desktop: { app, page },
 }) => {
+  test.skip(!(await isSsrBuild(page)), "Peer loader revalidation requires SSR");
   const opened = app.waitForEvent("window");
   await page.evaluate(() => {
     window.open("/?burst", "_blank", "noopener");

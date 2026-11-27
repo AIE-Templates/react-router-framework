@@ -37,7 +37,7 @@ import {
   storeCookieKeyFirst,
 } from "./main/cookie-key.ts";
 import { cookieWakeStorage } from "./main/cookie-wake-storage.ts";
-import { openFirstWindow } from "./main/first-window.ts";
+import { openFirstWindow, syncFirstVisualCookie } from "./main/first-window.ts";
 import { createLogger, type Logger } from "./main/log.ts";
 import { INTERNAL_ORIGIN } from "./main/mapping.ts";
 import { installPermissionPolicy } from "./main/permissions.ts";
@@ -337,6 +337,7 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
     ipcMain,
     visualMirror,
     (event) => isTrustedSender(event, registry.byContentsId(event.sender.id)),
+    registry.fixedAppearanceFor,
     log,
   );
   installPrefsIpc(
@@ -449,11 +450,20 @@ async function main({ log, debug, profile, compileCacheDir, cookieKey }: Startup
   });
 
   const openMainWindow = () => registry.open(APP_ORIGIN + "/", "primary");
-  const first = await openFirstWindow(appSession.cookies, log, profile, () => {
-    if (quitting) return undefined;
-    profile.mark("navigation-start");
-    return openMainWindow();
-  });
+  if (run.firstWindowGate) await run.firstWindowGate;
+  const first = await openFirstWindow(
+    appSession.cookies,
+    log,
+    profile,
+    () => {
+      if (quitting) return undefined;
+      profile.mark("navigation-start");
+      return openMainWindow();
+    },
+    DESKTOP_SSR
+      ? (stored) => syncFirstVisualCookie(stored, visualMirror.read().record, cookies.script, log)
+      : undefined,
+  );
   if (!first) return;
   const initialLoad = first.loaded ?? Promise.resolve();
   // After the first window is on its way, so the check never delays it.

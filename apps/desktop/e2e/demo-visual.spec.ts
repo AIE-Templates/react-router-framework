@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { cookieName, DESKTOP_VISUAL_IPC, storageKey, visualRecordKernel } from "@repo/shared";
 
-import { expect, quit, targetProcesses, test, waitForApp } from "./desktop.ts";
-import { visualCookieEnabled } from "./visual-mirror.ts";
+import { expect, quit, test, waitForApp } from "./desktop.ts";
+import { firstVisualSeed, isSsrBuild } from "./visual-mirror.ts";
 
 async function choose(page: Page, label: string, value: string, option: string) {
   const control = page.getByRole("combobox", { name: label, exact: true });
@@ -128,6 +128,26 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     await expect(home.locator("html")).toHaveAttribute("data-color-scheme", "light");
   });
 
+  test("an editor retaining its light opener paints with its own fixed appearance", async ({
+    desktop: { app, page },
+  }) => {
+    await choose(page, "Color scheme", "light", "Light");
+    await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("light");
+    const opened = app.waitForEvent("window");
+    await page.evaluate(() => {
+      window.open("/?layout=editor");
+    });
+    const editor = await opened;
+    await waitForApp(editor);
+    expect(await editor.evaluate(() => window.opener?.location.href)).toBe(page.url());
+    expect(await editor.evaluate(() => window.desktop!.visualSeed?.fixedAppearance)).toBe("dark");
+    expect(
+      await editor.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.resolved.colorScheme),
+    ).toBe("dark");
+    await expect(editor.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+    await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "light");
+  });
+
   test("settings update Home and Chat while all three windows keep their state", async ({
     desktop: { app, page: home },
   }) => {
@@ -174,7 +194,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       const html = new DOMParser().parseFromString(await response.text(), "text/html").documentElement;
       return [html.dataset.colorScheme, html.dir, html.dataset.reducedMotion];
     });
-    if (await visualCookieEnabled(chat)) expect(ssr).toEqual(["dark", "rtl", "reduce"]);
+    if (await isSsrBuild(chat)) expect(ssr).toEqual(["dark", "rtl", "reduce"]);
     else expect(ssr).toEqual([undefined, "ltr", undefined]);
     await expect(home.locator(".app-shell")).toHaveAttribute("data-header-mode", "standalone");
     await expect(chat.locator(".app-shell")).toHaveAttribute("data-header-mode", "fused");
@@ -304,6 +324,11 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       // A new command must save both the unsaved motion preference and the new direction.
       await choose(page, "Direction", "ltr", "LTR");
       await expect(notice).toBeHidden();
+      const recovered = await page.evaluate((key) => localStorage.getItem(key), preferenceKey);
+      expect(visualRecordKernel.decode(recovered).record?.preferences).toMatchObject({
+        direction: "ltr",
+        reducedMotion: "reduce",
+      });
       await page.reload();
       await waitForApp(page);
       await expect(page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
@@ -391,7 +416,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     });
   }
 
-  test("a child opened before native acknowledgement corrects its old construction color before paint", async ({
+  test("a child opened before native delivery paints its native background before following the live writer", async ({
     desktop: { app, page },
   }) => {
     await choose(page, "Color scheme", "light", "Light");
@@ -416,7 +441,8 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       expect(await child.evaluate(() => window.desktop!.visualSeed?.record)).toBe(old);
       expect(
         await child.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap")?.state.resolved.colorScheme),
-      ).toBe("dark");
+      ).toBe("light");
+      // The writer still holds the newer edit in memory. Its storage event repairs the child at runtime.
       await expect(child.locator("html")).toHaveAttribute("data-color-scheme", "dark");
       await expect.poll(() => child.evaluate(() => window.desktop!.readVisual().record)).toBe(edit);
       await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
@@ -426,7 +452,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     }
   });
 
-  test("a reload before the native acknowledgement recovers the Web command", async ({ desktop: { app, page } }) => {
+  test("a reload with an empty mirror recovers the undelivered Web command", async ({ desktop: { app, page } }) => {
     const fault = await holdNativePush(app, page);
     try {
       await choose(page, "Direction", "rtl", "RTL");
@@ -448,7 +474,7 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
       .toBe(await page.evaluate((key) => localStorage.getItem(key), storageKey("visual-preferences")));
   });
 
-  test("cold launch repairs the mirror after exit before native delivery", async ({ launchApp, target }) => {
+  test("E8 cold launch rolls back an undelivered edit and paints the native scheme", async ({ launchApp }) => {
     const first = await launchApp();
     const key = storageKey("visual-preferences");
     const systemDark = await first.app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
@@ -458,43 +484,62 @@ test.describe("demo appearance", { tag: "@demo" }, () => {
     const old = await first.page.evaluate(() => window.desktop!.readVisual().record);
     expect(visualRecordKernel.decode(old).record?.preferences.colorScheme).toBe(previous);
     const held = await holdNativePush(first.app, first.page);
-    let wire: string | null;
-    let killed = false;
+    const changed = previous === "light" ? "dark" : "light";
+    let edit: string | null;
     try {
-      await choose(first.page, "Color scheme", "auto", "System");
+      await choose(first.page, "Color scheme", changed, changed === "light" ? "Light" : "Dark");
       await held.evaluate((gate) => gate.wait());
-      wire = await first.page.evaluate((name) => localStorage.getItem(name), key);
-      expect(visualRecordKernel.decode(wire).record?.preferences.colorScheme).toBe("auto");
+      edit = await first.page.evaluate((name) => localStorage.getItem(name), key);
+      expect(visualRecordKernel.decode(edit).record?.preferences.colorScheme).toBe(changed);
       await first.page.evaluate((name) => {
         document.cookie = name + "=; Path=/; Max-Age=0";
       }, cookieName("visual"));
       expect(await first.page.evaluate(() => document.cookie)).not.toContain(cookieName("visual") + "=");
-      await first.app.evaluate(async ({ session }) => {
-        const appSession = session.fromPartition("persist:app");
-        appSession.flushStorageData();
-        await appSession.cookies.flushStore();
-      });
       expect(await first.page.evaluate(() => window.desktop!.readVisual().record)).toBe(old);
-      process.kill(first.pid, "SIGKILL");
-      killed = true;
-      await expect.poll(() => targetProcesses(target), { timeout: 10000 }).toEqual([]);
     } finally {
-      if (!killed) {
-        await held.evaluate((gate) => gate.restore());
-        await held.dispose();
-      }
+      // Keep delivery gated through shutdown. A clean quit lets Chromium finish persisting localStorage.
+      await quit(first);
     }
-    const next = await launchApp();
+    const next = await launchApp(async (app) => {
+      await app.evaluate(({ app: electronApp }) => {
+        electronApp.once("browser-window-created", (_event, win) => {
+          Reflect.set(globalThis, "e2eInitialBackground", win.getBackgroundColor().toLowerCase());
+        });
+      });
+      await app.context().addInitScript((keyName) => {
+        if (location.protocol !== "app:" || window.top !== window) return;
+        Reflect.set(window, "e2eLocalBeforeRepair", localStorage.getItem(keyName));
+        const scheme = new Promise<string>((resolve) => {
+          const sample = () => {
+            if (document.body) resolve(getComputedStyle(document.body).colorScheme);
+            else requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        });
+        Reflect.set(window, "e2eFirstPaintScheme", scheme);
+      }, key);
+    });
+    expect(await next.page.evaluate(() => Reflect.get(window, "e2eLocalBeforeRepair"))).toBe(edit);
     expect(await next.page.evaluate(() => window.desktop!.visualSeed?.record)).toBe(old);
     const handoff = await next.page.evaluate(() => Reflect.get(window, "frameworkVisualBootstrap"));
-    expect(handoff.record).toEqual(visualRecordKernel.decode(wire).record);
-    // With auto, Chromium may still expose the old native media value before reconciliation.
-    await expect.poll(() => next.page.evaluate(() => window.desktop!.readVisual().record)).toBe(wire);
-    await expect.poll(() => next.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("system");
-    const dark = await next.app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
-    // Playwright emulates a light system scheme; auto must follow the real one that nativeTheme reports.
-    await next.page.emulateMedia({ colorScheme: null });
-    await expect(next.page.locator("html")).toHaveAttribute("data-color-scheme", dark ? "dark" : "light");
+    const native = await next.app.evaluate(({ nativeTheme }) => ({
+      scheme: nativeTheme.themeSource,
+      background: Reflect.get(globalThis, "e2eInitialBackground"),
+    }));
+    expect(native).toEqual({ scheme: previous, background: previous === "dark" ? "#17191d" : "#ffffff" });
+    expect(handoff.record).toEqual(visualRecordKernel.decode(old).record);
+    expect(handoff.state.resolved.colorScheme).toBe(native.scheme);
+    expect(await next.page.evaluate(() => Reflect.get(window, "e2eFirstPaintScheme"))).toBe(native.scheme);
+    await expect(next.page.locator("html")).toHaveAttribute("data-color-scheme", previous);
+    expect(await next.page.evaluate((name) => localStorage.getItem(name), key)).toBe(old);
+    expect(await next.page.evaluate(() => window.desktop!.readVisual().record)).toBe(old);
+    const ssr = await isSsrBuild(next.page);
+    expect(await firstVisualSeed(next.page)).toEqual(ssr ? handoff.record : undefined);
+    const cookie = await next.page.evaluate(
+      (name) => document.cookie.split(/;\s*/).find((part) => part.startsWith(name + "=")),
+      cookieName("visual"),
+    );
+    expect(cookie).toBe(ssr ? cookieName("visual") + "=" + encodeURIComponent(old!) : undefined);
   });
 
   for (const scenario of [

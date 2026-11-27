@@ -200,6 +200,26 @@ describe("window chrome bridge", () => {
     expect(win.setBackgroundColor).toHaveBeenLastCalledWith("#ffffff");
     dispose();
   });
+  it("consumes a failed revision without retaining its owner or painting its override later", () => {
+    const { win, event, dispose, invoke, document, store } = setup();
+    const declare = (owner: string, revision: number, color: string) =>
+      invoke(DESKTOP_CHROME_IPC.declaration, event, {
+        document,
+        declaration: { owner, revision, appearance: { color } },
+      });
+    try {
+      win.setTitleBarOverlay.mockImplementationOnce(() => {
+        throw new Error("native overlay unavailable");
+      });
+      expect(declare("first", 2, "#112233")).toEqual({ status: "rejected", reason: "native-update-failed" });
+      expect(declare("other", 1, "#445566")).toEqual({ status: "rejected", reason: "stale-declaration" });
+      store.push(JSON.stringify({ version: 1, stamp: { t: 1, id: "a" }, preferences: { colorScheme: "dark" } }));
+      expect(win.setTitleBarOverlay).toHaveBeenLastCalledWith({ color: "#17191d", symbolColor: "#f3f4f6" });
+      expect(declare("other", 3, "#445566")).toMatchObject({ status: "applied", appearance: { color: "#445566" } });
+    } finally {
+      dispose();
+    }
+  });
   it.each(["did-navigate", "render-process-gone"])(
     "replaces and releases complete declarations, retiring the owner on %s",
     (retireEvent) => {

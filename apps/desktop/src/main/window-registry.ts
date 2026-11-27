@@ -28,6 +28,7 @@ type Recovery = ReturnType<typeof createWindowRecovery>;
 interface Entry {
   window: BrowserWindow;
   key?: string;
+  fixedAppearance?: "light" | "dark";
   recovery: Recovery;
   present(): void;
   /** The exited renderer is no longer accessible through getOSProcessId(). */
@@ -99,7 +100,13 @@ export function createWindowRegistry(options: RegistryOptions) {
     // Set below, once readiness is tracked: the window was just shown by configureWindow.
     let afterShown: (() => void) | undefined;
     const present = configureWindow(win, { ...options, fixedAppearance }, children, () => afterShown?.());
-    const entry: Entry = { window: win, recovery, present, key: fixedKey ?? options.keyForUrl(new URL(url)) };
+    const entry: Entry = {
+      window: win,
+      recovery,
+      present,
+      fixedAppearance,
+      key: fixedKey ?? options.keyForUrl(new URL(url)),
+    };
     entries.set(id, entry);
     if (lifecycle) deliver(recovery, lifecycle);
 
@@ -207,6 +214,9 @@ export function createWindowRegistry(options: RegistryOptions) {
       const win = id === undefined ? undefined : entries.get(id)?.window;
       return win?.isDestroyed() ? undefined : win;
     },
+    fixedAppearanceFor(this: void, id: number) {
+      return entries.get(id)?.fixedAppearance;
+    },
     *windows() {
       for (const { window } of entries.values()) yield window;
     },
@@ -215,7 +225,7 @@ export function createWindowRegistry(options: RegistryOptions) {
       const existing = focusExisting(fixedKey ?? options.keyForUrl(new URL(url)));
       if (existing) return { window: existing, loaded: undefined };
       const window = createAppWindow(options);
-      adopt(window, url, fixedKey);
+      adopt(window, url, fixedKey, options.fixedAppearance);
       return { window, loaded: window.loadURL(url) };
     },
     utilityChanged(this: void, event: UtilityLifecycle) {

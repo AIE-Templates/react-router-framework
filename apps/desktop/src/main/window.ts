@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
-import { DESKTOP_BOOTSTRAP_ARGUMENT, desktopBootstrapFromArguments, type DesktopBootstrap } from "@repo/shared";
+import { DESKTOP_BOOTSTRAP_ARGUMENT, type DesktopBootstrap } from "@repo/shared";
 import {
   app,
   Menu,
@@ -113,7 +113,7 @@ function nativeOptions({ session, preloadPath, chrome, appVersion, fixedAppearan
       ...(DESKTOP_BUILD_PROFILE === "release" ? { devTools: false } : {}),
       additionalArguments: [
         `--desktop-app-version=${appVersion}`,
-        ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify({ ...chrome.bootstrap, fixedAppearance })}`] : []),
+        ...(chrome ? [`${DESKTOP_BOOTSTRAP_ARGUMENT}${JSON.stringify(chrome.bootstrap)}`] : []),
       ],
     },
   };
@@ -256,8 +256,7 @@ export function configureWindow(
         y: geometry.y ?? cascade(bounds.y, size.height, area.y, area.height, placement),
       });
     }
-    const bootstrap = desktopBootstrapFromArguments(geometry.webPreferences?.additionalArguments ?? []);
-    children.adopt(child, url, bootstrap?.fixedAppearance);
+    children.adopt(child, url, options.childAppearance?.(new URL(url)));
   });
   win.webContents.on("render-process-gone", (_event, details) => {
     if (details.reason !== "clean-exit" && details.reason !== "killed") log.error({ details }, "renderer process gone");

@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { webBuildSsr } from "../../../build-tools/web-render-mode.ts";
 import { type BuildCommandProfile, type Bundle, bundleDir, BUNDLES, perBundle } from "./build-profile.ts";
 import { checkBundleTexts } from "./bundle-markers.ts";
 import { checkBundleModules, readBundleModules } from "./bundle-modules.ts";
@@ -48,6 +49,7 @@ export interface BuildCheck {
 export function checkBuiltBundles(directory: string = desktopDir): BuildCheck {
   const problems: string[] = [];
   const findings: string[] = [];
+  const ssr = webBuildSsr(resolve(directory, "../web/build"));
   const release = new Map<Bundle, string>();
   for (const profile of PROFILES) {
     for (const bundle of BUNDLES) {
@@ -59,11 +61,15 @@ export function checkBuiltBundles(directory: string = desktopDir): BuildCheck {
       findings.push(...check.findings.map((finding) => `${label}: ${finding}`));
     }
     const read = (bundle: Bundle) => readFileSync(join(directory, bundleDir(profile), bundle), "utf8");
-    const text = checkBundleTexts(profile, {
-      "main.cjs": read("main.cjs"),
-      "preload.cjs": read("preload.cjs"),
-      "utility.mjs": read("utility.mjs"),
-    });
+    const text = checkBundleTexts(
+      profile,
+      {
+        "main.cjs": read("main.cjs"),
+        "preload.cjs": read("preload.cjs"),
+        "utility.mjs": read("utility.mjs"),
+      },
+      ssr,
+    );
     problems.push(...text.problems);
     findings.push(...text.findings.map((finding) => `${profile} text: ${finding}`));
   }

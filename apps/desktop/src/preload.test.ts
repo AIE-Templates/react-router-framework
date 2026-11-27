@@ -206,6 +206,17 @@ it("ignores malformed preference subscriptions before registering native callbac
   expect(wire.invoke).not.toHaveBeenCalled();
 });
 
+it("samples the opener and child independently when both preloads run with the same process arguments", async () => {
+  const opener = await load();
+  expect(opener.visualSeed?.fixedAppearance).toBeUndefined();
+  vi.resetModules();
+  vi.clearAllMocks();
+  wire.sendSync.mockReturnValueOnce({ record: null, pending: false, fixedAppearance: "dark" });
+  const child = await load();
+  expect(child.visualSeed?.fixedAppearance).toBe("dark");
+  expect(wire.sendSync).toHaveBeenCalledExactlyOnceWith(DESKTOP_VISUAL_IPC.read);
+});
+
 it("samples once for prepaint, reads live pending state and classifies the application-level push", async () => {
   const bridge = await load();
   expect(bridge.visualSeed).toEqual({ record: null, pending: false });

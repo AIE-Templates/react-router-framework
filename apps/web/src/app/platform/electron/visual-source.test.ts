@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { STORAGE_KEYS } from "~/config/storage";
 import { visualCookie } from "~/config/visual-cookie";
 import { visualBootstrapConfig, visualScript } from "~/managers/visual/bootstrap";
-import { readVisualCookie } from "~/managers/visual/cookie";
+import { readVisualCookie, writeVisualCookie } from "~/managers/visual/cookie";
 import { createVisualManager } from "~/managers/visual/manager";
 
 import { desktopVisualPrepaint, desktopVisualSource } from "./visual-source";
@@ -42,8 +42,7 @@ it.each(["dark", "light"] as const)("keeps fixed %s across prepaint, hydration a
   Object.defineProperty(window, "desktop", {
     configurable: true,
     value: {
-      bootstrap: { fixedAppearance: fixed },
-      visualSeed: { record: raw, pending: false },
+      visualSeed: { record: raw, pending: false, fixedAppearance: fixed },
       readVisual: () => ({ record: mirror, pending: false }),
       pushVisual,
     },
@@ -113,6 +112,46 @@ it.each([true, false])(
     }
   },
 );
+
+it.each([
+  [true, true],
+  [false, true],
+  [true, false],
+  [false, false],
+])("skips an unread native mirror (SSR=%s, recovered before connect=%s)", async (ssr, recovered) => {
+  const config = { ...visualBootstrapConfig, cookieName: ssr ? visualCookie.name : undefined };
+  const [native, cookie, local] = [1, 2, 3].map((t) =>
+    visualRecordKernel.encode({ version: 1, stamp: { t, id: "test" }, preferences: {} }),
+  );
+  if (ssr) writeVisualCookie(window, cookie);
+  localStorage.setItem(config.storageKey, local);
+  const readVisual = vi.fn<DesktopBridge["readVisual"]>(() => ({
+    record: recovered ? native : null,
+    pending: !recovered,
+  }));
+  const pushVisual = vi.fn<DesktopBridge["pushVisual"]>().mockResolvedValue("failed");
+  Object.defineProperty(window, "desktop", {
+    configurable: true,
+    value: { visualSeed: { record: null, pending: true }, readVisual, pushVisual },
+  });
+  runInNewContext(visualScript(desktopVisualPrepaint, config), { window, document });
+  expect(window.frameworkVisualBootstrap?.record).toEqual(visualRecordKernel.decode(ssr ? cookie : local).record);
+  expect(localStorage.getItem(config.storageKey)).toBe(local);
+  expect(readVisual).not.toHaveBeenCalled();
+  const manager = createVisualManager({ host: window, nativeSource: desktopVisualSource, config });
+  const release = manager.connect();
+  try {
+    expect(readVisual).toHaveBeenCalledOnce();
+    const expected = recovered ? native : ssr ? cookie : local;
+    expect(localStorage.getItem(config.storageKey)).toBe(expected);
+    expect(readVisualCookie(document.cookie, visualCookie.name)).toBe(ssr ? expected : null);
+    expect(pushVisual.mock.calls).toEqual(recovered ? [] : [[expected]]);
+    await Promise.resolve();
+    expect(manager.getStatus().storage.native).toBe(recovered ? "ok" : "failed");
+  } finally {
+    release();
+  }
+});
 
 it("E19 hands successive SPA edits between windows through the live bridge alone", async () => {
   let record: string | null = null;

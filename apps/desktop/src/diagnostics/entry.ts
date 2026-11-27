@@ -23,6 +23,12 @@ export const selectMainRun: SelectMainRun = (debug, { development, log }) => {
   const benchConfig = modes.bench ? benchConfigFrom(debug) : undefined;
   return {
     modes,
+    firstWindowGate:
+      modes.e2e && process.argv.includes("--e2e-hold-first-window")
+        ? new Promise<void>((resolve) => {
+            globalThis.e2eReleaseFirstWindow = resolve;
+          })
+        : undefined,
     async start(context) {
       if (benchConfig && context.server) {
         const utility = context.server;

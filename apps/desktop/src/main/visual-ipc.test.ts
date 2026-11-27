@@ -19,11 +19,11 @@ it("checks sender ownership on both channels and validates the wire record befor
   };
   const mirror = createVisualMirror("fixture", { log, fs });
   const trust = vi.fn<() => boolean>(() => false);
-  installVisualIpc(ipc, mirror, trust, log);
+  installVisualIpc(ipc, mirror, trust, (id) => (id === 2 ? "dark" : undefined), log);
   const [[readChannel, read]] = ipc.on.mock.calls;
   const [[pushChannel, push]] = ipc.handle.mock.calls;
   expect([readChannel, pushChannel]).toEqual([DESKTOP_VISUAL_IPC.read, DESKTOP_VISUAL_IPC.push]);
-  const event = { returnValue: undefined };
+  const event = { sender: { id: 1 }, returnValue: undefined };
   const raw = '{"version":1,"stamp":{"t":1,"id":"a"},"preferences":{"direction":"rtl"}}';
   Reflect.apply(read, null, [event]);
   expect(event.returnValue).toBeNull();
@@ -41,4 +41,7 @@ it("checks sender ownership on both channels and validates the wire record befor
   expect(Reflect.apply(push, null, [event, raw])).toBe("failed");
   Reflect.apply(read, null, [event]);
   expect(event.returnValue).toEqual({ record: raw, pending: true });
+  const child = { sender: { id: 2 }, returnValue: undefined };
+  Reflect.apply(read, null, [child]);
+  expect(child.returnValue).toEqual({ record: raw, pending: true, fixedAppearance: "dark" });
 });

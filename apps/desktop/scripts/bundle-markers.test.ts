@@ -4,7 +4,7 @@ import { DEBUG_ENV, DEV_ENV } from "../src/debug-env.names.ts";
 import { BENCH_PREFIX } from "../src/diagnostics/bench/routes.ts";
 import { E2E_PREFIX } from "../src/diagnostics/e2e/routes.ts";
 import { SMOKE_PREFIX } from "../src/diagnostics/smoke/routes.ts";
-import { REMOTE_DEBUGGING_REFUSED_MESSAGE } from "../src/startup-signals.ts";
+import { REMOTE_DEBUGGING_REFUSED_MESSAGE, VISUAL_COOKIE_FAILED_MESSAGE } from "../src/startup-signals.ts";
 import type { Bundle } from "./build-profile.ts";
 import { BUNDLE_MARKERS, checkBundleTexts, desktopNames, hasMarker, RELEASE_DESKTOP_ENV } from "./bundle-markers.ts";
 
@@ -21,7 +21,7 @@ const test: Record<Bundle, string> = {
     "var q={bootProfile:`DESKTOP_BOOT_PROFILE`,portAckCoalesce:`DESKTOP_PORT_ACK_COALESCE`,smoke:`DESKTOP_SMOKE`," +
     "smokeLayout:`DESKTOP_SMOKE_LAYOUT`,smokeScreenshot:`DESKTOP_SMOKE_SCREENSHOT`,bench:`DESKTOP_BENCH`," +
     "benchCases:`DESKTOP_BENCH_CASES`,benchWarmupMs:`DESKTOP_BENCH_WARMUP_MS`,benchMeasureMs:`DESKTOP_BENCH_MEASURE_MS`," +
-    "benchLabel:`DESKTOP_BENCH_LABEL`,e2e:`DESKTOP_E2E`};globalThis.desktopBuildProfile=`test`;" +
+    "benchLabel:`DESKTOP_BENCH_LABEL`,e2e:`DESKTOP_E2E`};process.argv.includes(`--e2e-hold-first-window`);globalThis.desktopBuildProfile=`test`;" +
     "fetch(`/__smoke/sse?id=1`);fetch(`/__bench/proc`);process.stdout.write(`SMOKE_RESULT ${a}`);" +
     "process.stdout.write(`BENCH_RESULT ${b}`);let r=process.env.DESKTOP_CHROME_MODE",
   "preload.cjs": release["preload.cjs"],
@@ -76,18 +76,19 @@ describe("the markers", () => {
 
 describe("checkBundleTexts", () => {
   it("accepts release and test bundles as they are built", () => {
-    expect(checkBundleTexts("release", release)).toEqual({
+    expect(checkBundleTexts("release", release, false)).toEqual({
       problems: [],
       findings: [
-        "none of 18 markers in main.cjs, preload.cjs, utility.mjs (debug environment variable, " +
-          "development environment variable, diagnostic route prefix, diagnostic result marker, build profile global)",
+        "none of 19 markers in main.cjs, preload.cjs, utility.mjs (debug environment variable, " +
+          "development environment variable, diagnostic route prefix, diagnostic result marker, first-window test gate, build profile global)",
         'main.cjs refuses remote debugging ("remote debugging refused")',
+        "main.cjs visual cookie pre-write matches the SPA Web build",
       ],
     });
-    const result = checkBundleTexts("test", test);
+    const result = checkBundleTexts("test", test, false);
     expect(result.problems).toEqual([]);
-    expect(result.findings).toHaveLength(3);
-    expect(result.findings[1]).toMatch(/^all 17 markers of the test profile found: DESKTOP_BOOT_PROFILE, /);
+    expect(result.findings).toHaveLength(4);
+    expect(result.findings[1]).toMatch(/^all 18 markers of the test profile found: DESKTOP_BOOT_PROFILE, /);
   });
 
   it.each([
@@ -107,23 +108,39 @@ describe("checkBundleTexts", () => {
     ["main.cjs", "process.stdout.write(`BENCH_RESULT ${e}`)", "the diagnostic result marker BENCH_RESULT"],
     ["main.cjs", "globalThis.desktopBuildProfile=`release`", "the build profile global desktopBuildProfile"],
   ] as const)("fails a release %s that contains %j", (bundle, line, what) => {
-    expect(checkBundleTexts("release", withLine(release, bundle, line)).problems).toEqual([
+    expect(checkBundleTexts("release", withLine(release, bundle, line), false).problems).toEqual([
       `.vite/release/${bundle} contains ${what}, which the release profile must not`,
     ]);
   });
 
+  it.each(["release", "test"] as const)("checks the %s main pre-write against the actual Web build", (profile) => {
+    const spa = profile === "release" ? release : test;
+    const ssr = withLine(spa, "main.cjs", VISUAL_COOKIE_FAILED_MESSAGE);
+    expect(checkBundleTexts(profile, ssr, true).problems).toEqual([]);
+    expect(checkBundleTexts(profile, spa, true).problems).toEqual([
+      `.vite/${profile}/main.cjs visual cookie pre-write disagrees with the SSR Web build`,
+    ]);
+    expect(checkBundleTexts(profile, ssr, false).problems).toEqual([
+      `.vite/${profile}/main.cjs visual cookie pre-write disagrees with the SPA Web build`,
+    ]);
+  });
+
   it("fails a release bundle that names a DESKTOP_* variable nobody listed", () => {
-    expect(checkBundleTexts("release", withLine(release, "main.cjs", "process.env.DESKTOP_TRACE")).problems).toEqual([
+    expect(
+      checkBundleTexts("release", withLine(release, "main.cjs", "process.env.DESKTOP_TRACE"), false).problems,
+    ).toEqual([
       `.vite/release/main.cjs contains DESKTOP_TRACE: a release build reads no DESKTOP_* variable but ${RELEASE_DESKTOP_ENV.join(", ")}`,
     ]);
     // A longer name than a listed one is another variable, and not a listed one.
-    expect(checkBundleTexts("release", withLine(release, "utility.mjs", "e.DESKTOP_SMOKE_RETRIES")).problems).toEqual([
+    expect(
+      checkBundleTexts("release", withLine(release, "utility.mjs", "e.DESKTOP_SMOKE_RETRIES"), false).problems,
+    ).toEqual([
       ".vite/release/utility.mjs contains DESKTOP_SMOKE_RETRIES: a release build reads no DESKTOP_* variable but DESKTOP_CHROME_MODE",
     ]);
   });
 
   it("fails a release main bundle that does not refuse remote debugging", () => {
-    expect(checkBundleTexts("release", without(release, REMOTE_DEBUGGING_REFUSED_MESSAGE)).problems).toEqual([
+    expect(checkBundleTexts("release", without(release, REMOTE_DEBUGGING_REFUSED_MESSAGE), false).problems).toEqual([
       '.vite/release/main.cjs does not contain "remote debugging refused": it does not refuse remote debugging',
     ]);
   });
@@ -138,21 +155,25 @@ describe("checkBundleTexts", () => {
             "utility.mjs": test["utility.mjs"],
           }
         : without(test, marker.text);
-      expect(checkBundleTexts("test", code).problems).toEqual([
+      expect(checkBundleTexts("test", code, false).problems).toEqual([
         `no test bundle contains the ${marker.kind} ${marker.text}: the check cannot see what it looks for`,
       ]);
     }
     // The release bundles, presented as test: nothing found, so nothing proven.
-    expect(checkBundleTexts("test", without(release, REMOTE_DEBUGGING_REFUSED_MESSAGE)).problems).toHaveLength(17);
+    expect(checkBundleTexts("test", without(release, REMOTE_DEBUGGING_REFUSED_MESSAGE), false).problems).toHaveLength(
+      18,
+    );
   });
 
   it("fails a test bundle that contains the dev build's variable or the release build's refusal", () => {
     expect(
-      checkBundleTexts("test", withLine(test, "main.cjs", "process.env[`DESKTOP_USER_DATA_SUFFIX`]")).problems,
+      checkBundleTexts("test", withLine(test, "main.cjs", "process.env[`DESKTOP_USER_DATA_SUFFIX`]"), false).problems,
     ).toEqual([
       ".vite/test/main.cjs contains the development environment variable DESKTOP_USER_DATA_SUFFIX, which the test profile must not",
     ]);
-    expect(checkBundleTexts("test", withLine(test, "main.cjs", "var Ft=`remote debugging refused`")).problems).toEqual([
+    expect(
+      checkBundleTexts("test", withLine(test, "main.cjs", "var Ft=`remote debugging refused`"), false).problems,
+    ).toEqual([
       '.vite/test/main.cjs contains "remote debugging refused": only release builds refuse remote debugging, ' +
         "so finding the message would no longer show that a build does",
     ]);

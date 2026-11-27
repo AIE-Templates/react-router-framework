@@ -19,6 +19,7 @@ export interface DesktopBridge extends WindowChromeBridge {
 export interface VisualMirrorSnapshot {
   record: string | null;
   pending: boolean;
+  fixedAppearance?: "light" | "dark";
 }
 export const DESKTOP_VISUAL_IPC = { read: "desktop:visual:read", push: "desktop:visual:push" } as const;
 

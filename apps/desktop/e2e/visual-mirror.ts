@@ -12,10 +12,17 @@ export async function pushVisual(page: Page, preferences: Partial<VisualPreferen
 }
 
 /** Read the hydrated build's rendering mode, including when a packaged app runs under a different shell environment. */
-export async function visualCookieEnabled(page: Page): Promise<boolean> {
+export async function isSsrBuild(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const ssr: unknown = Reflect.get(window, "__reactRouterContext")?.ssr;
     if (typeof ssr !== "boolean") throw new Error("Missing React Router build mode");
     return ssr;
   });
+}
+
+/** The original document loader seed, before any renderer repair or revalidation. */
+export function firstVisualSeed(page: Page) {
+  return page.evaluate(
+    () => Reflect.get(window, "__reactRouterContext").state.loaderData.root.managersInitialState.visual,
+  );
 }

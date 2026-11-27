@@ -10,7 +10,7 @@
 //   control, on the test bundles, that each of them is still what the source says.
 // Runs on Node directly (type stripping).
 import { DEBUG_ENV, DEV_ENV } from "../src/debug-env.names.ts";
-import { REMOTE_DEBUGGING_REFUSED_MESSAGE } from "../src/startup-signals.ts";
+import { REMOTE_DEBUGGING_REFUSED_MESSAGE, VISUAL_COOKIE_FAILED_MESSAGE } from "../src/startup-signals.ts";
 import { type BuildProfile, type Bundle, bundleDir, BUNDLES } from "./build-profile.ts";
 
 export interface BundleMarker {
@@ -52,6 +52,7 @@ export const BUNDLE_MARKERS: readonly BundleMarker[] = [
     profiles: DIAGNOSTIC_PROFILES,
     name: true,
   })),
+  { text: "--e2e-hold-first-window", kind: "first-window test gate", profiles: DIAGNOSTIC_PROFILES, name: false },
   // What src/main.ts leaves on `globalThis` for the Playwright fixtures.
   { text: "desktopBuildProfile", kind: "build profile global", profiles: DIAGNOSTIC_PROFILES, name: true },
 ];
@@ -100,7 +101,11 @@ export interface BundleTextCheck {
  * - main.cjs contains the remote debugging refusal (its log message) in release, and only there:
  *   the other profiles compile the refusal out, which is what makes its presence mean something.
  */
-export function checkBundleTexts(profile: BuildProfile, code: Readonly<Record<Bundle, string>>): BundleTextCheck {
+export function checkBundleTexts(
+  profile: BuildProfile,
+  code: Readonly<Record<Bundle, string>>,
+  ssr?: boolean,
+): BundleTextCheck {
   const problems: string[] = [];
   const findings: string[] = [];
   const where = (bundle: Bundle) => `${bundleDir(profile)}/${bundle}`;
@@ -161,6 +166,15 @@ export function checkBundleTexts(profile: BuildProfile, code: Readonly<Record<Bu
         ? `main.cjs refuses remote debugging ("${REMOTE_DEBUGGING_REFUSED_MESSAGE}")`
         : `main.cjs has no remote debugging refusal`,
     );
+  }
+  // Shipped bundles are linked to the verified build by SHA-256. Only a checkout has the Web mode record.
+  if (ssr !== undefined) {
+    const renderMode = ssr ? "SSR" : "SPA";
+    if (code["main.cjs"].includes(VISUAL_COOKIE_FAILED_MESSAGE) !== ssr) {
+      problems.push(`${where("main.cjs")} visual cookie pre-write disagrees with the ${renderMode} Web build`);
+    } else {
+      findings.push(`main.cjs visual cookie pre-write matches the ${renderMode} Web build`);
+    }
   }
   return { problems, findings };
 }
