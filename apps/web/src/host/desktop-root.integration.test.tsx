@@ -137,14 +137,15 @@ describe("Layout", () => {
       document.replaceChild(document.importNode(html.documentElement, true), original);
       writeVisualCookie(window, raw);
       const mirror = { record: raw, pending: false };
+      const seed = { ...mirror, fixedAppearance: "dark" as const };
       const pushVisual = vi.fn<DesktopBridge["pushVisual"]>(async () => "ok");
       const bridge = {
         platform: "darwin",
         version: "1",
-        bootstrap: { protocolVersion: 1, shell: desktop, mode: "system-decorated", fixedAppearance: "dark" },
+        bootstrap: { protocolVersion: 1, shell: desktop, mode: "system-decorated" },
         subscribeWindowState: () => () => {},
         declareOverlayAppearance: async () => ({ status: "unsupported", reason: "system-decorated" }),
-        visualSeed: mirror,
+        visualSeed: seed,
         readVisual: () => mirror,
         pushVisual,
       } satisfies Omit<DesktopBridge, "setPref" | "removePref">;
