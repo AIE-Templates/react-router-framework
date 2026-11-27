@@ -14,9 +14,9 @@ declare module "hono" {
 export type ContentSecurityPolicy = Record<string, string[]>;
 
 /**
- * The default policy: everything same-origin, inline scripts only with the document's nonce (or,
- * for prebuilt pages, their hash), inline styles allowed (Tailwind and React style attributes),
- * no plugins, no framing. `'self'` is the document's origin, so the same policy serves the web
+ * Images, fonts and API requests allow external HTTPS origins. WebSockets allow WSS.
+ * Inline scripts require the document's nonce or a prebuilt page's hash. Inline styles are allowed.
+ * `'self'` is the document's origin, so the same policy serves the web
  * deployment and the desktop shell's `app://app`.
  *
  * In development the Vite client and React Refresh inject inline scripts without a nonce, and HMR
@@ -28,9 +28,9 @@ export function defaultPolicy(development = import.meta.env.DEV): ContentSecurit
     "default-src": ["'self'"],
     "script-src": development ? ["'self'", "'unsafe-inline'"] : ["'self'"],
     "style-src": ["'self'", "'unsafe-inline'"],
-    "img-src": ["'self'", "data:", "blob:"],
-    "font-src": ["'self'", "data:"],
-    "connect-src": development ? ["'self'", "ws:", "wss:"] : ["'self'"],
+    "img-src": ["'self'", "https:", "data:", "blob:"],
+    "font-src": ["'self'", "https:", "data:"],
+    "connect-src": development ? ["'self'", "https:", "wss:", "http:", "ws:"] : ["'self'", "https:", "wss:"],
     "object-src": ["'none'"],
     "base-uri": ["'self'"],
     "frame-ancestors": ["'none'"],
