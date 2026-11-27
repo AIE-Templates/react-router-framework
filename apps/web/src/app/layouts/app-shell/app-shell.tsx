@@ -1,16 +1,18 @@
 import type { OverlayAppearance } from "@repo/shared";
-import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 
 import { usePanelEscape, usePanelState } from "~/layouts/use-panel-state";
-import { useEnvironmentRuntime } from "~/managers/environment/context";
-import { getInteractiveProps } from "~/managers/environment/dom-props";
+import { getDragRegionProps, getInteractiveProps } from "~/managers/environment/dom-props";
 import { useAppEnvironment } from "~/managers/environment/hooks";
+import { useOverlayAppearance } from "~/managers/environment/use-overlay-appearance";
 
 import { ShellChromeContext } from "./chrome-context";
 
 export interface BasicShellProps {
   children: ReactNode;
   title?: ReactNode;
+  /** Minimum height for this layout’s headers in CSS pixels. */
+  headerMinHeight?: number;
   actions?: ReactNode;
   headerMode?: "standalone" | "fused";
   /** The app shell owns native overlay appearance requests for every app area. */
@@ -25,12 +27,8 @@ export interface NavigationShellProps extends BasicShellProps {
   onNavigationOpenChange?: (open: boolean) => void;
 }
 
-export function BasicShell({ children, title, actions, headerMode, overlayAppearance }: BasicShellProps) {
-  return (
-    <Shell title={title} actions={actions} headerMode={headerMode} overlayAppearance={overlayAppearance}>
-      {children}
-    </Shell>
-  );
+export function BasicShell(props: BasicShellProps) {
+  return <Shell {...props} />;
 }
 
 export function NavigationShell(props: NavigationShellProps) {
@@ -41,12 +39,13 @@ function Shell({
   children,
   title,
   actions,
+  headerMinHeight,
   headerMode = "fused",
   overlayAppearance,
   ...navigationProps
 }: BasicShellProps & Partial<NavigationShellProps>) {
   const chrome = useAppEnvironment();
-  const runtime = useEnvironmentRuntime();
+  useOverlayAppearance(overlayAppearance);
   const body = useRef<HTMLDivElement>(null);
   const navigationId = useId();
   const navigation = usePanelState(
@@ -98,23 +97,14 @@ function Shell({
     };
   }, [navigation.open]);
   const ready = !chrome.diagnostic || chrome.diagnostic === "host-mismatch";
-  const { color, symbolColor, height } = overlayAppearance ?? {};
-  const ownsAppearance =
-    chrome.enhancement === "available" && (color !== undefined || symbolColor !== undefined || height !== undefined);
-  useEffect(() => {
-    if (ownsAppearance) void runtime.declareOverlayAppearance(navigationId, { color, symbolColor, height });
-  }, [runtime, navigationId, ownsAppearance, color, symbolColor, height]);
-  useEffect(() => {
-    if (ownsAppearance)
-      return () => {
-        void runtime.declareOverlayAppearance(navigationId, null);
-      };
-    return undefined;
-  }, [runtime, navigationId, ownsAppearance]);
+  const style: CSSProperties & { "--app-layout-header-height"?: string } = {
+    "--app-layout-header-height": headerMinHeight === undefined ? undefined : `${headerMinHeight}px`,
+  };
   return (
     <ShellChromeContext.Provider value={headerMode === "fused" && ready}>
       <div
         className="app-shell"
+        style={style}
         data-header-mode={headerMode}
         data-chrome-ready={ready ? "" : undefined}
         data-navigation-open={navigation.open}
@@ -122,7 +112,11 @@ function Shell({
       >
         {headerMode === "standalone" && (
           <header className="shell-titlebar">
-            <div className="shell-titlebar-content" data-window-drag="">
+            <div
+              className="shell-titlebar-content"
+              data-window-safe-area-owner={ready ? "" : undefined}
+              {...getDragRegionProps()}
+            >
               <strong>{title}</strong>
               <div {...getInteractiveProps()}>{actions}</div>
             </div>
@@ -131,7 +125,7 @@ function Shell({
         <div className="shell-body" ref={body}>
           {navigationProps.navigation && (
             <nav id={navigationId} className="shell-nav" aria-label={navigationProps.navigationLabel ?? "App areas"}>
-              <div className="shell-nav-chrome" data-window-drag="" aria-hidden="true" />
+              <div className="shell-nav-chrome" {...getDragRegionProps()} aria-hidden="true" />
               <div className="shell-nav-content" {...getInteractiveProps()}>
                 <button
                   data-native-control=""

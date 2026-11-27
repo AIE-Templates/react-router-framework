@@ -1,6 +1,7 @@
 import {
   isDesktopWindowState,
   parseDesktopBootstrap,
+  supportsOverlayAppearance,
   type ChromeMode,
   type WindowChromeBridge,
   type DesktopWindowState,
@@ -14,6 +15,7 @@ export interface AppEnvironment {
   fullscreen?: boolean;
   mode: ChromeMode;
   enhancement: "pending" | "available" | "unavailable";
+  canSetOverlayAppearance: boolean;
   windowState?: DesktopWindowState;
   diagnostic?: "invalid-bootstrap" | "host-mismatch" | "bridge-failed";
   /** Field names only: safe to expose for diagnosis, without recording host payloads. */
@@ -44,6 +46,7 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
     fullscreen: initial.fullscreen,
     mode: initial.mode ?? "system-decorated",
     enhancement: "pending",
+    canSetOverlayAppearance: false,
   };
   let snapshot = serverSnapshot;
   let bridge: WindowChromeBridge | undefined;
@@ -51,8 +54,14 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
   let release: (() => void) | undefined;
   const listeners = new Set<() => void>();
   const appearanceOwners = new Set<string>();
-  function publish(next: AppEnvironment) {
-    snapshot = next;
+  function publish(next: Omit<AppEnvironment, "canSetOverlayAppearance">) {
+    snapshot = {
+      ...next,
+      canSetOverlayAppearance:
+        next.enhancement === "available" &&
+        next.shell.kind === "desktop" &&
+        supportsOverlayAppearance(next.shell.platform, next.mode),
+    };
     for (const listener of listeners) listener();
   }
   function disconnect() {
@@ -73,7 +82,12 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
       diagnostic = "bridge-failed";
     }
     if (snapshot.enhancement === "available") {
-      publish({ ...snapshot, windowState: undefined, enhancement: "unavailable", diagnostic });
+      publish({
+        ...snapshot,
+        windowState: undefined,
+        enhancement: "unavailable",
+        diagnostic,
+      });
     }
   }
   return {
@@ -92,7 +106,12 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
         if (current === generation) disconnect();
       };
       if (!candidate) {
-        publish({ ...snapshot, windowState: undefined, enhancement: "unavailable", diagnostic: undefined });
+        publish({
+          ...snapshot,
+          windowState: undefined,
+          enhancement: "unavailable",
+          diagnostic: undefined,
+        });
         return stop;
       }
       try {
@@ -102,7 +121,12 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
           typeof candidate.subscribeWindowState !== "function" ||
           typeof candidate.declareOverlayAppearance !== "function"
         ) {
-          publish({ ...snapshot, windowState: undefined, enhancement: "unavailable", diagnostic: "invalid-bootstrap" });
+          publish({
+            ...snapshot,
+            windowState: undefined,
+            enhancement: "unavailable",
+            diagnostic: "invalid-bootstrap",
+          });
           return stop;
         }
         bridge = candidate;
@@ -130,7 +154,11 @@ export function createWindowChromeRuntime(initial: { shell?: Shell; mode?: Chrom
         });
       } catch {
         disconnect();
-        publish({ ...snapshot, enhancement: "unavailable", diagnostic: "bridge-failed" });
+        publish({
+          ...snapshot,
+          enhancement: "unavailable",
+          diagnostic: "bridge-failed",
+        });
       }
       return stop;
     },
