@@ -3,7 +3,10 @@ import { VISUAL_DEFAULTS, visualRecordKernel } from "@repo/shared";
 
 import type { VisualManager } from "~/managers/visual/manager";
 /** Mantine can call set from its own subscription; equal values must not write again. */
-export function createMantineColorSchemeManager(visual: VisualManager): MantineColorSchemeManager {
+export function createMantineColorSchemeManager(
+  visual: VisualManager,
+  isSchemeForced = false,
+): MantineColorSchemeManager {
   let release: (() => void) | undefined;
   let syncSubscriber: ((expected?: MantineColorScheme) => void) | undefined;
   const clientScheme = () => visualRecordKernel.effective(visual.getSnapshot()).colorScheme;
@@ -20,6 +23,8 @@ export function createMantineColorSchemeManager(visual: VisualManager): MantineC
       syncSubscriber?.(VISUAL_DEFAULTS.colorScheme);
     },
     subscribe: (notify) => {
+      // Mantine ignores notifications in a forced subscription. Releasing the override starts a fresh one.
+      if (isSchemeForced) return;
       release?.();
       let previous: MantineColorScheme | undefined;
       syncSubscriber = (expected = previous) => {

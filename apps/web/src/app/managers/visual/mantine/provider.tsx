@@ -1,6 +1,6 @@
 import { DirectionProvider, MantineProvider, useDirection, mergeThemeOverrides } from "@mantine/core";
 import { VISUAL_DEFAULTS } from "@repo/shared";
-import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type PropsWithChildren } from "react";
+import { useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type PropsWithChildren } from "react";
 
 import { useVisualManager, useVisualState } from "~/managers/visual/hooks";
 
@@ -30,12 +30,16 @@ function DirectionBridge() {
 }
 export function VisualMantineProvider({ children, nonce }: PropsWithChildren<{ nonce?: string }>) {
   const manager = useVisualManager();
-  const [colorSchemeManager] = useState(() => createMantineColorSchemeManager(manager));
   // Fixed window appearance is supplied by the client host after the SSR request.
   const fixedAppearance = useSyncExternalStore(
     manager.subscribe,
     () => manager.fixedAppearance,
     () => undefined,
+  );
+  const isSchemeForced = fixedAppearance !== undefined;
+  const colorSchemeManager = useMemo(
+    () => createMantineColorSchemeManager(manager, isSchemeForced),
+    [manager, isSchemeForced],
   );
   // The first component render matches SSR; DirectionBridge adopts client state before paint.
   const { resolved } = useVisualState();

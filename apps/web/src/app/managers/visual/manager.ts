@@ -10,10 +10,14 @@ function freeze(value: VisualState): VisualState {
     resolved: Object.freeze({ ...value.resolved }),
   });
 }
-function needsRepair(current: VisualRecord | undefined, target: VisualRecord, start: boolean) {
+function validatedSeed(seed?: VisualRecord) {
+  return seed && records.decode(JSON.stringify(seed)).record;
+}
+type RepairMode = "start" | "runtime" | "ack";
+function needsRepair(current: VisualRecord | undefined, target: VisualRecord, mode: RepairMode) {
   if (!current) return true;
   const order = records.compare(current, target);
-  return start ? order !== 0 : order < 0;
+  return mode === "start" ? order !== 0 : order < 0;
 }
 function subscriptions() {
   const listeners = new Set<() => void>();
@@ -49,8 +53,8 @@ export function createVisualManager({
   const bootstrap = handoff?.storageKey === config.storageKey ? handoff : undefined;
   let fixedAppearance = bootstrap?.fixedAppearance;
   let publishedAppearance = fixedAppearance;
-  let record = bootstrap?.record;
-  let highestObserved = records.pick([initialRecord, record]);
+  let record = validatedSeed(bootstrap?.record);
+  let highestObserved = records.pick([validatedSeed(initialRecord), record]);
   let state = bootstrap ? freeze(bootstrap.state) : server;
   const storage: Record<keyof VisualStatus["storage"], StoreStatus> = {
     local: "ok",
@@ -169,7 +173,7 @@ export function createVisualManager({
       storage.local = "failed";
     }
   }
-  function writeCookie(target: VisualRecord, start = false) {
+  function writeCookie(target: VisualRecord, mode: RepairMode = "runtime") {
     try {
       writeVisualCookie(host!, records.encode(target), config.cookieName);
     } catch {
@@ -178,8 +182,8 @@ export function createVisualManager({
     const result = readWeb("cookie");
     if (!result || result.kind === "missing") storage.cookie = "unavailable";
     else {
-      storage.cookie = needsRepair(result.record, target, start) ? "failed" : "ok";
-      if (!start) adopt(result.record);
+      storage.cookie = needsRepair(result.record, target, mode) ? "failed" : "ok";
+      if (mode === "runtime") adopt(result.record);
     }
   }
   async function push(target: VisualRecord) {
@@ -195,31 +199,43 @@ export function createVisualManager({
     if (latestPush !== operation) return;
     latestPush = undefined;
     storage.native = result;
-    if (result === "ok") reconcile("event", target);
-    else publishStatus();
+    if (result === "ok") {
+      const mirror = readNative();
+      const newer = mirror && records.behind(record, mirror);
+      if (newer) {
+        record = mirror;
+        repairWeb("cookie", "ack");
+        repairWeb("local", "ack");
+      }
+      if (newer || fixedAppearance !== publishedAppearance) {
+        publish();
+        return;
+      }
+    }
+    publishStatus();
   }
   function available(store: keyof typeof storage) {
     return storage[store] !== "absent" && storage[store] !== "unavailable";
   }
-  function repairWeb(store: "local" | "cookie", observed: VisualRecord | undefined, start: boolean) {
+  function repairWeb(store: "local" | "cookie", mode: RepairMode, observed?: VisualRecord) {
     const target = record;
     if (!target || !available(store)) return;
-    if (!needsRepair(observed, target, start)) {
+    if (!needsRepair(observed, target, mode)) {
       storage[store] = "ok";
       return;
     }
     // Another tab can update this replica between selection and repair.
     const current = readWeb(store);
     if (!current) return;
-    if (!needsRepair(current.record, target, start)) {
-      if (!start) adopt(current.record);
+    if (!needsRepair(current.record, target, mode)) {
+      if (mode === "runtime") adopt(current.record);
       storage[store] = "ok";
       return;
     }
     if (store === "local") writeLocal(records.encode(target));
-    else writeCookie(target, start);
+    else writeCookie(target, mode);
   }
-  function reconcile(trigger: "start" | "connect" | "event" | "restore" | "retry", pushed?: VisualRecord) {
+  function reconcile(trigger: "start" | "connect" | "event" | "restore" | "retry") {
     const start = trigger === "start";
     if (trigger !== "event") {
       if (storage.local === "unavailable") storage.local = "ok";
@@ -227,18 +243,18 @@ export function createVisualManager({
       if (start || trigger === "connect" || storage.native === "unavailable") connectNative();
     }
     const observed = observe(start);
+    const mode = start ? "start" : "runtime";
     let beforeRepair: VisualRecord | undefined;
     // A later store can reveal a newer winner after an earlier store was checked.
     do {
       beforeRepair = record;
-      repairWeb("cookie", observed.cookie, start);
-      repairWeb("local", observed.local, start);
+      repairWeb("cookie", mode, observed.cookie);
+      repairWeb("local", mode, observed.local);
     } while (record !== beforeRepair);
     if (
       record &&
       available("native") &&
-      // A completion can discover a newer Web edit, but must not retry its own push.
-      (!pushed || records.behind(pushed, record)) &&
+      (trigger === "retry" || !latestPush || records.compare(latestPush.record, record) !== 0) &&
       (records.behind(observed.native, record) || (trigger === "retry" && storage.native === "failed"))
     ) {
       void push(record);
@@ -292,6 +308,13 @@ export function createVisualManager({
     visualCodec.apply(config, state, window.document.documentElement);
     const onStorage = (event: StorageEvent) => {
       if (event.key !== config.storageKey && event.key !== null) return;
+      try {
+        if (event.storageArea !== window.localStorage) return;
+      } catch {
+        // The event payload has no verifiable source. Re-read the accessible replicas.
+        reconcile("event");
+        return;
+      }
       if (event.key === config.storageKey) adopt(decodeObserved(event.newValue).record);
       reconcile("event");
     };

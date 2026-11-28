@@ -29,8 +29,16 @@ function tab(options: Parameters<typeof createVisualManager>[0] = {}) {
   return manager;
 }
 const spa = { config: { ...visualBootstrapConfig, cookieName: undefined } };
-function signal(newValue: string | null = null) {
-  window.dispatchEvent(new StorageEvent("storage", { key, newValue }));
+function signal(newValue: string | null = null, storageArea: Storage | null = localStorage) {
+  window.dispatchEvent(new StorageEvent("storage", { key, newValue, storageArea }));
+}
+function peerWindow() {
+  const frame = document.body.appendChild(document.createElement("iframe"));
+  releases.push(() => frame.remove());
+  return frame.contentDocument!.defaultView!;
+}
+function nextStorageEvent(host: Window) {
+  return new Promise<StorageEvent>((resolve) => host.addEventListener("storage", resolve, { once: true }));
 }
 function restore() {
   window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
@@ -122,6 +130,46 @@ it("replaces a poisoned upstream replica and keeps setters and reset usable", ()
   manager.actions.resetVisualPreferences();
   expect(records.decode(cookie()).record?.preferences).toEqual({});
   expect(local()).toBe(cookie());
+});
+
+it("converges across two windows after a commit at the Date limit", async () => {
+  // "z" sorts after every generated hex ID, so the peer repairs the losing commit.
+  const winner = raw(8.64e15, { direction: "ltr" }, "z");
+  localStorage.setItem(key, winner);
+  const peer = peerWindow();
+  const writer = tab(spa);
+  const reader = tab({ ...spa, host: peer });
+  const writes = vi.spyOn(Storage.prototype, "setItem");
+  const repairs = vi.spyOn(peer.Storage.prototype, "setItem");
+  const commitEvent = nextStorageEvent(peer);
+  const repairEvent = nextStorageEvent(window);
+  writer.actions.setDirection("rtl");
+  const [commit, repair] = await Promise.all([commitEvent, repairEvent]);
+  expect(writes).toHaveBeenCalledExactlyOnceWith(key, commit.newValue);
+  expect(repairs).toHaveBeenCalledExactlyOnceWith(key, repair.newValue);
+  expect(records.decode(commit.newValue).record).toMatchObject({
+    stamp: { t: 8.64e15 },
+    preferences: { direction: "rtl" },
+  });
+  expect(repair.newValue).toBe(winner);
+  expect([local(), peer.localStorage.getItem(key)]).toEqual([winner, winner]);
+  expect(writer.getSnapshot().preferences).toEqual({ direction: "ltr" });
+  expect(reader.getSnapshot()).toEqual(writer.getSnapshot());
+});
+
+it.each(["initialRecord", "handoff"])("ignores an out-of-range %s when stamping commits", (source) => {
+  const good = records.decode(raw(10, { direction: "ltr" })).record!;
+  const invalid = { ...good, stamp: { t: Number.MAX_SAFE_INTEGER, id: "bad" } };
+  writeVisualCookie(window, records.encode(good));
+  if (source === "handoff") {
+    window.frameworkVisualBootstrap = { ...visualCodec.read(visualBootstrapConfig, window), record: invalid };
+  }
+  const manager = tab({ initialRecord: source === "initialRecord" ? invalid : undefined });
+  vi.spyOn(Date, "now").mockReturnValue(5);
+  manager.actions.setDirection("rtl");
+  expect(records.decode(local()).record).toMatchObject({ stamp: { t: 11 }, preferences: { direction: "rtl" } });
+  manager.actions.resetVisualPreferences();
+  expect(records.decode(cookie()).record).toMatchObject({ stamp: { t: 12 }, preferences: {} });
 });
 
 it("advances past a higher timestamp even after start rolls local storage back", () => {
@@ -274,11 +322,48 @@ it("re-reads storage on events, repairs deletion from memory and skips equal tar
   expect(cookie()).toBe(value);
   expect(write).not.toHaveBeenCalled();
   localStorage.clear();
-  window.dispatchEvent(new StorageEvent("storage", { key: null }));
+  window.dispatchEvent(new StorageEvent("storage", { key: null, storageArea: localStorage }));
   expect(local()).toBe(value);
   signal();
   expect(write).toHaveBeenCalledTimes(1);
 });
+it("ignores session storage events from a same-origin frame and events without a storage area", async () => {
+  const manager = tab();
+  const peer = peerWindow();
+  const value = raw(55, { direction: "rtl" });
+  const event = nextStorageEvent(window);
+  const read = vi.spyOn(Storage.prototype, "getItem");
+  try {
+    peer.sessionStorage.setItem(key, value);
+    expect((await event).storageArea).toBe(window.sessionStorage);
+    signal(value, null);
+    expect(read).not.toHaveBeenCalled();
+    expect([cookie(), local()]).toEqual([null, null]);
+    expect(manager.getSnapshot().preferences).toEqual({});
+  } finally {
+    sessionStorage.removeItem(key);
+  }
+});
+
+it("re-reads replicas without adopting the event when localStorage access throws", () => {
+  const manager = tab();
+  const area = localStorage;
+  const cookieValue = raw(10, { direction: "ltr" });
+  writeVisualCookie(window, cookieValue);
+  const fault = vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  try {
+    signal(raw(20, { direction: "rtl" }), area);
+    expect(manager.getSnapshot().preferences).toEqual({ direction: "ltr" });
+    expect(manager.getStatus().storage.local).toBe("unavailable");
+  } finally {
+    fault.mockRestore();
+  }
+  manager.actions.retry();
+  expect([cookie(), local()]).toEqual([cookieValue, cookieValue]);
+});
+
 it.each(["local", "cookie"] as const)(
   "E3 rechecks %s immediately before repair and skips a newly updated target",
   (store) => {
@@ -520,6 +605,7 @@ it.each([
   ["read", "pageshow"],
 ] as const)("E17 distinguishes local %s failure from a full quota and probes again on %s", (boundary, trigger) => {
   const manager = tab();
+  const area = localStorage;
   const fault =
     boundary === "access" ? vi.spyOn(window, "localStorage", "get") : vi.spyOn(Storage.prototype, "getItem");
   fault.mockImplementation(() => {
@@ -528,8 +614,8 @@ it.each([
   try {
     manager.actions.setDirection("rtl");
     expect(manager.getStatus().storage).toEqual({ local: "unavailable", cookie: "ok", native: "absent" });
-    signal();
-    expect(fault).toHaveBeenCalledOnce();
+    signal(null, area);
+    expect(fault).toHaveBeenCalledTimes(boundary === "access" ? 2 : 1);
   } finally {
     fault.mockRestore();
   }
@@ -752,26 +838,90 @@ it.each([true, false])("publishes live fixed appearance on connect and retry (pr
   expect(prepaint).toHaveBeenCalledTimes(handoff ? 1 : 0);
 });
 
-it("adopts the newer native record when a stale push succeeds", async () => {
-  const older = raw(1, { direction: "ltr" });
-  const newer = raw(2, { direction: "rtl" });
-  writeVisualCookie(window, older);
-  localStorage.setItem(key, older);
+it("keeps the start winner when its native push succeeds after a failed local repair", async () => {
+  const upstream = raw(10, { direction: "ltr" });
+  const downstream = raw(20, { direction: "rtl" });
+  writeVisualCookie(window, upstream);
+  localStorage.setItem(key, downstream);
   const reply = pushGate();
   let mirror: string | null = null;
-  const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending: !mirror }));
-  const push = vi.fn<NativeBridge["push"]>(() => reply.promise);
-  const manager = tab({ nativeSource: nativeSource(read, push) });
-  expect(manager.getSnapshot().preferences.direction).toBe("ltr");
-  mirror = newer;
-  reply.resolve("ok");
+  const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending: false }));
+  const push = vi.fn<NativeBridge["push"]>((value) => {
+    mirror = value;
+    return reply.promise;
+  });
+  const fault = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  let manager;
+  try {
+    manager = tab({ nativeSource: nativeSource(read, push) });
+    const localRead = vi.spyOn(Storage.prototype, "getItem");
+    const cookieRead = vi.spyOn(document, "cookie", "get");
+    reply.resolve("ok");
+    await reply.promise;
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(localRead).not.toHaveBeenCalled();
+    expect(cookieRead).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledExactlyOnceWith(upstream);
+    expect(manager.getSnapshot().preferences.direction).toBe("ltr");
+    expect(manager.getStatus().storage).toEqual({ cookie: "ok", local: "failed", native: "ok" });
+    expect([cookie(), local()]).toEqual([upstream, downstream]);
+  } finally {
+    fault.mockRestore();
+    reply.resolve("ok");
+  }
+  manager.actions.retry();
   await reply.promise;
-  expect(manager.getSnapshot().preferences.direction).toBe("rtl");
-  expect([cookie(), local()]).toEqual([newer, newer]);
-  expect(manager.getStatus().storage.native).toBe("ok");
-  expect(read).toHaveBeenCalledTimes(2);
-  expect(push).toHaveBeenCalledExactlyOnceWith(older);
+  expect([cookie(), local(), mirror]).toEqual([downstream, downstream, downstream]);
+  expect(manager.getStatus().storage.local).toBe("ok");
 });
+
+it("pushes the winner once across repeated storage events while the mirror is missing", async () => {
+  const winner = raw(20, { direction: "rtl" });
+  const reply = pushGate();
+  let mirror: string | null = null;
+  const push = vi.fn<NativeBridge["push"]>(() => reply.promise);
+  const manager = tab({ nativeSource: nativeSource(() => ({ record: mirror, pending: !mirror }), push) });
+  try {
+    signal(winner);
+    signal(raw(10));
+    signal(winner);
+    expect(push).toHaveBeenCalledExactlyOnceWith(winner);
+    expect([cookie(), local()]).toEqual([winner, winner]);
+    mirror = winner;
+    reply.resolve("ok");
+    await reply.promise;
+    expect(manager.getStatus().storage.native).toBe("ok");
+  } finally {
+    reply.resolve("ok");
+  }
+});
+
+it.each([null, raw(3, { reducedMotion: "reduce" })])(
+  "adopts the newer native record when a stale push succeeds (concurrent local edit: %s)",
+  async (edit) => {
+    const older = raw(1, { direction: "ltr" });
+    const newer = raw(2, { direction: "rtl" });
+    writeVisualCookie(window, older);
+    localStorage.setItem(key, older);
+    const reply = pushGate();
+    let mirror: string | null = null;
+    const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending: !mirror }));
+    const push = vi.fn<NativeBridge["push"]>(() => reply.promise);
+    const manager = tab({ nativeSource: nativeSource(read, push) });
+    expect(manager.getSnapshot().preferences.direction).toBe("ltr");
+    if (edit) localStorage.setItem(key, edit);
+    mirror = newer;
+    reply.resolve("ok");
+    await reply.promise;
+    expect(manager.getSnapshot().preferences.direction).toBe("rtl");
+    expect([cookie(), local()]).toEqual([newer, edit ?? newer]);
+    expect(manager.getStatus().storage.native).toBe("ok");
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(push).toHaveBeenCalledExactlyOnceWith(older);
+  },
+);
 
 it("keeps a refused push failed until explicit retry repairs the empty mirror", async () => {
   const value = raw(1);
@@ -833,7 +983,8 @@ it("ignores late native push results from superseded operations", async () => {
       mirror = value;
       return second.promise;
     });
-  const manager = tab({ nativeSource: nativeSource(() => ({ record: mirror, pending }), push) });
+  const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending }));
+  const manager = tab({ nativeSource: nativeSource(read, push) });
   try {
     manager.actions.setDirection("ltr");
     manager.actions.setDirection("rtl");
@@ -841,8 +992,10 @@ it("ignores late native push results from superseded operations", async () => {
     second.resolve("failed");
     await second.promise;
     expect(manager.getStatus().storage.native).toBe("failed");
+    read.mockClear();
     first.resolve("ok");
     await first.promise;
+    expect(read).not.toHaveBeenCalled();
     expect(manager.getStatus().storage.native).toBe("failed");
   } finally {
     first.resolve("ok");
@@ -1325,20 +1478,20 @@ it("first connection retires the pre-connect push when it rediscovers the bridge
   const reply = pushGate();
   let pending = true;
   let mirror: string | null = null;
-  const adapter = nativeSource(
-    () => ({ record: mirror, pending }),
-    (value) => {
-      mirror = value;
-      return reply.promise;
-    },
-  );
+  const read = vi.fn<NativeBridge["read"]>(() => ({ record: mirror, pending }));
+  const adapter = nativeSource(read, (value) => {
+    mirror = value;
+    return reply.promise;
+  });
   const manager = createVisualManager({ host: window, nativeSource: adapter });
   try {
     manager.actions.setDirection("rtl");
     releases.push(manager.connect());
     expect(manager.getStatus().storage.native).toBe("failed");
+    read.mockClear();
     reply.resolve("ok");
     await reply.promise;
+    expect(read).not.toHaveBeenCalled();
     expect(manager.getStatus().storage.native).toBe("failed");
     manager.actions.retry();
     pending = false;
