@@ -4,16 +4,19 @@ The UI branch pins @mantine/core, @mantine/hooks, @mantine/modals, @mantine/noti
 @mantine/form to 9.7.4. Core remains usable without any of them.
 `AppUiProvider` mounts `VisualMantineProvider` inside the body. During SSR and the first hydration
 render, the color scheme adapter reads the effective preference from the VisualManager server snapshot
-seeded by the request cookie. Each subscription immediately delivers the effective client preference
-and follows subsequent changes. This also picks up changes made before subscription or while effects
-were disconnected. Mantine takes its `defaultColorScheme` from `VISUAL_DEFAULTS.colorScheme`.
+seeded by the request cookie. While the window appearance is unforced, each subscription immediately
+delivers the effective client preference and follows subsequent changes. This also picks up changes
+made before subscription or while effects were disconnected. Mantine takes its `defaultColorScheme`
+from `VISUAL_DEFAULTS.colorScheme`.
 Prepaint and the first connection each select the first valid startup source in upstream order
 (native mirror in Electron, cookie in SSR, then local storage). The first connection repairs differing
 sources with the selected record and its original stamp. With no valid source, it uses defaults and
 writes nothing. A command committed before connection switches that reconciliation to runtime ordering.
 After hydration, Mantine subscribes to VisualManager state for the fixed window appearance. If a live
 native read supplies or clears the override on connect or retry, `forceColorScheme` follows it even
-when storage status stays the same. The window override leaves the shared preference record intact.
+when storage status stays the same. When the override clears, `useMantineColorScheme().colorScheme`
+reflects the latest effective preference, including changes made while the window appearance was fixed.
+Applying or clearing the override leaves the shared preference record intact.
 
 The effective preference combines the sparse record with the product defaults and can be `auto`.
 Mantine's `setColorScheme` writes only when its argument differs from that preference, so mounting
