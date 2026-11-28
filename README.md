@@ -17,7 +17,7 @@ pnpm dev:desktop  # Electron development app
 - [apps/web](apps/web/README.md): React Router application.
 - [packages/server](packages/server/README.md): Standalone and in-process Hono API.
 - [packages/shared](packages/shared/README.md): Browser-safe shared contracts.
-- [apps/desktop](apps/desktop/README.md): Electron host using app:// and a utility process.
+- [apps/desktop](apps/desktop/README.md): Electron host using app://, a utility process and [`@electron-webhost/cookies`](https://www.npmjs.com/package/@electron-webhost/cookies).
 - [packages/port-fetch](packages/port-fetch/README.md): Request/Response streams over message ports.
 - [packages/channel](packages/channel/README.md): Bidirectional MessagePort/WebSocket channels and relay.
 - [bench/transport](bench/transport/README.md): Repeatable transport benchmarks.

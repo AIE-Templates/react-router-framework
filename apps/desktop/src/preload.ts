@@ -1,4 +1,4 @@
-import { installServiceWorkerCookiePreload, installWindowCookiePreload } from "@repo/electron-cookies/preload";
+import { installServiceWorkerCookiePreload, installWindowCookiePreload } from "@electron-webhost/cookies/preload";
 import {
   applyPreference,
   DESKTOP_CHROME_IPC,

@@ -1,4 +1,4 @@
-import { STORE_TIMEOUT_MS, type CookieJar, type CookieStore } from "@repo/electron-cookies/main";
+import { STORE_TIMEOUT_MS, type CookieJar, type CookieStore } from "@electron-webhost/cookies/main";
 import { serializeVisualCookie, visualCookie } from "@repo/shared";
 
 import { VISUAL_COOKIE_FAILED_MESSAGE } from "~/startup-signals.ts";

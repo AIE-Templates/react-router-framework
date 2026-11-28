@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { CookieLogger, WakeRecord, WakeStorage } from "@repo/electron-cookies/main";
+import type { CookieLogger, WakeRecord, WakeStorage } from "@electron-webhost/cookies/main";
 
 import { isAppUrl } from "./app-url.ts";
 import { withFileRetry, writeAtomicFile } from "./atomic-file.ts";

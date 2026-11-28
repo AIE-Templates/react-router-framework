@@ -1,4 +1,4 @@
-import { createCookieJar, type CookieStore } from "@repo/electron-cookies/main";
+import { createCookieJar, type CookieStore } from "@electron-webhost/cookies/main";
 import { serializeVisualCookie, visualCookie, visualRecordKernel } from "@repo/shared";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 

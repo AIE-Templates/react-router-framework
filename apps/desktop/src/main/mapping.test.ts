@@ -1,4 +1,4 @@
-import { CookieStoreTimeoutError } from "@repo/electron-cookies/main";
+import { CookieStoreTimeoutError } from "@electron-webhost/cookies/main";
 import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError } from "@repo/port-fetch";
 import { describe, expect, it } from "vitest";
 

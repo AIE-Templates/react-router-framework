@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 
-import { createCookieJar, type CookieStore, STORE_TIMEOUT_MS } from "@repo/electron-cookies/main";
-import { OMIT_COOKIES_HEADER } from "@repo/electron-cookies/shared";
+import { createCookieJar, type CookieStore, STORE_TIMEOUT_MS } from "@electron-webhost/cookies/main";
+import { OMIT_COOKIES_HEADER } from "@electron-webhost/cookies/shared";
 import type { DesktopRequest } from "@repo/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -165,28 +165,36 @@ describe("registerAppProtocol with the cookie jar", () => {
   });
 
   it.each([
-    [undefined, false, true],
-    [APP_ORIGIN, false, true],
-    [undefined, true, false],
-    [APP_ORIGIN, true, false],
-    ["null", false, false],
-    ["media://site", false, false],
-    ["https://site", false, false],
-  ] as const)("applies initiator %s and omit %s on both hops", async (initiator, omit, allowed) => {
-    const seen: (string | null)[] = [];
-    const { handle } = setup(async (request) => {
-      seen.push(request.headers.get("cookie"));
-      expect(request.headers.has(OMIT_COOKIES_HEADER)).toBe(false);
-      return withCookies({ setCookie: [request.url.endsWith("/seed") ? "sid=old" : "sid=new"] });
-    });
-    await handle(`${APP_ORIGIN}/seed`);
-    const headers = new Headers({ cookie: "sid=forged" });
-    if (omit) headers.set(OMIT_COOKIES_HEADER, "1");
-    const response = await handle(`${APP_ORIGIN}/update`, { headers }, initiator);
-    expect(response.headers.getSetCookie()).toEqual([]);
-    await handle(`${APP_ORIGIN}/read`);
-    expect(seen).toEqual([null, allowed ? "sid=old" : null, allowed ? "sid=new" : "sid=old"]);
-  });
+    [undefined, "include", false, true],
+    [APP_ORIGIN, "include", false, true],
+    [undefined, "omit", true, false],
+    [APP_ORIGIN, "omit", true, false],
+    [APP_ORIGIN, "include", true, false], // A page can supply the marker itself.
+    ["null", "include", false, false],
+    ["media://site", "include", false, false],
+    ["https://site", "include", false, false],
+  ] as const)(
+    "applies initiator %s, credentials %s and marker %s on both hops",
+    async (initiator, credentials, marked, allowed) => {
+      const seen: Headers[] = [];
+      const { handle } = setup(async (request) => {
+        seen.push(request.headers);
+        return withCookies({ setCookie: [request.url.endsWith("/seed") ? "sid=old" : "sid=new"] });
+      });
+      await handle(`${APP_ORIGIN}/seed`);
+      const pageHeaders = new Headers({ cookie: "sid=forged" });
+      if (marked) pageHeaders.set(OMIT_COOKIES_HEADER, "1");
+      const response = await handle(`${APP_ORIGIN}/update`, { credentials, headers: pageHeaders }, initiator);
+      expect(response.headers.getSetCookie()).toEqual([]);
+      await handle(`${APP_ORIGIN}/read`);
+      expect(seen.map((headers) => headers.has(OMIT_COOKIES_HEADER))).toEqual([false, false, false]);
+      expect(seen.map((headers) => headers.get("cookie"))).toEqual([
+        null,
+        allowed ? "sid=old" : null,
+        allowed ? "sid=new" : "sid=old",
+      ]);
+    },
+  );
 
   it("skips the upstream call if the request was cancelled during a cookie lookup", async () => {
     const store = fakeCookieStore();

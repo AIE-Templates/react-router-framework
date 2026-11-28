@@ -1,6 +1,0 @@
-{
-  "name": "cookie-fixture",
-  "private": true,
-  "type": "module",
-  "main": "../../dist/e2e/fixture/e2e/app/main.js"
-}

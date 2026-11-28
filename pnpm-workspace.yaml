@@ -8,6 +8,10 @@ allowBuilds:
   lefthook: true
   "@parcel/watcher": false
 
+# Packages published by this project's maintainers may be adopted before the release-age window ends.
+minimumReleaseAgeExclude:
+  - "@electron-webhost/cookies@0.1.1"
+
 # The default Node entry in 8.5.0 returns HEAD before setting the document media type.
 patchedDependencies:
   app-builder-lib@26.18.0: patches/app-builder-lib-nsis-destination.patch
