@@ -25,7 +25,13 @@ it("selects the first present record in native, cookie, local order regardless o
 it("accepts stamps through the Date limit and 64 ID code units", () => {
   const upper = record(8.64e15, {}, "a".repeat(64));
   expect(kernel.decode(kernel.encode(upper)).record).toEqual(upper);
-  expect(kernel.nextStamp([upper], 0).t).toBe(8.64e15 + 1);
+  for (const now of [0, Number.MAX_SAFE_INTEGER]) {
+    const stamp = kernel.nextStamp([upper], now);
+    expect(stamp.t).toBe(8.64e15);
+    expect(stamp.id).not.toBe(upper.stamp.id);
+    const next = { ...upper, stamp };
+    expect(kernel.decode(kernel.encode(next)).record).toEqual(next);
+  }
   for (const invalid of [record(8.64e15 + 1), record(0, {}, "a".repeat(65))]) {
     expect(kernel.decode(kernel.encode(invalid))).toEqual({ kind: "invalid" });
   }

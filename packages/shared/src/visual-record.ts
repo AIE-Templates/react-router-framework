@@ -92,8 +92,7 @@ export function createVisualRecordKernel(defaults: Readonly<VisualPreferences>) 
     );
   }
   function nextStamp(seen: readonly (VisualRecord | undefined)[], now = Date.now(), random = randomId) {
-    const t = Math.max(now, (pick(seen)?.stamp.t ?? -1) + 1);
-    if (!Number.isSafeInteger(t)) throw new RangeError("Visual timestamp exceeds safe integer precision");
+    const t = Math.min(Math.max(now, (pick(seen)?.stamp.t ?? -1) + 1), maxDateTime);
     return { t, id: random() };
   }
   return { decode, encode, compare, behind, atStart, pick, effective, nextStamp };
