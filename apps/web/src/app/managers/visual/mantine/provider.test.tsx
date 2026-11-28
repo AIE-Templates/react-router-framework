@@ -149,7 +149,9 @@ it("updates the Mantine preference when another window changes the stored scheme
   const peer = createVisualManager({ host: window });
   act(() => {
     peer.actions.setColorSchemePreference("dark");
-    window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEYS.visualPreferences }));
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: STORAGE_KEYS.visualPreferences, storageArea: localStorage }),
+    );
   });
   expect(probe).toHaveAttribute("data-scheme", "dark");
   expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
