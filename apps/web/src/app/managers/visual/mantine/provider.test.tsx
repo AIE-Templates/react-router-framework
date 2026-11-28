@@ -149,7 +149,9 @@ it("updates the Mantine preference when another window changes the stored scheme
   const peer = createVisualManager({ host: window });
   act(() => {
     peer.actions.setColorSchemePreference("dark");
-    window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEYS.visualPreferences }));
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: STORAGE_KEYS.visualPreferences, storageArea: localStorage }),
+    );
   });
   expect(probe).toHaveAttribute("data-scheme", "dark");
   expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
@@ -183,6 +185,45 @@ it("follows a fixed window appearance first reported by a live retry", () => {
   expect(probe).toHaveAttribute("data-scheme", "auto");
   // A render from useVisualState can otherwise mask a subscription to the wrong store.
   expect(subscribeStatus).not.toHaveBeenCalled();
+});
+
+it.each(["mount", "Activity restore"])("adopts the current preference when a fixed scheme clears after %s", (path) => {
+  let fixedAppearance: "light" | undefined = "light";
+  let record: string | null = null;
+  const read = () => ({ record, fixedAppearance, pending: false });
+  if (path === "mount") {
+    window.frameworkVisualBootstrap = visualCodec.read(visualBootstrapConfig, window, read);
+  }
+  const manager = createVisualManager({
+    host: window,
+    nativeSource: { prepaint: read, connect: () => ({ read, push: async () => "ok" }) },
+  });
+  const tree = (mode: "hidden" | "visible") => (
+    <Activity mode={mode}>
+      <ConnectedVisualTree manager={manager} />
+    </Activity>
+  );
+  const view = render(tree("visible"));
+  if (path === "Activity restore") {
+    view.rerender(tree("hidden"));
+    view.rerender(tree("visible"));
+  }
+  const probe = screen.getByRole("status");
+  expect(visualRecordKernel.effective(manager.getSnapshot()).colorScheme).toBe("auto");
+  expect(probe).toHaveAttribute("data-scheme", "light");
+
+  record = visualRecordKernel.encode({ version: 1, stamp: { t: 1, id: "peer" }, preferences: { colorScheme: "dark" } });
+  act(() => manager.actions.retry());
+  expect(manager.getSnapshot().preferences.colorScheme).toBe("dark");
+  expect(probe).toHaveAttribute("data-scheme", "light");
+
+  fixedAppearance = undefined;
+  act(() => manager.actions.retry());
+  expect(manager.getSnapshot().resolved.colorScheme).toBe("dark");
+  expect(document.documentElement.dataset.colorScheme).toBe("dark");
+  expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
+  expect(probe).toHaveAttribute("data-scheme", "dark");
+  expect(localStorage.getItem(STORAGE_KEYS.visualPreferences)).toBe(record);
 });
 
 it("restores current system preferences in Mantine after suspended effects and a failed save", () => {
