@@ -12,7 +12,7 @@ const wire = vi.hoisted(() => ({
   off: vi.fn<(channel: string, callback: (event: unknown, payload: unknown) => void) => void>(),
   send: vi.fn<(channel: string, payload?: unknown) => void>(),
 }));
-vi.mock("@repo/electron-cookies/preload", () => ({
+vi.mock("@electron-webhost/cookies/preload", () => ({
   installWindowCookiePreload: wire.cookies,
   installServiceWorkerCookiePreload: wire.workerCookies,
 }));

@@ -203,15 +203,15 @@ importers:
       '@babel/parser':
         specifier: ^7.29.11
         version: 7.29.11
+      '@electron-webhost/cookies':
+        specifier: 0.1.1
+        version: 0.1.1(electron@45.0.0(supports-color@7.2.0))
       '@electron/fuses':
         specifier: ^2.1.3
         version: 2.1.3
       '@playwright/test':
         specifier: ^1.64.1
         version: 1.64.1
-      '@repo/electron-cookies':
-        specifier: workspace:*
-        version: link:../../packages/electron-cookies
       '@repo/port-fetch':
         specifier: workspace:*
         version: link:../../packages/port-fetch
@@ -351,27 +351,6 @@ importers:
       ws:
         specifier: ^8.18.3
         version: 8.22.0
-
-  packages/electron-cookies:
-    devDependencies:
-      '@babel/parser':
-        specifier: ^7.29.11
-        version: 7.29.11
-      '@babel/types':
-        specifier: ^7.29.11
-        version: 7.29.11
-      '@playwright/test':
-        specifier: ^1.64.1
-        version: 1.64.1
-      electron:
-        specifier: 45.0.0
-        version: 45.0.0(supports-color@7.2.0)
-      jsdom:
-        specifier: ^30.1.3
-        version: 30.1.3(@noble/hashes@1.8.0)
-      rolldown:
-        specifier: 1.2.15
-        version: 1.2.15
 
   packages/port-fetch: {}
 
@@ -614,6 +593,11 @@ packages:
   '@electron-internal/extract-zip@1.0.6':
     resolution: {integrity: sha512-/aQLgFDdCSnwChfUwqekSmE1q2dCTzhUy5saIHBb5vyYn5LzWaKPaIz1wM0lDMCZYBoIG4svJNvAJb6vkI8BuA==}
     engines: {node: '>=22.12.0'}
+
+  '@electron-webhost/cookies@0.1.1':
+    resolution: {integrity: sha512-+BxFPOOisk0SWVdhc5QbuYl0l4awFmRPOTkY+IPvU1Lt1lmLeQ1bLKDr6OKGt7jQsBBSi92RQbEzLhFMjeiBhA==}
+    peerDependencies:
+      electron: ^45.0.0
 
   '@electron/asar@3.4.1':
     resolution: {integrity: sha512-i4/rNPRS84t0vSRa2HorerGRXWyF4vThfHesw0dmcWHp+cspK743UanA0suA5Q5y8kzY2y6YKrvbIUn69BCAiA==}
@@ -3869,6 +3853,10 @@ snapshots:
   '@csstools/css-tokenizer@4.0.2': {}
 
   '@electron-internal/extract-zip@1.0.6': {}
+
+  '@electron-webhost/cookies@0.1.1(electron@45.0.0(supports-color@7.2.0))':
+    dependencies:
+      electron: 45.0.0(supports-color@7.2.0)
 
   '@electron/asar@3.4.1':
     dependencies:

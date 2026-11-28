@@ -1,4 +1,4 @@
-import type { CookieStore } from "@repo/electron-cookies/main";
+import type { CookieStore } from "@electron-webhost/cookies/main";
 import { vi } from "vitest";
 
 type Stored = Parameters<CookieStore["set"]>[0];

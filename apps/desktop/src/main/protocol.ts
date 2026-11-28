@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { type CookieJar, CookieStoreLookupError, stripCookieMarkers } from "@repo/electron-cookies/main";
+import { type CookieJar, CookieStoreLookupError, stripCookieMarkers } from "@electron-webhost/cookies/main";
 import { type PortFetch, PortClosedError } from "@repo/port-fetch";
 import type { DesktopRequest } from "@repo/shared";
 import type { WebRequestFilter } from "electron";

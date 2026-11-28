@@ -7,7 +7,7 @@ import {
   installCookieIpc,
   installCookieWorkerIpc,
   type CookieIpcOptions,
-} from "@repo/electron-cookies/main";
+} from "@electron-webhost/cookies/main";
 import type { PortFetch } from "@repo/port-fetch";
 import {
   DESKTOP_PREFS_IPC,

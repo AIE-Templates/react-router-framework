@@ -1,4 +1,4 @@
-import { CookieStoreLookupError } from "@repo/electron-cookies/main";
+import { CookieStoreLookupError } from "@electron-webhost/cookies/main";
 import { PortBusyError, PortClosedError, PortFetchTimeoutError, RemoteFetchError } from "@repo/port-fetch";
 import { DESKTOP_HEADERS, type DesktopRequest, isDesktopHeader } from "@repo/shared";
 
